@@ -1,8 +1,23 @@
 import os
-import time
+import logging
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-print("🚀 TAIPO PRO INTEL started")
-print("BOT_TOKEN var mı:", bool(os.getenv("BOT_TOKEN")))
+logging.basicConfig(level=logging.INFO)
 
-while True:
-    time.sleep(60)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ TAIPO PRO INTEL çalışıyor gardaşım! /taipo yaz.")
+
+def main():
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        raise RuntimeError("BOT_TOKEN environment variable is missing!")
+
+    app = Application.builder().token(token).build()
+    app.add_handler(CommandHandler("start", start))
+
+    logging.info("Bot starting with polling...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
