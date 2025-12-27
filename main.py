@@ -2,13 +2,18 @@ import os
 import logging
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
 
+# Log ayarı
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("taipo-pro-intel")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -16,8 +21,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "✅ TAIPO PRO INTEL aktif!\n\n"
         "Komutlar:\n"
         "/start - Başlat\n"
-        "/ping - Test\n"
-        "/help - Yardım"
+        "/ping  - Test\n"
+        "/help  - Yardım"
     )
 
 
@@ -27,7 +32,7 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "📌 Komutlar:\n"
+        "🛠 Komutlar:\n"
         "/start\n"
         "/ping\n"
         "/help\n\n"
@@ -36,7 +41,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error("Exception while handling an update:", exc_info=context.error)
+    # PTB 20.x error handler
+    logger.exception("Exception while handling an update:", exc_info=context.error)
 
 
 def main() -> None:
@@ -44,6 +50,7 @@ def main() -> None:
     if not token:
         raise RuntimeError("BOT_TOKEN environment variable is missing")
 
+    # Application (Updater yok!)
     app = Application.builder().token(token).build()
 
     # Komutlar
@@ -54,7 +61,7 @@ def main() -> None:
     # Hata yakalama
     app.add_error_handler(error_handler)
 
-    logger.info("✅ TAIPO PRO INTEL başladı (Polling)")
+    logger.info("✅ TAIPO PRO INTEL başladı (Polling).")
     app.run_polling(drop_pending_updates=True)
 
 
