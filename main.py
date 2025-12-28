@@ -21,8 +21,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "✅ TAIPO PRO INTEL aktif!\n\n"
         "Komutlar:\n"
         "/start - Başlat\n"
-        "/ping  - Test\n"
-        "/help  - Yardım"
+        "/ping - Test\n"
+        "/help - Yardım"
     )
 
 
@@ -50,7 +50,6 @@ def main() -> None:
     if not token:
         raise RuntimeError("BOT_TOKEN environment variable is missing")
 
-    # Application (Updater yok!)
     app = Application.builder().token(token).build()
 
     # Komutlar
@@ -61,8 +60,12 @@ def main() -> None:
     # Hata yakalama
     app.add_error_handler(error_handler)
 
-    logger.info("✅ TAIPO PRO INTEL başladı (Polling).")
-    app.run_polling(drop_pending_updates=True)
+    logger.info("✅ TAIPO PRO INTEL basladi (Polling).")
+
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
