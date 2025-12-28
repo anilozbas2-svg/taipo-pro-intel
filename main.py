@@ -1,11 +1,7 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # LOGGING
 logging.basicConfig(
@@ -16,43 +12,53 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# COMMANDS
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "✅ TAIPO PRO aktif!\n\n"
+        "✅ TAIPO PRO (BIST) aktif!\n\n"
         "Komutlar:\n"
         "/start - Başlat\n"
         "/ping - Test\n"
-        "/help - Yardım"
+        "/help - Yardım\n"
     )
+
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("pong ✅")
 
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📌 Komutlar:\n"
+        "📌 Yardım\n\n"
+        "Şu an sadece temel test modu açık.\n"
+        "Komutlar:\n"
         "/start\n"
         "/ping\n"
         "/help\n\n"
-        "Yakında: /radar /eod /mode bist|crypto"
+        "Sonraki adım: /eod (BIST kapanış raporu) ekleyeceğiz."
     )
+
 
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN tanımlı değil")
+        raise RuntimeError("BOT_TOKEN tanımlı değil (Render Environment Variables içine ekle)")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    # TEK UYGULAMA
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("help", help_cmd))
+    # HANDLERS
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("ping", ping))
+    application.add_handler(CommandHandler("help", help_cmd))
 
-    logger.info("🤖 Bot polling başlıyor...")
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
+    logger.info("✅ Bot polling başlıyor... (tek instance / tek run_polling)")
+
+    # TEK POLLING
+    application.run_polling(
         drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
     )
+
 
 if __name__ == "__main__":
     main()
