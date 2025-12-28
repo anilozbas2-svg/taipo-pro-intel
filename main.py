@@ -1,98 +1,65 @@
 import os
+import sys
 import logging
 from datetime import datetime
 
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# LOGGING
+# -----------------------
+# Logging
+# -----------------------
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
 )
-logger = logging.getLogger("taipo-bist-bot")
+logger = logging.getLogger("TAIPO_PRO_ANIL")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# -----------------------
+# Handlers (PTB v22.1 async)
+# -----------------------
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "✅ TAIPO PRO ANIL aktif.\n\n"
+        "Komutlar:\n"
+        "/ping - test\n"
+        "/eod - gün sonu rapor (taslak)"
+    )
 
+async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("🏓 Pong! Bot çalışıyor.")
 
-def format_radar_message() -> str:
-    """
-    Şimdilik TEST RADAR (dummy).
-    Sonraki adımda burayı gerçek BIST verisiyle dolduracağız.
-    """
+async def eod_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    lines = [
-        "🎯 *TAIPO RADAR (TEST MODU)*",
-        f"🕒 {now}",
-        "",
-        "✅ İzleme Listesi (örnek):",
-        "1) THYAO — Momentum +",
-        "2) ASELS — Kırılım izleme",
-        "3) SISE — Dipten toparlanma",
-        "4) KCHOL — Trend takibi",
-        "5) SASA — Volatil takip",
-        "",
-        "⚠️ Not: Bu liste şu an TEST amaçlıdır.",
-        "Sonraki adım: gerçek veri + filtreler + skor.",
-    ]
-    return "\n".join(lines)
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "✅ TAIPO PRO (BIST) aktif!\n\n"
-        "Komutlar:\n"
-        "/start - Başlat\n"
-        "/ping - Test\n"
-        "/help - Yardım\n"
-        "/radar - Radar (test)\n"
+    msg = (
+        f"📌 TAIPO EOD RAPOR (Taslak)\n"
+        f"🕒 {now}\n\n"
+        f"1) Günün genel yönü: (yakında)\n"
+        f"2) Radar hisseler: (yakında)\n"
+        f"3) Haber etkisi: (yakında)\n"
+        f"4) Yarın için not: (yakında)\n\n"
+        f"✅ Altyapı stabil. Sonraki adım: veri kaynaklarını bağlamak."
     )
+    await update.message.reply_text(msg)
 
+def main() -> None:
+    token = os.getenv("BOT_TOKEN", "").strip()
+    if not token:
+        logger.error("BOT_TOKEN env missing! Render -> Environment -> BOT_TOKEN kontrol et.")
+        sys.exit(1)
 
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("pong ✅")
+    app = ApplicationBuilder().token(token).build()
 
+    app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("ping", ping_cmd))
+    app.add_handler(CommandHandler("eod", eod_cmd))
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📌 Yardım\n\n"
-        "Komutlar:\n"
-        "/start\n"
-        "/ping\n"
-        "/help\n"
-        "/radar\n\n"
-        "Şu an test modundayız. Radar çalışması doğruysa\n"
-        "sonraki adımda gerçek BIST verisini bağlayacağız."
-    )
-
-
-async def radar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = format_radar_message()
-    # Markdown kullanıyoruz (yıldızlar vs.)
-    await update.message.reply_text(msg, parse_mode="Markdown")
-
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN tanımlı değil (Render Environment -> BOT_TOKEN).")
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("radar", radar))
-
-    logger.info("✅ Bot polling başlıyor...")
+    logger.info("✅ Bot starting (python-telegram-bot==22.1) -> run_polling")
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
+        close_loop=False,
     )
-
 
 if __name__ == "__main__":
     main()
