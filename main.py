@@ -1,254 +1,343 @@
+# main.py
+# TAIPO PRO INTEL - Stabil Yahoo Finance + BIST Radar
+# python-telegram-bot v22.x (async)
+
 import os
 import time
+import math
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-import yfinance as yf
 import pandas as pd
-
+import yfinance as yf
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# -------------------------------------------------
-# LOGGING
-# -------------------------------------------------
+# ----------------------------
+# Logging
+# ----------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
-log = logging.getLogger("taipo-pro-intel")
+logger = logging.getLogger("taipo-pro-intel")
 
-# -------------------------------------------------
-# CACHE (TTL)
-# -------------------------------------------------
+
+# ----------------------------
+# ENV
+# ----------------------------
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+
+MODE = os.getenv("MODE", "PROD").strip().upper()
+
+WATCHLIST_BIST = os.getenv("WATCHLIST_BIST", "").strip()
+BIST200_TICKERS = os.getenv("BIST200_TICKERS", "").strip()
+
+# Optional: if you want currency in EOD (e.g., "USDTRY=X")
+BIST_CURRENCY = os.getenv("BIST_CURRENCY", "").strip()
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN missing. Please set it in Render Environment Variables.")
+
+
+# ----------------------------
+# Cache / Rate Limit Controls
+# ----------------------------
 @dataclass
 class CacheItem:
-    value: Any
-    expires_at: float
+    ts: float
+    value: object
 
 
-_CACHE: Dict[str, CacheItem] = {}
-_CACHE_LOCK = asyncio.Lock()
+CACHE: Dict[str, CacheItem] = {}
+
+# Yahoo’ya çok vurmayı engelle (özellikle Render testlerinde)
+CACHE_TTL_SECONDS = 60 * 10     # 10 dk cache
+MIN_SECONDS_BETWEEN_SAME_KEY = 20  # aynı şeyi 20 sn içinde tekrar çekme
+
+_last_fetch_ts: Dict[str, float] = {}
 
 
-async def cache_get(key: str) -> Optional[Any]:
-    async with _CACHE_LOCK:
-        item = _CACHE.get(key)
-        if not item:
-            return None
-        if time.time() >= item.expires_at:
-            _CACHE.pop(key, None)
-            return None
-        return item.value
+def _now() -> float:
+    return time.time()
 
 
-async def cache_set(key: str, value: Any, ttl: int):
-    async with _CACHE_LOCK:
-        _CACHE[key] = CacheItem(value=value, expires_at=time.time() + ttl)
+def _cache_get(key: str) -> Optional[object]:
+    item = CACHE.get(key)
+    if not item:
+        return None
+    if (_now() - item.ts) > CACHE_TTL_SECONDS:
+        return None
+    return item.value
 
 
-# -------------------------------------------------
-# HELPERS
-# -------------------------------------------------
-class YahooDataError(Exception):
-    pass
+def _cache_set(key: str, value: object) -> None:
+    CACHE[key] = CacheItem(ts=_now(), value=value)
 
 
-def parse_csv_env(name: str) -> List[str]:
-    raw = os.getenv(name, "").strip()
+def _throttle_key(key: str) -> bool:
+    """Return True if should wait (too frequent)."""
+    last = _last_fetch_ts.get(key, 0.0)
+    if (_now() - last) < MIN_SECONDS_BETWEEN_SAME_KEY:
+        return True
+    _last_fetch_ts[key] = _now()
+    return False
+
+
+# ----------------------------
+# Helpers
+# ----------------------------
+def parse_tickers(raw: str) -> List[str]:
     if not raw:
         return []
-    return [x.strip() for x in raw.replace(";", ",").split(",") if x.strip()]
+    # supports "A.IS,B.IS, C.IS" etc
+    out = []
+    for x in raw.split(","):
+        t = x.strip()
+        if t:
+            out.append(t)
+    return out
 
 
-def chunks(lst: List[str], size: int) -> List[List[str]]:
-    return [lst[i:i + size] for i in range(0, len(lst), size)]
+def chunk_list(items: List[str], size: int) -> List[List[str]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def fmt_try(v: float) -> str:
-    return f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def fmt_pct(x: float) -> str:
+    if x is None or (isinstance(x, float) and (math.isnan(x) or math.isinf(x))):
+        return "n/a"
+    sign = "+" if x >= 0 else ""
+    return f"{sign}{x:.2f}%"
 
 
-# -------------------------------------------------
-# YAHOO SAFE FETCH
-# -------------------------------------------------
-def df_ok(df: pd.DataFrame) -> bool:
-    return df is not None and not df.empty and "Close" in df.columns
-
-
-async def yahoo_download_once(
-    tickers: List[str],
-    period: str = "15d",
-    interval: str = "1d",
-) -> pd.DataFrame:
+def safe_float(v) -> Optional[float]:
     try:
-        df = yf.download(
-            tickers=" ".join(tickers),
-            period=period,
-            interval=interval,
-            group_by="ticker",
-            auto_adjust=False,
-            threads=False,
-            progress=False,
-        )
-        return df
-    except Exception as e:
-        raise YahooDataError(str(e)) from e
-
-
-# -------------------------------------------------
-# INDEX (BIST100)
-# -------------------------------------------------
-async def fetch_index() -> Tuple[str, pd.DataFrame]:
-    for sym in ["XU100.IS", "^XU100"]:
-        try:
-            df = await yahoo_download_once([sym], period="10d", interval="1d")
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                if isinstance(df.columns, pd.MultiIndex):
-                    df = df[sym]
-                if df_ok(df):
-                    return sym, df
-        except Exception:
-            continue
-    raise YahooDataError("Endeks verisi yok / Yahoo boş dönüyor")
-
-
-def build_index_msg(sym: str, df: pd.DataFrame) -> str:
-    closes = df["Close"].dropna()
-    last = closes.iloc[-1]
-    prev = closes.iloc[-2]
-    chg = last - prev
-    pct = (chg / prev) * 100 if prev else 0
-    arrow = "🟢" if chg > 0 else ("🔴" if chg < 0 else "🟡")
-    date = closes.index[-1].strftime("%Y-%m-%d")
-
-    return (
-        f"📌 <b>BIST100</b>\n"
-        f"• Sembol: <code>{sym}</code>\n"
-        f"• Tarih: <b>{date}</b>\n"
-        f"• Kapanış: <b>{fmt_try(last)}</b>\n"
-        f"• Değişim: {arrow} <b>{chg:+.2f}</b> (<b>{pct:+.2f}%</b>)"
-    )
-
-
-# -------------------------------------------------
-# RADAR
-# -------------------------------------------------
-def build_radar(df: pd.DataFrame, tickers: List[str]) -> str:
-    rows = []
-    for t in tickers:
-        try:
-            dft = df[t]
-            closes = dft["Close"].dropna()
-            if closes.shape[0] < 2:
-                continue
-            last, prev = closes.iloc[-1], closes.iloc[-2]
-            pct = ((last - prev) / prev) * 100 if prev else 0
-
-            spike = ""
-            if "Volume" in dft.columns and len(dft["Volume"].dropna()) >= 6:
-                v = dft["Volume"].dropna()
-                ratio = v.iloc[-1] / v.iloc[-6:-1].mean()
-                if ratio >= 1.5:
-                    spike = f" | Hacim x{ratio:.2f}"
-
-            arrow = "🟢" if pct > 0 else ("🔴" if pct < 0 else "🟡")
-            rows.append((abs(pct), f"<code>{t}</code> → {arrow} <b>{pct:+.2f}%</b> | {fmt_try(last)}{spike}"))
-        except Exception:
-            continue
-
-    if not rows:
-        return "⚠️ Radar: veri yok"
-
-    rows.sort(key=lambda x: x[0], reverse=True)
-    out = ["📡 <b>Hisse Radar</b>"]
-    for i, (_, line) in enumerate(rows[:20], start=1):
-        out.append(f"{i}. {line}")
-    return "\n".join(out)
-
-
-# -------------------------------------------------
-# COMMANDS
-# -------------------------------------------------
-async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🏓 Pong! Bot ayakta.")
-
-
-async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cached = await cache_get("eod")
-    if cached:
-        await update.message.reply_text(cached, parse_mode=ParseMode.HTML)
-        return
-
-    try:
-        sym, df = await fetch_index()
-        index_msg = build_index_msg(sym, df)
-    except YahooDataError as e:
-        index_msg = f"⚠️ <b>Endeks alınamadı</b>\n<code>{e}</code>"
-
-    tickers = parse_csv_env("BIST200_TICKERS")
-    pages = chunks(tickers, 20)
-    page1 = pages[0] if pages else []
-
-    radar_msg = "ℹ️ Radar listesi yok."
-    if page1:
-        try:
-            rdf = await yahoo_download_once(page1)
-            radar_msg = build_radar(rdf, page1)
-        except Exception:
-            radar_msg = "⚠️ Radar alınamadı (rate limit)."
-
-    final = index_msg + "\n\n" + radar_msg + "\n\n<i>Sayfalar: /radar 1–10</i>"
-    await cache_set("eod", final, 90)
-    await update.message.reply_text(final, parse_mode=ParseMode.HTML)
-
-
-async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    page = int(args[0]) if args and args[0].isdigit() else 1
-    page = max(1, min(page, 10))
-
-    tickers = parse_csv_env("BIST200_TICKERS")
-    pages = chunks(tickers, 20)
-
-    if page > len(pages):
-        await update.message.reply_text("⚠️ Bu sayfa yok.")
-        return
-
-    key = f"radar_{page}"
-    cached = await cache_get(key)
-    if cached:
-        await update.message.reply_text(cached, parse_mode=ParseMode.HTML)
-        return
-
-    try:
-        rdf = await yahoo_download_once(pages[page - 1])
-        msg = f"📄 <b>Radar Sayfa {page}</b>\n" + build_radar(rdf, pages[page - 1])
+        if v is None:
+            return None
+        f = float(v)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
     except Exception:
-        msg = "⚠️ Radar alınamadı (rate limit)."
-
-    await cache_set(key, msg, 120)
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        return None
 
 
-# -------------------------------------------------
-# BOOT
-# -------------------------------------------------
-def main():
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        raise RuntimeError("BOT_TOKEN yok")
+# ----------------------------
+# Yahoo Finance fetch (safe)
+# ----------------------------
+async def fetch_history_safe(
+    ticker: str,
+    period: str = "5d",
+    interval: str = "1d",
+) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+    """
+    Returns (df, err_msg). df None => error or empty.
+    Uses caching + throttling to avoid rate limit.
+    """
+    cache_key = f"HIST:{ticker}:{period}:{interval}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached, None
 
-    app = Application.builder().token(token).build()
+    if _throttle_key(cache_key):
+        # Too soon; use cache if exists; else wait a bit
+        await asyncio.sleep(1.0)
+
+    try:
+        # yfinance can rate-limit; keep requests conservative
+        t = yf.Ticker(ticker)
+        df = t.history(period=period, interval=interval, auto_adjust=False)
+        if df is None or df.empty:
+            return None, f"Not enough data / empty for {ticker}"
+        _cache_set(cache_key, df)
+        return df, None
+
+    except Exception as e:
+        # yfinance may throw YFRateLimitError or other network exceptions
+        msg = str(e)
+        if "Rate limited" in msg or "Too Many Requests" in msg:
+            return None, "Yahoo rate limit (Too Many Requests)."
+        return None, msg
+
+
+def calc_last_change(df: pd.DataFrame) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Returns (last_close, daily_pct_change) using last two rows.
+    """
+    if df is None or df.empty:
+        return None, None
+    close = df.get("Close")
+    if close is None or len(close) < 2:
+        return None, None
+    last = safe_float(close.iloc[-1])
+    prev = safe_float(close.iloc[-2])
+    if last is None or prev is None or prev == 0:
+        return last, None
+    pct = (last - prev) / prev * 100.0
+    return last, pct
+
+
+def calc_volume(df: pd.DataFrame) -> Optional[float]:
+    if df is None or df.empty:
+        return None
+    vol = df.get("Volume")
+    if vol is None or len(vol) == 0:
+        return None
+    return safe_float(vol.iloc[-1])
+
+
+# ----------------------------
+# Commands
+# ----------------------------
+async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("🏓 Pong! Bot çalışıyor.")
+
+
+async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /eod
+    - BIST index snapshot (XU100) best-effort
+    - Optional currency snapshot
+    - Small radar preview (first 20 of BIST200 if present)
+    """
+    await update.message.reply_text("⏳ EOD hazırlanıyor...")
+
+    lines = []
+    lines.append("📌 <b>TAIPO PRO INTEL – EOD</b>")
+
+    # 1) Index
+    idx_symbol = "^XU100"
+    df_idx, err = await fetch_history_safe(idx_symbol, period="5d", interval="1d")
+    if df_idx is None:
+        lines.append(f"⚠️ <b>Endeks</b> alınamadı: <code>{err or 'BOS_VERI'}</code>")
+    else:
+        last, pct = calc_last_change(df_idx)
+        lines.append(f"📈 <b>{idx_symbol}</b> Close: <code>{last:.2f}</code> | Günlük: <b>{fmt_pct(pct)}</b>")
+
+    # 2) Currency (optional)
+    if BIST_CURRENCY:
+        df_fx, err_fx = await fetch_history_safe(BIST_CURRENCY, period="5d", interval="1d")
+        if df_fx is None:
+            lines.append(f"💱 <b>{BIST_CURRENCY}</b>: <code>{err_fx or 'BOS_VERI'}</code>")
+        else:
+            last_fx, pct_fx = calc_last_change(df_fx)
+            if last_fx is not None:
+                lines.append(f"💱 <b>{BIST_CURRENCY}</b>: <code>{last_fx:.4f}</code> | Günlük: <b>{fmt_pct(pct_fx)}</b>")
+
+    # 3) Radar preview (first chunk)
+    bist200 = parse_tickers(BIST200_TICKERS)
+    if bist200:
+        first_chunk = bist200[:20]
+        radar_text = await build_radar_block(first_chunk, title="🔎 Radar Önizleme (İlk 20)")
+        lines.append(radar_text)
+        lines.append("➡️ Devamı için: <code>/radar 1</code>, <code>/radar 2</code> ...")
+    else:
+        lines.append("ℹ️ BIST200 listesi yok. Render env’ye <code>BIST200_TICKERS</code> ekleyebilirsin.")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /radar N
+    - N: 1..10 (200 hisseyi 20'şer parça)
+    """
+    bist200 = parse_tickers(BIST200_TICKERS)
+    if not bist200:
+        await update.message.reply_text("⚠️ BIST200_TICKERS boş. Render Environment’a eklemen gerekiyor.")
+        return
+
+    chunks = chunk_list(bist200, 20)
+    n = 1
+    if context.args:
+        try:
+            n = int(context.args[0])
+        except Exception:
+            n = 1
+
+    if n < 1 or n > len(chunks):
+        await update.message.reply_text(f"⚠️ Geçersiz parça. 1 ile {len(chunks)} arasında yaz.\nÖrn: /radar 1")
+        return
+
+    await update.message.reply_text(f"⏳ Radar {n}/{len(chunks)} hazırlanıyor...")
+
+    block = await build_radar_block(chunks[n - 1], title=f"📡 BIST200 RADAR – Parça {n}/{len(chunks)}")
+
+    await update.message.reply_text(block, parse_mode=ParseMode.HTML)
+
+
+# ----------------------------
+# Radar builder (safe + light)
+# ----------------------------
+async def build_radar_block(tickers: List[str], title: str) -> str:
+    """
+    For each ticker: last close, daily % change, volume (last)
+    Keeps Yahoo calls limited with cache & small delays.
+    """
+    rows = []
+    failed = 0
+
+    # Gentle pacing: small delay between calls to reduce rate limit chance
+    for i, t in enumerate(tickers, start=1):
+        df, err = await fetch_history_safe(t, period="5d", interval="1d")
+        if df is None:
+            failed += 1
+            rows.append((t, None, None, None, err))
+        else:
+            last, pct = calc_last_change(df)
+            vol = calc_volume(df)
+            rows.append((t, last, pct, vol, None))
+
+        # tiny delay every few tickers
+        if i % 5 == 0:
+            await asyncio.sleep(0.6)
+
+    # Rank by daily change (desc), ignoring None
+    scored = []
+    for (t, last, pct, vol, err) in rows:
+        scored.append((t, pct if pct is not None else -9999, last, vol, err))
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    lines = [f"<b>{title}</b>"]
+    lines.append("<code>TICKER     Δ%     Close        Vol</code>")
+    lines.append("<code>------------------------------------</code>")
+
+    for t, pct, last, vol, err in scored:
+        if err:
+            lines.append(f"<code>{t:<10}  n/a   n/a          n/a</code>  ⚠️")
+            continue
+
+        close_s = "n/a" if last is None else f"{last:,.2f}".replace(",", "")
+        pct_s = "n/a" if pct == -9999 else fmt_pct(pct)
+        vol_s = "n/a" if vol is None else f"{int(vol):,}".replace(",", ".")
+        # keep fixed-ish width
+        lines.append(f"<code>{t:<10} {pct_s:>6} {close_s:>10} {vol_s:>12}</code>")
+
+    if failed > 0:
+        lines.append(f"\n⚠️ <b>Not:</b> {failed} sembolde veri alınamadı (BOS_VERI / rate limit / delisted).")
+
+    return "\n".join(lines)
+
+
+# ----------------------------
+# App bootstrap
+# ----------------------------
+def main() -> None:
+    logger.info("Starting TAIPO PRO INTEL bot | MODE=%s", MODE)
+
+    app = Application.builder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("radar", cmd_radar))
 
-    log.info("Bot başlıyor...")
-    app.run_polling(drop_pending_updates=True)
+    # If you want: show help when unknown command
+    # (optional)
+
+    app.run_polling(close_loop=False)
 
 
 if __name__ == "__main__":
