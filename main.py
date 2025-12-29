@@ -1,207 +1,301 @@
 import os
 import time
+import json
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Dict, Any, Tuple
 
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# TradingView official screener wrapper
-from tradingview_screener import Query, col
-
+# -----------------------------
+# LOGGING
+# -----------------------------
 logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
-logger = logging.getLogger("taipo_pro_intel")
+log = logging.getLogger("TAIPO_PRO_INTEL")
 
+# -----------------------------
+# ENV
+# -----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-# Cache to avoid rate-limit / bans (simple in-memory TTL)
-_CACHE = {
-    "ts": 0,
-    "eod_text": "",
+# BIST200_TICKERS: "THYAO.IS,ASELS.IS,..."  (Render env içinde tek satır)
+BIST200_TICKERS_RAW = os.getenv("BIST200_TICKERS", "").strip()
+WATCHLIST_BIST_RAW = os.getenv("WATCHLIST_BIST", "").strip()
+
+# Optional
+MODE = os.getenv("MODE", "prod").strip().lower()
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN missing! Render Environment Variables içine BOT_TOKEN ekle.")
+
+# -----------------------------
+# TradingView Scanner Config
+# -----------------------------
+TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
+TV_TIMEOUT = 12  # seconds
+
+# Cache (rate-limit yememek için)
+_CACHE: Dict[str, Any] = {
+    "index": {"ts": 0, "data": None},
+    "radar": {},  # page -> {"ts":..., "data":...}
 }
-CACHE_TTL_SEC = 120  # 2 minutes
+CACHE_TTL_SEC = 60  # aynı dakikada 10 kez çağırmayalım
 
-# How many radar rows per Telegram message
-CHUNK_SIZE = 20
+# -----------------------------
+# Helpers
+# -----------------------------
+def _split_csv(s: str) -> List[str]:
+    if not s:
+        return []
+    parts = [p.strip() for p in s.replace("\n", ",").split(",")]
+    return [p for p in parts if p]
 
-
-def _chunk_lines(lines: List[str], chunk_size: int = CHUNK_SIZE) -> List[str]:
-    return ["\n".join(lines[i:i + chunk_size]) for i in range(0, len(lines), chunk_size)]
-
-
-def _safe_float(x, default=None):
-    try:
-        if x is None:
-            return default
-        # pandas may give numpy types
-        return float(x)
-    except Exception:
-        return default
-
-
-def _fmt_num(n: Optional[float]) -> str:
-    if n is None:
-        return "?"
-    # volume-like big numbers
-    if abs(n) >= 1_000_000_000:
-        return f"{n/1_000_000_000:.2f}B"
-    if abs(n) >= 1_000_000:
-        return f"{n/1_000_000:.2f}M"
-    if abs(n) >= 1_000:
-        return f"{n/1_000:.2f}K"
-    return f"{n:.2f}"
-
-
-def _fmt_pct(p: Optional[float]) -> str:
-    if p is None:
-        return "?"
-    sign = "+" if p > 0 else ""
-    return f"{sign}{p:.2f}%"
-
-
-def tv_get_xu100_snapshot() -> Tuple[Optional[float], Optional[float]]:
+def _to_tv_symbol(ticker: str) -> str:
     """
-    Returns (close, change_percent) for BIST:XU100.
-    change field naming in TradingView is usually 'change' (percent).
+    Render env içine .IS ile girsen bile TradingView'e BIST: sembolü olarak gider.
+    THYAO.IS -> BIST:THYAO
+    THYAO -> BIST:THYAO
     """
+    t = ticker.strip().upper()
+    if not t:
+        return t
+    if t.endswith(".IS"):
+        t = t[:-3]
+    if ":" in t:
+        return t  # kullanıcı zaten "BIST:THYAO" verdi diyelim
+    return f"BIST:{t}"
+
+def _chunks(lst: List[str], n: int) -> List[List[str]]:
+    return [lst[i:i+n] for i in range(0, len(lst), n)]
+
+def tv_scan_symbols(tv_symbols: List[str]) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    TradingView scanner'a tek POST ile çoklu sembol verisi çeker.
+    Dönen liste her satır için: {"symbol": "...", "close": ..., "change": ..., "volume": ...}
+    Hata olursa ([], "hata_mesaji") döner.
+    """
+    if not tv_symbols:
+        return [], "EMPTY_SYMBOLS"
+
+    payload = {
+        "symbols": {"tickers": tv_symbols, "query": {"types": []}},
+        "columns": ["name", "close", "change", "volume"]
+    }
+
     try:
-        # IMPORTANT: use set_tickers so we target the exact symbol
-        q = (
-            Query()
-            .set_markets("turkey")
-            .select("name", "close", "change")
-            .set_tickers("BIST:XU100")
-            .limit(1)
-        )
-        _, df = q.get_scanner_data()
-        if df is None or df.empty:
-            return None, None
-        close = _safe_float(df.iloc[0].get("close"))
-        chg = _safe_float(df.iloc[0].get("change"))
-        return close, chg
+        r = requests.post(TV_SCAN_URL, json=payload, timeout=TV_TIMEOUT, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            return [], f"TV_HTTP_{r.status_code}"
+        data = r.json()
+        rows = data.get("data", [])
+        out = []
+        for row in rows:
+            s = row.get("s")  # "BIST:THYAO"
+            d = row.get("d", [])  # [name, close, change, volume]
+            # d bazen None dönebilir
+            name = d[0] if len(d) > 0 else None
+            close = d[1] if len(d) > 1 else None
+            change = d[2] if len(d) > 2 else None
+            vol = d[3] if len(d) > 3 else None
+            out.append({"symbol": s, "name": name, "close": close, "change": change, "volume": vol})
+        return out, ""
     except Exception as e:
-        logger.exception("XU100 snapshot failed: %s", e)
-        return None, None
+        return [], f"TV_EXC_{type(e).__name__}:{e}"
 
-
-def tv_get_bist_radar(limit: int = 200) -> List[str]:
+def format_radar_table(rows: List[Dict[str, Any]], missing_note: str = "") -> str:
     """
-    “BIST200 gibi” radar:
-    TradingView Turkey market içinde BIST hisselerini tarar,
-    Relative Volume (10d) + Volume + Daily Change ile sıralayıp üstten 200 verir.
+    Telegram monospace tablo gibi gözüksün diye sade format.
     """
-    lines: List[str] = []
+    header = "TICKER        Δ%      Close        Vol\n"
+    header += "-------------------------------------------\n"
+    lines = []
+    missing = 0
+    for it in rows:
+        sym = (it.get("symbol") or "").replace("BIST:", "")
+        chg = it.get("change")
+        close = it.get("close")
+        vol = it.get("volume")
 
-    try:
-        q = (
-            Query()
-            .set_markets("turkey")
-            .select(
-                "name",
-                "close",
-                "change",
-                "volume",
-                "relative_volume_10d_calc",
-                "market_cap_basic",
-                "exchange",
-            )
-            .where(
-                col("exchange") == "BIST",
-                col("volume") > 0,
-            )
-            .order_by("relative_volume_10d_calc", ascending=False)
-            .limit(limit)
-        )
+        if chg is None or close is None:
+            missing += 1
+            chg_str = "n/a"
+            close_str = "n/a"
+        else:
+            chg_str = f"{float(chg):+.2f}"
+            close_str = f"{float(close):.2f}"
 
-        _, df = q.get_scanner_data()
-        if df is None or df.empty:
-            return ["⚠️ Radar verisi boş döndü (TradingView)."]
-
-        # df index generally contains the "ticker" string like "BIST:THYAO"
-        # sometimes there's also "ticker" column; handle both
-        for i in range(min(limit, len(df))):
-            row = df.iloc[i]
-            ticker = None
+        if vol is None:
+            vol_str = "n/a"
+        else:
+            # volume çok büyükse sadeleştir
             try:
-                ticker = df.index[i]
-            except Exception:
-                ticker = row.get("ticker")
+                v = float(vol)
+                if v >= 1e9:
+                    vol_str = f"{v/1e9:.2f}B"
+                elif v >= 1e6:
+                    vol_str = f"{v/1e6:.2f}M"
+                elif v >= 1e3:
+                    vol_str = f"{v/1e3:.2f}K"
+                else:
+                    vol_str = f"{v:.0f}"
+            except:
+                vol_str = str(vol)
 
-            name = row.get("name") or ""
-            close = _safe_float(row.get("close"))
-            chg = _safe_float(row.get("change"))
-            vol = _safe_float(row.get("volume"))
-            rv = _safe_float(row.get("relative_volume_10d_calc"))
-            mcap = _safe_float(row.get("market_cap_basic"))
+        lines.append(f"{sym:<10}  {chg_str:>6}  {close_str:>10}  {vol_str:>8}")
 
-            # shorten symbol
-            sym = str(ticker).split(":")[-1] if ticker else "?"
-            rv_txt = f"{rv:.2f}" if rv is not None else "?"
-            mcap_txt = _fmt_num(mcap) if mcap is not None else "?"
+    footer = ""
+    if missing > 0:
+        footer += f"\n⚠️ Not: {missing} sembolde veri alınamadı."
+    if missing_note:
+        footer += f"\n⚠️ {missing_note}"
+    return "```\n" + header + "\n".join(lines) + footer + "\n```"
 
-            lines.append(
-                f"{i+1:>3}. {sym:<6} {close if close is not None else '?':>8}  "
-                f"({ _fmt_pct(chg) })  Vol:{_fmt_num(vol):>7}  RV:{rv_txt:>4}  MCap:{mcap_txt}"
-            )
+def get_bist200_list() -> List[str]:
+    tickers = _split_csv(BIST200_TICKERS_RAW)
+    return tickers
 
-        return lines
+def get_watchlist() -> List[str]:
+    return _split_csv(WATCHLIST_BIST_RAW)
 
-    except Exception as e:
-        logger.exception("Radar failed: %s", e)
-        return [f"⚠️ Radar alınamadı: {e}"]
+# -----------------------------
+# Commands
+# -----------------------------
+async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text("🏓 Pong! Bot ayakta.")
 
+async def eod_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /eod: BIST:XU100 + kısa radar özeti + sayfa bilgisi
+    """
+    chat_id = update.effective_chat.id
+    log.info("EOD requested by chat=%s", chat_id)
 
-async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("✅ ping -> pong (TAIPO PRO INTEL çalışıyor)")
+    # 1) Endeks (XU100) - TradingView: BIST:XU100
+    now = time.time()
+    if _CACHE["index"]["data"] is not None and (now - _CACHE["index"]["ts"] < CACHE_TTL_SEC):
+        idx = _CACHE["index"]["data"]
+        idx_err = ""
+    else:
+        idx_rows, idx_err = tv_scan_symbols(["BIST:XU100"])
+        idx = idx_rows[0] if idx_rows else None
+        _CACHE["index"]["data"] = idx
+        _CACHE["index"]["ts"] = now
 
+    if not idx or idx.get("close") is None:
+        await update.effective_message.reply_text(f"⚠️ Endeks verisi alınamadı: {idx_err or 'BOS_VERI'}")
+    else:
+        close = float(idx["close"])
+        chg = idx.get("change")
+        chg_txt = f"{float(chg):+.2f}%" if chg is not None else "n/a"
+        await update.effective_message.reply_text(
+            "📌 *BIST100 (XU100) Özet*\n"
+            f"• Sembol: XU100\n"
+            f"• Kapanış: *{close:,.2f}*\n"
+            f"• Günlük: *{chg_txt}*\n\n"
+            "📡 Radar için:\n"
+            "• `/radar 1` ... `/radar 10`\n",
+            parse_mode="Markdown"
+        )
 
-async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Cache (avoid hitting TradingView too frequently)
-    now = int(time.time())
-    if _CACHE["eod_text"] and (now - _CACHE["ts"] < CACHE_TTL_SEC):
-        await update.message.reply_text(_CACHE["eod_text"])
+    # 2) Mini Radar (ilk 20) — BIST200 listesinden
+    tickers = get_bist200_list()
+    if not tickers:
+        await update.effective_message.reply_text("⚠️ BIST200_TICKERS boş. Render Environment’a eklemen lazım.")
         return
 
-    close, chg = tv_get_xu100_snapshot()
+    first20 = tickers[:20]
+    tv_syms = [_to_tv_symbol(t) for t in first20]
+    rows, err = tv_scan_symbols(tv_syms)
+    if not rows:
+        await update.effective_message.reply_text(f"⚠️ Radar alınamadı: {err or 'BOS_VERI'}")
+        return
 
-    header = "📌 TAIPO PRO INTEL – EOD (TradingView)\n"
-    if close is None and chg is None:
-        header += "⚠️ XU100 (BIST100) anlık veri alınamadı (delayed/boş döndü olabilir).\n"
+    # değişime göre sırala (None en alta)
+    def _sort_key(x):
+        c = x.get("change")
+        return (-9999 if c is None else float(c))
+    rows_sorted = sorted(rows, key=_sort_key)  # en kötüden iyiye
+    await update.effective_message.reply_text("📍 *Hisse Radar (ilk 20)*", parse_mode="Markdown")
+    await update.effective_message.reply_text(format_radar_table(rows_sorted), parse_mode="Markdown")
+
+async def radar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /radar N  -> N=1..10
+    Her sayfa 20 hisse.
+    """
+    chat_id = update.effective_chat.id
+
+    # args parse
+    page = 1
+    if context.args:
+        try:
+            page = int(context.args[0])
+        except:
+            page = 1
+
+    if page < 1:
+        page = 1
+
+    tickers = get_bist200_list()
+    if not tickers:
+        await update.effective_message.reply_text("⚠️ BIST200_TICKERS boş. Render Environment’a eklemen lazım.")
+        return
+
+    pages = _chunks(tickers, 20)
+    max_page = len(pages)
+
+    if page > max_page:
+        await update.effective_message.reply_text(f"⚠️ Sayfa yok. En fazla: {max_page}. Örn: /radar {max_page}")
+        return
+
+    log.info("RADAR page=%s requested by chat=%s", page, chat_id)
+
+    # cache
+    now = time.time()
+    cache_hit = _CACHE["radar"].get(page)
+    if cache_hit and (now - cache_hit["ts"] < CACHE_TTL_SEC):
+        rows = cache_hit["data"]
+        err = ""
     else:
-        header += f"🇹🇷 XU100: {close}  ({_fmt_pct(chg)})\n"
+        batch = pages[page - 1]
+        tv_syms = [_to_tv_symbol(t) for t in batch]
+        rows, err = tv_scan_symbols(tv_syms)
+        _CACHE["radar"][page] = {"ts": now, "data": rows}
 
-    header += "\n📡 RADAR (BIST – yüksek RV/volume odaklı) — 200 satır, 20’şer mesaj:\n"
+    if not rows:
+        await update.effective_message.reply_text(f"⚠️ Radar alınamadı: {err or 'BOS_VERI'}")
+        return
 
-    radar_lines = tv_get_bist_radar(limit=200)
+    # değişime göre sırala (None en alta)
+    def _sort_key(x):
+        c = x.get("change")
+        # negatiften pozitife daha net görünsün diye:
+        return 9999 if c is None else float(c)
 
-    # First message: header
-    await update.message.reply_text(header)
+    rows_sorted = sorted(rows, key=_sort_key)  # en düşük -> en yüksek
+    title = f"📡 *BIST200 RADAR — Parça {page}/{max_page}*\n(20 hisse)"
+    await update.effective_message.reply_text(title, parse_mode="Markdown")
+    await update.effective_message.reply_text(format_radar_table(rows_sorted), parse_mode="Markdown")
 
-    # Send radar in chunks
-    chunks = _chunk_lines(radar_lines, CHUNK_SIZE)
-    for idx, chunk in enumerate(chunks, start=1):
-        await update.message.reply_text(f"— Radar Paket {idx}/{len(chunks)} —\n{chunk}")
-
-    # Store cache as a short marker message (header only, to avoid storing all 200 lines)
-    _CACHE["ts"] = now
-    _CACHE["eod_text"] = header + "\n(⚡ Cache aktif: 2 dk içinde tekrar çağrılırsa aynı başlık döner.)"
-
-
-def main() -> None:
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN env missing")
+# -----------------------------
+# MAIN
+# -----------------------------
+def main():
+    log.info("Bot starting... MODE=%s", MODE)
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("ping", cmd_ping))
-    app.add_handler(CommandHandler("eod", cmd_eod))
+    # handlers (RADAR kesin yakalansın diye net CommandHandler)
+    app.add_handler(CommandHandler("ping", ping_cmd))
+    app.add_handler(CommandHandler("eod", eod_cmd))
+    app.add_handler(CommandHandler("radar", radar_cmd))
 
-    logger.info("Bot starting…")
-    app.run_polling(drop_pending_updates=True)
-
+    # polling
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
