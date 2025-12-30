@@ -54,7 +54,6 @@ def normalize_is_ticker(t: str) -> str:
     # Remove .IS if exists for TradingView symbol format
     if base.endswith(".IS"):
         base = base[:-3]
-    # final format: BIST:ASELS
     return f"BIST:{base}"
 
 def format_volume(v: Any) -> str:
@@ -111,9 +110,6 @@ def make_table(rows: List[Dict[str, Any]], title: str) -> str:
     return "\n".join(lines)
 
 def make_table_reason(rows: List[Dict[str, Any]], title: str) -> str:
-    """
-    5 kolon: Hisse / Günlük / Fiyat / Hacim / Not
-    """
     header = f"{'HİSSE ADI':<10} {'GÜNLÜK %':>9} {'FİYAT':>10} {'HACİM':>10}  NOT"
     sep = "-" * len(header)
     lines = [title, "<pre>", header, sep]
@@ -136,64 +132,52 @@ def make_table_reason(rows: List[Dict[str, Any]], title: str) -> str:
 # TradingView Scanner Client
 # -----------------------------
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
-TV_TIMEOUT = 12
+TV_TIMEOUT = 15
+
+TV_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+}
 
 DEFAULT_COLUMNS = [
-    # temel
     "close", "change", "volume",
-    # candle için (TradingView bazen bu kolonları vermeyebilir; vermezse n/a)
     "open", "high", "low",
-    # hacim ortalaması / rvol (bazı hesaplarda farklı isimle dönebiliyor)
     "average_volume_10d_calc",
     "relative_volume_10d_calc",
 ]
 
 def tv_scan_symbols(symbols: List[str], columns: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
-    """
-    Tek request ile çok sembol çekiyoruz => rate limit’e daha dayanıklı.
-
-    KRİTİK DÜZELTME:
-    - TradingView bazen header yoksa boş/garip döndürüyor -> headers ekledik.
-    - Bazen response item'larında 'symbol' alanı gelmiyor -> index fallback ekledik.
-    """
     if not symbols:
         return {}
 
-    cols = columns or DEFAULT_COLUMNS
+   .ops_cols = columns or DEFAULT_COLUMNS
 
     payload = {
         "symbols": {"tickers": symbols},
-        "columns": cols,
+        "columns": ops_cols,
     }
 
-    # ✅ TradingView'in boş dönmemesi için kritik header seti
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://www.tradingview.com/",
-        "Origin": "https://www.tradingview.com",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-
-    for attempt in range(3):
+    for attempt in range(4):
         try:
-            r = requests.post(TV_SCAN_URL, json=payload, headers=headers, timeout=TV_TIMEOUT)
+            r = requests.post(TV_SCAN_URL, json=payload, headers=TV_HEADERS, timeout=TV_TIMEOUT)
 
-            if r.status_code == 429:
+            if r.status_code in (403, 429) or (500 <= r.status_code <= 599):
                 sleep_s = 1.5 * (attempt + 1)
-                logger.warning("TradingView rate limit (429). Sleep %.1fs", sleep_s)
+                logger.warning("TradingView HTTP %s. Retry in %.1fs", r.status_code, sleep_s)
+                # küçük bir body log (spam olmasın)
+                try:
+                    logger.warning("TV body (first 200): %s", (r.text or "")[:200])
+                except Exception:
+                    pass
                 time.sleep(sleep_s)
                 continue
 
-            if r.status_code != 200:
-                logger.warning("TV status=%s body=%s", r.status_code, r.text[:200])
-
             r.raise_for_status()
             data = r.json()
-            items = data.get("data", [])
             out: Dict[str, Dict[str, Any]] = {}
 
-            # 1) Normal eşleme: symbol alanı varsa
+            items = data.get("data", [])
             for it in items:
                 sym = it.get("symbol")
                 d = it.get("d", [])
@@ -202,26 +186,18 @@ def tv_scan_symbols(symbols: List[str], columns: Optional[List[str]] = None) -> 
 
                 short = sym.split(":")[-1].strip().upper()
                 row: Dict[str, Any] = {}
-                for i, c in enumerate(cols):
-                    row[c] = safe_float(d[i]) if i < len(d) else float("nan")
+                for i, c in enumerate(ops_cols):
+                    if i < len(d):
+                        row[c] = safe_float(d[i])
+                    else:
+                        row[c] = float("nan")
                 out[short] = row
-
-            # 2) Fallback: symbol yoksa index ile eşle
-            if not out and items and len(items) == len(symbols):
-                for idx, it in enumerate(items):
-                    req_sym = symbols[idx]  # ör: "BIST:ASELS"
-                    short = req_sym.split(":")[-1].strip().upper()
-                    d = it.get("d", [])
-                    row: Dict[str, Any] = {}
-                    for i, c in enumerate(cols):
-                        row[c] = safe_float(d[i]) if i < len(d) else float("nan")
-                    out[short] = row
 
             return out
 
         except Exception as e:
             logger.exception("TradingView scan error: %s", e)
-            time.sleep(1.0 * (attempt + 1))
+            time.sleep(1.2 * (attempt + 1))
 
     return {}
 
@@ -270,10 +246,6 @@ def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
 # TAIPO Filtreleri (EOD içinde)
 # -----------------------------
 def volume_ratio(row: Dict[str, Any]) -> float:
-    """
-    Hacim / 10g ortalama hacim.
-    TradingView ortalama hacmi vermezse: nan döner.
-    """
     vol = safe_float(row.get("volume"))
     avg = safe_float(row.get("average_volume_10d_calc"))
     if is_nan(vol) or is_nan(avg) or avg == 0:
@@ -281,9 +253,6 @@ def volume_ratio(row: Dict[str, Any]) -> float:
     return vol / avg
 
 def upper_wick_ratio(row: Dict[str, Any]) -> float:
-    """
-    Üst fitil oranı: (high - max(open, close)) / (high - low)
-    """
     o = safe_float(row.get("open"))
     h = safe_float(row.get("high"))
     l = safe_float(row.get("low"))
@@ -293,10 +262,6 @@ def upper_wick_ratio(row: Dict[str, Any]) -> float:
     return (h - max(o, c)) / (h - l)
 
 def select_correlation_trap(rows: List[Dict[str, Any]], xu_change: float) -> List[Dict[str, Any]]:
-    """
-    Endeks düşerken hisse +, hacim de artıyorsa = gizli güç / ayrışma.
-    Kural: Endeks <= -0.8 ve Hisse >= +0.4 ve hacim artıyor
-    """
     out = []
     for r in rows:
         ch = safe_float(r.get("change"))
@@ -304,7 +269,6 @@ def select_correlation_trap(rows: List[Dict[str, Any]], xu_change: float) -> Lis
         if is_nan(ch) or is_nan(xu_change):
             continue
         if xu_change <= -0.80 and ch >= 0.40:
-            # hacim artıyor şartı (VR >= 1.20) — ortalama yoksa eleme yapmayalım
             if (not is_nan(vr) and vr >= 1.20) or is_nan(vr):
                 rr = dict(r)
                 note = "GİZLİ GÜÇ (endeks↓ hisse↑)"
@@ -316,11 +280,6 @@ def select_correlation_trap(rows: List[Dict[str, Any]], xu_change: float) -> Lis
     return out[:10]
 
 def select_delta_thinking(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Delta thinking:
-    1) TOPLAMA: fiyat ~ sabit ama hacim↑ (sessiz hacimlenme)
-    2) Sahte: fiyat↑ ama hacim↓ (VR düşük)
-    """
     accumulation = []
     fake = []
     for r in rows:
@@ -329,13 +288,11 @@ def select_delta_thinking(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, An
         if is_nan(ch):
             continue
 
-        # Sessiz toplama: |change| <= 0.50 ve VR >= 1.80
         if abs(ch) <= 0.50 and (not is_nan(vr) and vr >= 1.80):
             rr = dict(r)
             rr["note"] = f"GÖRÜNMEYEN TOPLAMA | VR:{vr:.2f}x"
             accumulation.append(rr)
 
-        # Sahte: change >= +0.80 ama VR <= 0.85
         if ch >= 0.80 and (not is_nan(vr) and vr <= 0.85):
             rr = dict(r)
             rr["note"] = f"SAHTE YÜKSELİŞ | VR:{vr:.2f}x"
@@ -346,12 +303,6 @@ def select_delta_thinking(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, An
     return accumulation[:10], fake[:10]
 
 def select_early_exit(rows: List[Dict[str, Any]], xu_change: float) -> List[Dict[str, Any]]:
-    """
-    Erken çıkış zekası (uyarı):
-    - Hacim artıyor ama fiyat gitmiyor (VR yüksek + change küçük)
-    - Üst fitil yüksek (satış yeme)
-    - Endeks zayıf ve hisse momentum yavaş (change küçük + VR yüksek)
-    """
     out = []
     for r in rows:
         ch = safe_float(r.get("change"))
@@ -363,15 +314,12 @@ def select_early_exit(rows: List[Dict[str, Any]], xu_change: float) -> List[Dict
 
         reasons = []
 
-        # 1) Hacim↑ fiyat→
         if (not is_nan(vr) and vr >= 2.00) and abs(ch) <= 0.40:
             reasons.append(f"HACİM↑ FİYAT→ (VR:{vr:.2f}x)")
 
-        # 2) Üst fitil yüksek
         if not is_nan(uw) and uw >= 0.60 and (not is_nan(vr) and vr >= 1.30):
             reasons.append(f"ÜST FİTİL↑ (uw:{uw:.2f})")
 
-        # 3) Endeks zayıf + momentum yavaş
         if (not is_nan(xu_change) and xu_change < 0) and abs(ch) <= 0.30 and (not is_nan(vr) and vr >= 1.50):
             reasons.append("ENDEKS↓ + MOMENTUM YAVAŞ")
 
@@ -404,17 +352,12 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     close_s = "n/a" if is_nan(close) else f"{close:,.2f}"
     xu_change_s = "n/a" if is_nan(xu_change) else f"{xu_change:+.2f}%"
 
-    # Verileri çek
     rows = build_rows_from_is_list(bist200_list)
 
-    # İlk 20 (radar preview)
     first20 = rows[:20]
-
-    # TOP 10 HACİM
     rows_with_vol = [r for r in rows if not is_nan(r.get("volume"))]
     top10_vol = sorted(rows_with_vol, key=lambda x: safe_float(x.get("volume")), reverse=True)[:10]
 
-    # Özet mesaj
     msg1 = (
         "📌 <b>BIST100 (XU100) Özet</b>\n"
         f"• Kapanış: <b>{close_s}</b>\n"
@@ -424,27 +367,21 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(msg1, parse_mode=ParseMode.HTML)
 
-    # İlk 20 tablo
     await update.message.reply_text(
         make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>"),
         parse_mode=ParseMode.HTML
     )
 
-    # Top 10 hacim tablo
     if top10_vol:
         await update.message.reply_text(
             make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"),
             parse_mode=ParseMode.HTML
         )
 
-    # -----------------------------
-    # 3'lü TAIPO tabloları
-    # -----------------------------
     corr = select_correlation_trap(rows, xu_change)
     acc, fake = select_delta_thinking(rows)
     exit_warn = select_early_exit(rows, xu_change)
 
-    # 1) Korelasyon / Gizli Güç
     if corr:
         await update.message.reply_text(
             make_table_reason(corr, "🧠 <b>KORELASYON (GİZLİ GÜÇ / AYRIŞMA)</b>\n<i>Endeks düşerken hisse + hacim artışı</i>"),
@@ -453,7 +390,6 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text("🧠 <b>KORELASYON</b>: Bugün kriterlere uyan net aday yok.", parse_mode=ParseMode.HTML)
 
-    # 2) Delta Thinking
     if acc:
         await update.message.reply_text(
             make_table_reason(acc, "🧠 <b>DELTA THINKING — GÖRÜNMEYEN TOPLAMA</b>\n<i>Fiyat sabit/az oynuyor, hacim yükseliyor</i>"),
@@ -462,14 +398,12 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text("🧠 <b>DELTA THINKING</b>: Sessiz toplama filtresi bugün boş.", parse_mode=ParseMode.HTML)
 
-    # Sahte yükseliş (opsiyonel)
     if fake:
         await update.message.reply_text(
             make_table_reason(fake, "⚠️ <b>DELTA THINKING — SAHTE YÜKSELİŞ</b>\n<i>Fiyat ↑ ama hacim zayıf</i>"),
             parse_mode=ParseMode.HTML
         )
 
-    # 3) Erken Çıkış
     if exit_warn:
         await update.message.reply_text(
             make_table_reason(exit_warn, "🚪 <b>ERKEN ÇIKIŞ (KÂR KORUMA / UZAK DUR)</b>\n<i>Hacim↑ fiyat→ / üst fitil / momentum yavaş</i>"),
@@ -479,9 +413,6 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("🚪 <b>ERKEN ÇIKIŞ</b>: Bugün acil uyarı üreten aday yok.", parse_mode=ParseMode.HTML)
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /radar 1..10 => BIST200 listesi 20'lik paketler
-    """
     logger.info("TAIPO_PRO_INTEL | RADAR request: %s", update.message.text)
 
     bist200_list = env_csv("BIST200_TICKERS")
@@ -515,9 +446,6 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Bot Commands (Telegram "/" menüsü)
 # -----------------------------
 async def post_init(app: Application) -> None:
-    """
-    Telegram'da "/" yazınca komutların görünmesi için.
-    """
     try:
         commands = [
             BotCommand("ping", "Bot ayakta mı kontrol"),
