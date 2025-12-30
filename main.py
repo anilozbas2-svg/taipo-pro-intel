@@ -46,10 +46,12 @@ def normalize_is_ticker(t: str) -> str:
     t = t.strip().upper()
     if not t:
         return t
+    # Accept: ASELS, ASELS.IS, BIST:ASELS
     if t.startswith("BIST:"):
         base = t.replace("BIST:", "")
     else:
         base = t
+    # Remove .IS if exists for TradingView symbol format
     if base.endswith(".IS"):
         base = base[:-3]
     return f"BIST:{base}"
@@ -81,12 +83,7 @@ def is_nan(x: Any) -> bool:
         return True
 
 def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
-    return [lst[i:i+size] for i in range(0, len(lst), size)]
-
-def clamp_abs(x: float, limit: float) -> float:
-    if is_nan(x):
-        return x
-    return max(-limit, min(limit, x))
+    return [lst[i:i + size] for i in range(0, len(lst), size)]
 
 def make_table(rows: List[Dict[str, Any]], title: str) -> str:
     header = f"{'HİSSE ADI':<10} {'GÜNLÜK %':>9} {'FİYAT':>10} {'HACİM':>10}"
@@ -110,6 +107,7 @@ def make_table(rows: List[Dict[str, Any]], title: str) -> str:
 def make_table_reason(rows: List[Dict[str, Any]], title: str) -> str:
     header = f"{'HİSSE ADI':<10} {'GÜNLÜK %':>9} {'FİYAT':>10} {'HACİM':>10}  NOT"
     sep = "-" * len(header)
+
     lines = [title, "<pre>", header, sep]
     for r in rows:
         t = r.get("ticker", "n/a")
@@ -132,10 +130,7 @@ def make_table_reason(rows: List[Dict[str, Any]], title: str) -> str:
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
 TV_TIMEOUT = 12
 
-# ✅ Stabil büyük tarama kolonları
 BULK_COLUMNS = ["close", "change", "volume"]
-
-# ✅ Detay kolonlar (şimdilik sadece fallback mantığında duruyor)
 DETAIL_COLUMNS = [
     "close", "change", "volume",
     "open", "high", "low",
@@ -145,15 +140,16 @@ DETAIL_COLUMNS = [
 
 def tv_scan_symbols(symbols: List[str], columns: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
     """
-    Sağlam mod:
-    - Önce istenen kolonlarla dener
-    - Eğer detay kolonlar toplu taramada "NaN patlatırsa" otomatik BULK'a fallback
-    - 'symbol' alanı dönmezse index ile eşler
+    FIX v2:
+    - TradingView bazen 'symbol' yerine 's' alanı döndürüyor.
+    - Bazen symbol hiç dönmüyor -> index ile eşliyoruz.
+    - Bazı günler response formatı değişebiliyor -> debug log basıyoruz.
     """
     if not symbols:
         return {}
 
     cols = columns or BULK_COLUMNS
+    payload = {"symbols": {"tickers": symbols}, "columns": cols}
 
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -165,25 +161,29 @@ def tv_scan_symbols(symbols: List[str], columns: Optional[List[str]] = None) -> 
     def parse_items(items: list, used_cols: list) -> Dict[str, Dict[str, Any]]:
         out: Dict[str, Dict[str, Any]] = {}
 
-        # 1) symbol varsa normal parse
+        # 1) symbol/s varsa
         for it in items:
-            sym = it.get("symbol")
+            sym = it.get("symbol") or it.get("s")  # <-- en kritik fix
             d = it.get("d", [])
             if not sym or not isinstance(d, list):
                 continue
-            short = sym.split(":")[-1].strip().upper()
-            row = {}
+            # bazı durumlarda sym "ok" gibi gelebiliyor, onu atla
+            if isinstance(sym, str) and sym.lower() == "ok":
+                continue
+
+            short = str(sym).split(":")[-1].strip().upper()
+            row: Dict[str, Any] = {}
             for i, c in enumerate(used_cols):
                 row[c] = safe_float(d[i]) if i < len(d) else float("nan")
             out[short] = row
 
-        # 2) symbol yoksa index eşle
+        # 2) hala boşsa ve uzunluk uyuyorsa index eşle
         if not out and items and len(items) == len(symbols):
             for idx, it in enumerate(items):
                 req_sym = symbols[idx]
-                short = req_sym.split(":")[-1].strip().upper()
+                short = str(req_sym).split(":")[-1].strip().upper()
                 d = it.get("d", [])
-                row = {}
+                row: Dict[str, Any] = {}
                 for i, c in enumerate(used_cols):
                     row[c] = safe_float(d[i]) if i < len(d) else float("nan")
                 out[short] = row
@@ -191,9 +191,6 @@ def tv_scan_symbols(symbols: List[str], columns: Optional[List[str]] = None) -> 
         return out
 
     def looks_broken(out: Dict[str, Dict[str, Any]]) -> bool:
-        """
-        Eğer çoğu hissede close/change/volume NaN ise bu tarama kırık sayılır.
-        """
         if not out:
             return True
         sample = list(out.values())[:20]
@@ -210,31 +207,35 @@ def tv_scan_symbols(symbols: List[str], columns: Optional[List[str]] = None) -> 
 
     for attempt in range(3):
         try:
-            payload = {"symbols": {"tickers": symbols}, "columns": cols}
             r = requests.post(TV_SCAN_URL, json=payload, headers=headers, timeout=TV_TIMEOUT)
 
             if r.status_code == 429:
                 sleep_s = 1.5 * (attempt + 1)
-                logger.warning("TradingView rate limit (429). Sleep %.1fs", sleep_s)
+                logger.warning("TV 429 rate limit. Sleep %.1fs", sleep_s)
                 time.sleep(sleep_s)
                 continue
 
             if r.status_code != 200:
-                logger.warning("TV status=%s body=%s", r.status_code, r.text[:200])
-            r.raise_for_status()
+                logger.warning("TV status=%s body=%s", r.status_code, r.text[:300])
 
+            r.raise_for_status()
             data = r.json()
             items = data.get("data", [])
 
+            # DEBUG (bugün bozulduysa burada yakalarız)
+            if attempt == 0:
+                sample_keys = list(items[0].keys()) if items else []
+                logger.info("TV scan ok. items=%s first_keys=%s cols=%s", len(items), sample_keys, cols)
+
             out = parse_items(items, cols)
 
-            # ✅ Detay kolonla kırıldıysa BULK'a düş
+            # Eğer detail ile patlıyorsa bulk'a düş
             if cols != BULK_COLUMNS and looks_broken(out):
-                logger.warning("TV scan looks broken with detail columns. Falling back to BULK_COLUMNS.")
+                logger.warning("TV scan looks broken with DETAIL. Falling back to BULK.")
                 payload2 = {"symbols": {"tickers": symbols}, "columns": BULK_COLUMNS}
                 r2 = requests.post(TV_SCAN_URL, json=payload2, headers=headers, timeout=TV_TIMEOUT)
                 if r2.status_code != 200:
-                    logger.warning("TV fallback status=%s body=%s", r2.status_code, r2.text[:200])
+                    logger.warning("TV fallback status=%s body=%s", r2.status_code, r2.text[:300])
                 r2.raise_for_status()
                 data2 = r2.json()
                 items2 = data2.get("data", [])
@@ -258,8 +259,9 @@ def get_xu100_summary() -> Tuple[float, float]:
 
 def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
     """
-    ✅ FIX: BIST200 büyük tarama kesin dolsun diye BULK_COLUMNS ile çekiyoruz.
-    Detay alanları şimdilik nan (sonraki adımda adaylara özel DETAIL tarama ekleriz).
+    ✅ Stabil:
+    - Toplu listeyi BULK ile çek (close/change/volume kesin dolsun)
+    - Detay kolonlar: istersen daha sonra “adaylara özel” DETAIL tarama ile doldururuz.
     """
     tv_symbols = [normalize_is_ticker(t) for t in is_list if t.strip()]
     tv_map = tv_scan_symbols(tv_symbols, columns=BULK_COLUMNS)
@@ -268,18 +270,24 @@ def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
     for original in is_list:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
+
         rows.append({
             "ticker": short,
             "close": d.get("close", float("nan")),
             "change": d.get("change", float("nan")),
             "volume": d.get("volume", float("nan")),
-            # detay (şimdilik yok)
+            # detay (şimdilik boş)
             "open": float("nan"),
             "high": float("nan"),
             "low": float("nan"),
             "average_volume_10d_calc": float("nan"),
             "relative_volume_10d_calc": float("nan"),
         })
+
+    # DEBUG: ilk 3 hisse gerçekten dolmuş mu?
+    if rows:
+        logger.info("Rows built. sample=%s", rows[:3])
+
     return rows
 
 # -----------------------------
