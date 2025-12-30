@@ -2,7 +2,6 @@ import os
 import re
 import math
 import time
-import sys
 import logging
 from typing import Dict, List, Any, Tuple
 
@@ -11,9 +10,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.2")
-INSTANCE_ID = os.getenv("RENDER_INSTANCE_ID", str(os.getpid()))
-LOCK_PATH = "/tmp/taipo_bot.lock"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.3")
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -22,57 +19,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("TAIPO_PRO_INTEL")
 
-
-def _pid_is_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        return False
-
-
-def acquire_lock_or_exit() -> None:
-    """
-    Aynı container içinde ikinci process açılırsa Telegram Conflict olabilir.
-    Lock ikinci instance’ı kapatır.
-    Ayrıca eski PID ölüyse lock’u otomatik temizler.
-    """
-    if os.path.exists(LOCK_PATH):
-        try:
-            with open(LOCK_PATH, "r", encoding="utf-8") as f:
-                old_pid = int((f.read() or "0").strip())
-        except Exception:
-            old_pid = 0
-
-        if old_pid and _pid_is_running(old_pid):
-            print("LOCK exists -> another instance is running. Exiting.")
-            sys.exit(0)
-        else:
-            try:
-                os.remove(LOCK_PATH)
-            except Exception:
-                pass
-
-    with open(LOCK_PATH, "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))
-
-    import atexit
-
-    def _cleanup() -> None:
-        try:
-            os.remove(LOCK_PATH)
-        except Exception:
-            pass
-
-    atexit.register(_cleanup)
+TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
+TV_TIMEOUT = 12
 
 
 def env_csv(name: str, default: str = "") -> List[str]:
     raw = os.getenv(name, default).strip()
     if not raw:
         return []
-    parts = [p.strip() for p in raw.split(",")]
-    return [p for p in parts if p]
+    return [p.strip() for p in raw.split(",") if p.strip()]
 
 
 def normalize_is_ticker(t: str) -> str:
@@ -86,6 +41,13 @@ def normalize_is_ticker(t: str) -> str:
     if base.endswith(".IS"):
         base = base[:-3]
     return f"BIST:{base}"
+
+
+def safe_float(x: Any) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return float("nan")
 
 
 def format_volume(v: Any) -> str:
@@ -103,39 +65,8 @@ def format_volume(v: Any) -> str:
     return f"{n:.0f}"
 
 
-def safe_float(x: Any) -> float:
-    try:
-        return float(x)
-    except Exception:
-        return float("nan")
-
-
 def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
     return [lst[i:i + size] for i in range(0, len(lst), size)]
-
-
-def make_table(rows: List[Dict[str, Any]], title: str) -> str:
-    header = f"{'HİSSE ADI':<10} {'GÜNLÜK %':>9} {'FİYAT':>10} {'HACİM':>10}"
-    sep = "-" * len(header)
-
-    lines = [title, "<pre>", header, sep]
-    for r in rows:
-        t = r.get("ticker", "n/a")
-        ch = r.get("change", float("nan"))
-        cl = r.get("close", float("nan"))
-        vol = r.get("volume", None)
-
-        ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
-        cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
-        vol_s = format_volume(vol)
-
-        lines.append(f"{t:<10} {ch_s:>9} {cl_s:>10} {vol_s:>10}")
-    lines.append("</pre>")
-    return "\n".join(lines)
-
-
-TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
-TV_TIMEOUT = 12
 
 
 def tv_scan_symbols(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -188,14 +119,71 @@ def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
         if not d:
-            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": None})
+            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan")})
         else:
             rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"]})
     return rows
 
 
+def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> None:
+    """
+    Adım-1 (stabil etiket):
+    - Top10 hacim eşiği: Top10’un 10. sırası (min hacim)
+    - Endeks Korelasyon Tuzagı (AYRIŞMA): xu100 <= -0.80 ve hisse >= +0.40 ve hacim Top10 eşiği üstü
+    - Delta Thinking (TOPLAMA): xu100 <= -0.80 ve hisse <= +0.20 ve hacim Top10 eşiği üstü
+    - KÂR KORUMA: hisse >= +4.00
+    """
+    rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
+    top10 = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
+    top10_min_vol = top10[-1]["volume"] if len(top10) == 10 else (top10[-1]["volume"] if top10 else float("inf"))
+
+    for r in rows:
+        ch = r.get("change", float("nan"))
+        vol = r.get("volume", float("nan"))
+
+        if ch != ch:  # nan
+            r["signal"] = "-"
+            continue
+
+        if ch >= 4.0:
+            r["signal"] = "⚠️ KÂR"
+            continue
+
+        if (vol == vol) and (vol >= top10_min_vol) and (xu100_change == xu100_change) and (xu100_change <= -0.80):
+            if ch >= 0.40:
+                r["signal"] = "🧠 AYRIŞMA"
+                continue
+            if ch <= 0.20:
+                r["signal"] = "🧠 TOPLAMA"
+                continue
+
+        r["signal"] = "-"
+
+
+def make_table(rows: List[Dict[str, Any]], title: str) -> str:
+    header = f"{'HİSSE':<8} {'SİNYAL':<11} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
+    sep = "-" * len(header)
+
+    lines = [title, "<pre>", header, sep]
+    for r in rows:
+        t = r.get("ticker", "n/a")
+        sig = r.get("signal", "-")
+
+        ch = r.get("change", float("nan"))
+        cl = r.get("close", float("nan"))
+        vol = r.get("volume", float("nan"))
+
+        ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
+        cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
+        vol_s = format_volume(vol)
+
+        lines.append(f"{t:<8} {sig:<11} {ch_s:>8} {cl_s:>10} {vol_s:>10}")
+    lines.append("</pre>")
+    return "\n".join(lines)
+
+
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(f"🏓 Pong! Bot ayakta. ({BOT_VERSION}) | instance={INSTANCE_ID}")
+    await update.message.reply_text(f"🏓 Pong! Bot ayakta. ({BOT_VERSION})")
 
 
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -204,20 +192,21 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    close, change = get_xu100_summary()
+    close, xu_change = get_xu100_summary()
     close_s = "n/a" if (close != close) else f"{close:,.2f}"
-    change_s = "n/a" if (change != change) else f"{change:+.2f}%"
+    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
     rows = build_rows_from_is_list(bist200_list)
-    first20 = rows[:20]
+    compute_signal_rows(rows, xu_change)
 
+    first20 = rows[:20]
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10_vol = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
 
     msg1 = (
         "📌 <b>BIST100 (XU100) Özet</b>\n"
         f"• Kapanış: <b>{close_s}</b>\n"
-        f"• Günlük: <b>{change_s}</b>\n\n"
+        f"• Günlük: <b>{xu_change_s}</b>\n\n"
         "📡 Radar için:\n"
         "• /radar 1 … /radar 10\n\n"
         f"⚙️ Sürüm: <b>{BOT_VERSION}</b>"
@@ -228,8 +217,6 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if top10_vol:
         await update.message.reply_text(make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"), parse_mode=ParseMode.HTML)
-    else:
-        await update.message.reply_text("⚠️ Hacim verisi bulunamadı (TOP10 üretilemedi).")
 
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -260,8 +247,6 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def main() -> None:
-    acquire_lock_or_exit()
-
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
@@ -271,16 +256,8 @@ def main() -> None:
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("radar", cmd_radar))
 
-    logger.info("Bot starting... version=%s instance=%s", BOT_VERSION, INSTANCE_ID)
-
-    # Timeout fix (gecikme/ReadTimeout için)
-    app.run_polling(
-        drop_pending_updates=True,
-        read_timeout=30,
-        write_timeout=30,
-        connect_timeout=30,
-        pool_timeout=30,
-    )
+    logger.info("Bot starting... version=%s", BOT_VERSION)
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
