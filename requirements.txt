@@ -1,2 +1,4 @@
-python-telegram-bot[job-queue]==22.5
-requests==2.32.3
+python-telegram-bot[job-queue]==22.1
+tradingview-screener>=2.5.0
+pandas>=2.0.0
+requests>=2.31.0
