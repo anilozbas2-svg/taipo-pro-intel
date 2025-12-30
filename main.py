@@ -46,15 +46,12 @@ def normalize_is_ticker(t: str) -> str:
     t = t.strip().upper()
     if not t:
         return t
-    # Accept: ASELS, ASELS.IS, BIST:ASELS
     if t.startswith("BIST:"):
         base = t.replace("BIST:", "")
     else:
         base = t
-    # Remove .IS if exists for TradingView symbol format
     if base.endswith(".IS"):
         base = base[:-3]
-    # final format: BIST:ASELS
     return f"BIST:{base}"
 
 def format_volume(v: Any) -> str:
@@ -111,9 +108,6 @@ def make_table(rows: List[Dict[str, Any]], title: str) -> str:
     return "\n".join(lines)
 
 def make_table_reason(rows: List[Dict[str, Any]], title: str) -> str:
-    """
-    5 kolon: Hisse / Günlük / Fiyat / Hacim / Not
-    """
     header = f"{'HİSSE ADI':<10} {'GÜNLÜK %':>9} {'FİYAT':>10} {'HACİM':>10}  NOT"
     sep = "-" * len(header)
     lines = [title, "<pre>", header, sep]
@@ -138,39 +132,85 @@ def make_table_reason(rows: List[Dict[str, Any]], title: str) -> str:
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
 TV_TIMEOUT = 12
 
-DEFAULT_COLUMNS = [
-    # temel
+# ✅ Stabil büyük tarama kolonları
+BULK_COLUMNS = ["close", "change", "volume"]
+
+# ✅ Detay kolonlar (şimdilik sadece fallback mantığında duruyor)
+DETAIL_COLUMNS = [
     "close", "change", "volume",
-    # candle için (TradingView bazen bu kolonları vermeyebilir; vermezse n/a)
     "open", "high", "low",
-    # hacim ortalaması / rvol (bazı hesaplarda farklı isimle dönebiliyor)
     "average_volume_10d_calc",
     "relative_volume_10d_calc",
 ]
 
 def tv_scan_symbols(symbols: List[str], columns: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
     """
-    FIX: TradingView bazen item içinde 'symbol' alanını dönmüyor.
-         Bu durumda data sırası, request tickers sırası ile aynı olur.
-         -> index ile eşleştirip out map üretiyoruz.
+    Sağlam mod:
+    - Önce istenen kolonlarla dener
+    - Eğer detay kolonlar toplu taramada "NaN patlatırsa" otomatik BULK'a fallback
+    - 'symbol' alanı dönmezse index ile eşler
     """
     if not symbols:
         return {}
 
-    cols = columns or DEFAULT_COLUMNS
-    payload = {
-        "symbols": {"tickers": symbols},
-        "columns": cols,
-    }
+    cols = columns or BULK_COLUMNS
 
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Referer": "https://www.tradingview.com/",
         "Origin": "https://www.tradingview.com",
+        "Content-Type": "application/json",
     }
+
+    def parse_items(items: list, used_cols: list) -> Dict[str, Dict[str, Any]]:
+        out: Dict[str, Dict[str, Any]] = {}
+
+        # 1) symbol varsa normal parse
+        for it in items:
+            sym = it.get("symbol")
+            d = it.get("d", [])
+            if not sym or not isinstance(d, list):
+                continue
+            short = sym.split(":")[-1].strip().upper()
+            row = {}
+            for i, c in enumerate(used_cols):
+                row[c] = safe_float(d[i]) if i < len(d) else float("nan")
+            out[short] = row
+
+        # 2) symbol yoksa index eşle
+        if not out and items and len(items) == len(symbols):
+            for idx, it in enumerate(items):
+                req_sym = symbols[idx]
+                short = req_sym.split(":")[-1].strip().upper()
+                d = it.get("d", [])
+                row = {}
+                for i, c in enumerate(used_cols):
+                    row[c] = safe_float(d[i]) if i < len(d) else float("nan")
+                out[short] = row
+
+        return out
+
+    def looks_broken(out: Dict[str, Dict[str, Any]]) -> bool:
+        """
+        Eğer çoğu hissede close/change/volume NaN ise bu tarama kırık sayılır.
+        """
+        if not out:
+            return True
+        sample = list(out.values())[:20]
+        if not sample:
+            return True
+        bad = 0
+        for r in sample:
+            c = r.get("close", float("nan"))
+            ch = r.get("change", float("nan"))
+            v = r.get("volume", float("nan"))
+            if is_nan(c) and is_nan(ch) and is_nan(v):
+                bad += 1
+        return bad >= max(5, int(len(sample) * 0.6))
 
     for attempt in range(3):
         try:
+            payload = {"symbols": {"tickers": symbols}, "columns": cols}
             r = requests.post(TV_SCAN_URL, json=payload, headers=headers, timeout=TV_TIMEOUT)
 
             if r.status_code == 429:
@@ -185,31 +225,21 @@ def tv_scan_symbols(symbols: List[str], columns: Optional[List[str]] = None) -> 
 
             data = r.json()
             items = data.get("data", [])
-            out: Dict[str, Dict[str, Any]] = {}
 
-            # 1) Symbol alanı varsa -> normal yol
-            for it in items:
-                sym = it.get("symbol")
-                d = it.get("d", [])
-                if not sym or not isinstance(d, list):
-                    continue
+            out = parse_items(items, cols)
 
-                short = sym.split(":")[-1].strip().upper()
-                row: Dict[str, Any] = {}
-                for i, c in enumerate(cols):
-                    row[c] = safe_float(d[i]) if i < len(d) else float("nan")
-                out[short] = row
-
-            # 2) Symbol alanı yoksa -> index eşlemesi (asıl fix)
-            if not out and items and len(items) == len(symbols):
-                for idx, it in enumerate(items):
-                    req_sym = symbols[idx]  # ör: "BIST:ASELS"
-                    short = req_sym.split(":")[-1].strip().upper()
-                    d = it.get("d", [])
-                    row: Dict[str, Any] = {}
-                    for i, c in enumerate(cols):
-                        row[c] = safe_float(d[i]) if i < len(d) else float("nan")
-                    out[short] = row
+            # ✅ Detay kolonla kırıldıysa BULK'a düş
+            if cols != BULK_COLUMNS and looks_broken(out):
+                logger.warning("TV scan looks broken with detail columns. Falling back to BULK_COLUMNS.")
+                payload2 = {"symbols": {"tickers": symbols}, "columns": BULK_COLUMNS}
+                r2 = requests.post(TV_SCAN_URL, json=payload2, headers=headers, timeout=TV_TIMEOUT)
+                if r2.status_code != 200:
+                    logger.warning("TV fallback status=%s body=%s", r2.status_code, r2.text[:200])
+                r2.raise_for_status()
+                data2 = r2.json()
+                items2 = data2.get("data", [])
+                out2 = parse_items(items2, BULK_COLUMNS)
+                return out2
 
             return out
 
@@ -227,37 +257,29 @@ def get_xu100_summary() -> Tuple[float, float]:
     return close, change
 
 def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
+    """
+    ✅ FIX: BIST200 büyük tarama kesin dolsun diye BULK_COLUMNS ile çekiyoruz.
+    Detay alanları şimdilik nan (sonraki adımda adaylara özel DETAIL tarama ekleriz).
+    """
     tv_symbols = [normalize_is_ticker(t) for t in is_list if t.strip()]
-    tv_map = tv_scan_symbols(tv_symbols)
+    tv_map = tv_scan_symbols(tv_symbols, columns=BULK_COLUMNS)
 
     rows: List[Dict[str, Any]] = []
     for original in is_list:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
-        if not d:
-            rows.append({
-                "ticker": short,
-                "close": float("nan"),
-                "change": float("nan"),
-                "volume": float("nan"),
-                "open": float("nan"),
-                "high": float("nan"),
-                "low": float("nan"),
-                "average_volume_10d_calc": float("nan"),
-                "relative_volume_10d_calc": float("nan"),
-            })
-        else:
-            rows.append({
-                "ticker": short,
-                "close": d.get("close", float("nan")),
-                "change": d.get("change", float("nan")),
-                "volume": d.get("volume", float("nan")),
-                "open": d.get("open", float("nan")),
-                "high": d.get("high", float("nan")),
-                "low": d.get("low", float("nan")),
-                "average_volume_10d_calc": d.get("average_volume_10d_calc", float("nan")),
-                "relative_volume_10d_calc": d.get("relative_volume_10d_calc", float("nan")),
-            })
+        rows.append({
+            "ticker": short,
+            "close": d.get("close", float("nan")),
+            "change": d.get("change", float("nan")),
+            "volume": d.get("volume", float("nan")),
+            # detay (şimdilik yok)
+            "open": float("nan"),
+            "high": float("nan"),
+            "low": float("nan"),
+            "average_volume_10d_calc": float("nan"),
+            "relative_volume_10d_calc": float("nan"),
+        })
     return rows
 
 # -----------------------------
