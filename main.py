@@ -8,12 +8,13 @@
 #   WATCHLIST_BIST=... (opsiyonel)
 #   MODE=prod (opsiyonel)
 #   BIST_CURRENCY=TRY (opsiyonel)
-#   LOG_LEVEL=INFO (opsiyonel)
+#   BOT_VERSION=v1.2 (opsiyonel)
 
 import os
 import re
 import math
 import time
+import sys
 import logging
 from typing import Dict, List, Any, Tuple
 
@@ -21,6 +22,41 @@ import requests
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
+
+# -----------------------------
+# Version / Instance (teşhis)
+# -----------------------------
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.2")
+INSTANCE_ID = os.getenv("RENDER_INSTANCE_ID", str(os.getpid()))
+
+# -----------------------------
+# Lock (tek instance garanti) -> Conflict fix
+# -----------------------------
+LOCK_PATH = "/tmp/taipo_bot.lock"
+
+
+def acquire_lock_or_exit() -> None:
+    """
+    Aynı container içinde ikinci process start ederse Telegram 'Conflict' atabiliyor.
+    Bu lock ikinci instance'ı sessizce kapatır => sistemi bozmaz, sadece çakışmayı önler.
+    """
+    if os.path.exists(LOCK_PATH):
+        print("LOCK exists -> another instance is running. Exiting.")
+        sys.exit(0)
+
+    with open(LOCK_PATH, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
+
+    import atexit
+
+    def _cleanup() -> None:
+        try:
+            os.remove(LOCK_PATH)
+        except Exception:
+            pass
+
+    atexit.register(_cleanup)
+
 
 # -----------------------------
 # Logging
@@ -31,8 +67,6 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("TAIPO_PRO_INTEL")
-
-VERSION = "v1.2"
 
 # -----------------------------
 # Helpers
@@ -45,17 +79,22 @@ def env_csv(name: str, default: str = "") -> List[str]:
     parts = [p for p in parts if p]
     return parts
 
+
 def normalize_is_ticker(t: str) -> str:
     t = t.strip().upper()
     if not t:
         return t
+    # Accept: ASELS, ASELS.IS, BIST:ASELS
     if t.startswith("BIST:"):
         base = t.replace("BIST:", "")
     else:
         base = t
+    # Remove .IS if exists for TradingView symbol format
     if base.endswith(".IS"):
         base = base[:-3]
+    # final format: BIST:ASELS
     return f"BIST:{base}"
+
 
 def format_volume(v: Any) -> str:
     try:
@@ -71,86 +110,25 @@ def format_volume(v: Any) -> str:
         return f"{n/1_000:.2f}K"
     return f"{n:.0f}"
 
+
 def safe_float(x: Any) -> float:
     try:
         return float(x)
     except Exception:
         return float("nan")
 
+
 def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
-    return [lst[i:i+size] for i in range(0, len(lst), size)]
+    return [lst[i:i + size] for i in range(0, len(lst), size)]
 
-def is_num(x: Any) -> bool:
-    return isinstance(x, (int, float)) and not math.isnan(float(x))
-
-def volume_strength_map(rows: List[Dict[str, Any]]) -> Dict[str, float]:
-    """
-    Her hissenin hacmini, tüm liste içindeki göreli güce çevir.
-    0.0 - 1.0 arası skor: 1.0 en yüksek hacim tarafı.
-    """
-    vols = []
-    for r in rows:
-        v = r.get("volume")
-        if is_num(v):
-            vols.append(float(v))
-    vols = sorted(vols)
-    if not vols:
-        return {}
-
-    def percentile(v: float) -> float:
-        # basit percentile
-        # kaç tanesi <= v
-        lo = 0
-        hi = len(vols)
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if vols[mid] <= v:
-                lo = mid + 1
-            else:
-                hi = mid
-        return lo / len(vols)
-
-    out = {}
-    for r in rows:
-        t = r.get("ticker")
-        v = r.get("volume")
-        if t and is_num(v):
-            out[t] = percentile(float(v))
-    return out
-
-def classify_signal(
-    ticker: str,
-    stock_change: float,
-    stock_vol_strength: float,
-    xu100_change: float,
-) -> str:
-    """
-    Sinyaller:
-    🧠 AYRIŞMA: Endeks <= -0.80 ve hisse >= +0.40 ve hacim güçlü (>= 0.80)
-    🐜 TOPLAMA: |hisse değişim| <= 0.35 ve hacim güçlü (>= 0.85)
-    """
-    if not is_num(stock_change):
-        return "—"
-
-    # Güçlü ayrışma (endeks düşerken hisse + hacim)
-    if is_num(xu100_change) and xu100_change <= -0.80:
-        if stock_change >= 0.40 and stock_vol_strength >= 0.80:
-            return "🧠 AYRIŞMA"
-
-    # Toplama (fiyat çok oynamıyor ama hacim yüksek)
-    if abs(stock_change) <= 0.35 and stock_vol_strength >= 0.85:
-        return "🐜 TOPLAMA"
-
-    return "—"
 
 def make_table(rows: List[Dict[str, Any]], title: str) -> str:
-    header = f"{'HİSSE':<8} {'SİNYAL':<10} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
+    header = f"{'HİSSE ADI':<10} {'GÜNLÜK %':>9} {'FİYAT':>10} {'HACİM':>10}"
     sep = "-" * len(header)
 
     lines = [title, "<pre>", header, sep]
     for r in rows:
         t = r.get("ticker", "n/a")
-        sig = r.get("signal", "—")
         ch = r.get("change", float("nan"))
         cl = r.get("close", float("nan"))
         vol = r.get("volume", None)
@@ -159,9 +137,10 @@ def make_table(rows: List[Dict[str, Any]], title: str) -> str:
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
         vol_s = format_volume(vol)
 
-        lines.append(f"{t:<8} {sig:<10} {ch_s:>8} {cl_s:>10} {vol_s:>10}")
+        lines.append(f"{t:<10} {ch_s:>9} {cl_s:>10} {vol_s:>10}")
     lines.append("</pre>")
     return "\n".join(lines)
+
 
 # -----------------------------
 # TradingView Scanner Client
@@ -169,7 +148,12 @@ def make_table(rows: List[Dict[str, Any]], title: str) -> str:
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
 TV_TIMEOUT = 12
 
+
 def tv_scan_symbols(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Tek request ile çok sembol çekiyoruz => rate limit’e daha dayanıklı.
+    Dönen map: { 'ASELS': {'close':..., 'change':..., 'volume':...}, ... }
+    """
     if not symbols:
         return {}
 
@@ -209,12 +193,17 @@ def tv_scan_symbols(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
     return {}
 
+
 def get_xu100_summary() -> Tuple[float, float]:
+    """
+    XU100 için close + günlük değişim. TradingView'de genelde BIST:XU100.
+    """
     m = tv_scan_symbols(["BIST:XU100"])
     d = m.get("XU100", {})
     close = d.get("close", float("nan"))
     change = d.get("change", float("nan"))
     return close, change
+
 
 def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
     tv_symbols = [normalize_is_ticker(t) for t in is_list if t.strip()]
@@ -225,16 +214,18 @@ def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
         if not d:
-            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan")})
+            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": None})
         else:
             rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"]})
     return rows
+
 
 # -----------------------------
 # Telegram Handlers
 # -----------------------------
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(f"🏓 Pong! Bot ayakta. ({VERSION})")
+    await update.message.reply_text(f"🏓 Pong! Bot ayakta. ({BOT_VERSION}) | instance={INSTANCE_ID}")
+
 
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("TAIPO_PRO_INTEL | EOD request")
@@ -244,42 +235,23 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    xu_close, xu_change = get_xu100_summary()
-    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
-    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
+    close, change = get_xu100_summary()
+    close_s = "n/a" if (close != close) else f"{close:,.2f}"
+    change_s = "n/a" if (change != change) else f"{change:+.2f}%"
 
     rows = build_rows_from_is_list(bist200_list)
-
-    # hacim gücü (0-1)
-    vmap = volume_strength_map(rows)
-
-    # sinyal hesapla
-    for r in rows:
-        t = r.get("ticker", "")
-        ch = r.get("change", float("nan"))
-        vs = vmap.get(t, 0.0)
-        r["signal"] = classify_signal(t, ch, vs, xu_change)
-
     first20 = rows[:20]
 
-    rows_with_vol = [r for r in rows if is_num(r.get("volume"))]
-    top10_vol = sorted(rows_with_vol, key=lambda x: float(x.get("volume", 0.0)), reverse=True)[:10]
-
-    # Top10 tablosunda da sinyal göstermek için:
-    top10_vmap = volume_strength_map(top10_vol)
-    for r in top10_vol:
-        t = r.get("ticker", "")
-        ch = r.get("change", float("nan"))
-        vs = top10_vmap.get(t, 0.0)  # küçük listede göreli
-        r["signal"] = classify_signal(t, ch, vs, xu_change)
+    rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
+    top10_vol = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
 
     msg1 = (
         "📌 <b>BIST100 (XU100) Özet</b>\n"
-        f"• Kapanış: <b>{xu_close_s}</b>\n"
-        f"• Günlük: <b>{xu_change_s}</b>\n\n"
+        f"• Kapanış: <b>{close_s}</b>\n"
+        f"• Günlük: <b>{change_s}</b>\n\n"
         "📡 Radar için:\n"
         "• /radar 1 … /radar 10\n\n"
-        f"⚙️ Sürüm: <b>{VERSION}</b>"
+        f"⚙️ Sürüm: <b>{BOT_VERSION}</b>"
     )
     await update.message.reply_text(msg1, parse_mode=ParseMode.HTML)
 
@@ -293,18 +265,9 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"),
             parse_mode=ParseMode.HTML
         )
+    else:
+        await update.message.reply_text("⚠️ Hacim verisi bulunamadı (TOP10 üretilemedi).")
 
-    # Sinyal özeti
-    ayrisma = [r["ticker"] for r in rows if r.get("signal") == "🧠 AYRIŞMA"]
-    toplama = [r["ticker"] for r in rows if r.get("signal") == "🐜 TOPLAMA"]
-
-    msg2 = (
-        f"🧠 <b>Sinyal Özeti ({VERSION})</b>\n"
-        f"• 🐜 TOPLAMA: {', '.join(toplama) if toplama else '—'}\n"
-        f"• 🧠 AYRIŞMA: {', '.join(ayrisma) if ayrisma else '—'}\n\n"
-        f"Not: {VERSION}’de “AYRIŞMA”, endeks düşüşünde (+) hisse ve güçlü hacim koşuluyla üretilir."
-    )
-    await update.message.reply_text(msg2, parse_mode=ParseMode.HTML)
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("TAIPO_PRO_INTEL | RADAR request: %s", update.message.text)
@@ -320,6 +283,7 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             n = int(re.sub(r"\D+", "", context.args[0]))
         except Exception:
             n = 1
+
     if n < 1:
         n = 1
 
@@ -330,25 +294,20 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"❌ /radar 1–{total_parts} arası. (Sen: {n})")
         return
 
-    xu_close, xu_change = get_xu100_summary()
-
     part_list = chunks[n - 1]
     rows = build_rows_from_is_list(part_list)
 
-    vmap = volume_strength_map(rows)
-    for r in rows:
-        t = r.get("ticker", "")
-        ch = r.get("change", float("nan"))
-        vs = vmap.get(t, 0.0)
-        r["signal"] = classify_signal(t, ch, vs, xu_change)
-
     title = f"📡 <b>BIST200 RADAR – Parça {n}/{total_parts}</b>\n(20 hisse)"
     await update.message.reply_text(make_table(rows, title), parse_mode=ParseMode.HTML)
+
 
 # -----------------------------
 # Main
 # -----------------------------
 def main() -> None:
+    # Conflict hatasını bitiren kilit
+    acquire_lock_or_exit()
+
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
@@ -359,8 +318,9 @@ def main() -> None:
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("radar", cmd_radar))
 
-    logger.info("Bot starting...")
+    logger.info("Bot starting... version=%s instance=%s", BOT_VERSION, INSTANCE_ID)
     app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
