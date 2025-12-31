@@ -10,7 +10,10 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.3")
+# -----------------------------
+# Config
+# -----------------------------
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.1").strip() or "v1.1"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -22,13 +25,14 @@ logger = logging.getLogger("TAIPO_PRO_INTEL")
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
 TV_TIMEOUT = 12
 
-
+# -----------------------------
+# Helpers
+# -----------------------------
 def env_csv(name: str, default: str = "") -> List[str]:
     raw = os.getenv(name, default).strip()
     if not raw:
         return []
     return [p.strip() for p in raw.split(",") if p.strip()]
-
 
 def normalize_is_ticker(t: str) -> str:
     t = t.strip().upper()
@@ -42,13 +46,11 @@ def normalize_is_ticker(t: str) -> str:
         base = base[:-3]
     return f"BIST:{base}"
 
-
 def safe_float(x: Any) -> float:
     try:
         return float(x)
     except Exception:
         return float("nan")
-
 
 def format_volume(v: Any) -> str:
     try:
@@ -64,11 +66,12 @@ def format_volume(v: Any) -> str:
         return f"{n/1_000:.2f}K"
     return f"{n:.0f}"
 
-
 def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
     return [lst[i:i + size] for i in range(0, len(lst), size)]
 
-
+# -----------------------------
+# TradingView Scanner
+# -----------------------------
 def tv_scan_symbols(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
@@ -83,8 +86,8 @@ def tv_scan_symbols(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 continue
             r.raise_for_status()
             data = r.json()
-            out: Dict[str, Dict[str, Any]] = {}
 
+            out: Dict[str, Dict[str, Any]] = {}
             for it in data.get("data", []):
                 sym = it.get("symbol") or it.get("s")
                 d = it.get("d", [])
@@ -103,12 +106,10 @@ def tv_scan_symbols(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
     return {}
 
-
 def get_xu100_summary() -> Tuple[float, float]:
     m = tv_scan_symbols(["BIST:XU100"])
     d = m.get("XU100", {})
     return d.get("close", float("nan")), d.get("change", float("nan"))
-
 
 def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
     tv_symbols = [normalize_is_ticker(t) for t in is_list if t.strip()]
@@ -119,19 +120,21 @@ def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
         if not d:
-            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan")})
+            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-"})
         else:
-            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"]})
+            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-"})
     return rows
 
-
+# -----------------------------
+# 3'lü sistem (stabil)
+# -----------------------------
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> None:
     """
-    Adım-1 (stabil etiket):
-    - Top10 hacim eşiği: Top10’un 10. sırası (min hacim)
-    - Endeks Korelasyon Tuzagı (AYRIŞMA): xu100 <= -0.80 ve hisse >= +0.40 ve hacim Top10 eşiği üstü
-    - Delta Thinking (TOPLAMA): xu100 <= -0.80 ve hisse <= +0.20 ve hacim Top10 eşiği üstü
-    - KÂR KORUMA: hisse >= +4.00
+    v1.1 davranışı:
+    - Top10 hacim eşiğini referans alır (Top10’un 10. sırası)
+    - TOPLAMA: Top10 hacimde olup günlük değişim küçük/orta (|%| <= 0.60)  -> 🧠 + altta "TOPLAMA"
+    - AYRIŞMA: Endeks sert düşüşte (<= -0.80) iken hisse +0.40 ve üstü + Top10 hacim -> 🧠 + altta "AYRIŞMA"
+    - KÂR KORUMA: hisse >= +4.00 -> 🧠 değil ⚠️
     """
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10 = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
@@ -141,35 +144,45 @@ def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> None
         ch = r.get("change", float("nan"))
         vol = r.get("volume", float("nan"))
 
-        if ch != ch:  # nan
+        if ch != ch:
             r["signal"] = "-"
             continue
 
+        # KÂR KORUMA
         if ch >= 4.0:
-            r["signal"] = "⚠️ KÂR"
+            r["signal"] = "⚠️"
+            r["signal_text"] = "KÂR KORUMA"
             continue
 
-        if (vol == vol) and (vol >= top10_min_vol) and (xu100_change == xu100_change) and (xu100_change <= -0.80):
-            if ch >= 0.40:
-                r["signal"] = "🧠 AYRIŞMA"
-                continue
-            if ch <= 0.20:
-                r["signal"] = "🧠 TOPLAMA"
-                continue
+        # Top10 hacim şartı
+        in_top10 = (vol == vol) and (vol >= top10_min_vol)
+
+        # AYRIŞMA (endeks sert düşerken hisse artıyorsa)
+        if in_top10 and (xu100_change == xu100_change) and (xu100_change <= -0.80) and (ch >= 0.40):
+            r["signal"] = "🧠"
+            r["signal_text"] = "AYRIŞMA"
+            continue
+
+        # TOPLAMA (v1.1: endeks şartı yok, hacim Top10 + küçük/orta hareket)
+        if in_top10 and abs(ch) <= 0.60:
+            r["signal"] = "🧠"
+            r["signal_text"] = "TOPLAMA"
+            continue
 
         r["signal"] = "-"
+        r["signal_text"] = ""
 
-
-def make_table(rows: List[Dict[str, Any]], title: str) -> str:
-    # HACİM en sağda (eski düzen)
-    header = f"{'HİSSE':<8} {'SİNYAL':<11} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
+# -----------------------------
+# v1.1 tablo görünümü (HACİM sağda kalır)
+# -----------------------------
+def make_table_v11(rows: List[Dict[str, Any]], title: str) -> str:
+    # v1.1 başlık düzeni: HİSSE / GÜNLÜK% / FİYAT / HACİM
+    header = f"{'HİSSE':<6} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
     sep = "-" * len(header)
 
     lines = [title, "<pre>", header, sep]
     for r in rows:
         t = r.get("ticker", "n/a")
-        sig = r.get("signal", "-")
-
         ch = r.get("change", float("nan"))
         cl = r.get("close", float("nan"))
         vol = r.get("volume", float("nan"))
@@ -178,14 +191,41 @@ def make_table(rows: List[Dict[str, Any]], title: str) -> str:
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
         vol_s = format_volume(vol)
 
-        lines.append(f"{t:<8} {sig:<11} {ch_s:>8} {cl_s:>10} {vol_s:>10}")
+        # 1) normal satır
+        lines.append(f"{t:<6} {ch_s:>8} {cl_s:>10} {vol_s:>10}")
+
+        # 2) sinyal satırı (v1.1 gibi altta yazı + sağda emoji)
+        sig = r.get("signal", "-")
+        sig_text = r.get("signal_text", "")
+        if sig != "-" and sig_text:
+            # sağdaki sütuna emoji koyup, solda text yazıyoruz (ekrandaki hissiyat aynı)
+            lines.append(f"{sig_text:<6} {'':>8} {'':>10} {sig:>10}")
+
     lines.append("</pre>")
     return "\n".join(lines)
 
+def summarize_signals(rows: List[Dict[str, Any]]) -> str:
+    toplama = [r["ticker"] for r in rows if r.get("signal_text") == "TOPLAMA"]
+    ayrisma = [r["ticker"] for r in rows if r.get("signal_text") == "AYRIŞMA"]
+    kar = [r["ticker"] for r in rows if r.get("signal_text") == "KÂR KORUMA"]
 
+    def join_list(lst: List[str]) -> str:
+        return ", ".join(lst) if lst else "—"
+
+    msg = (
+        f"🧠 <b>Sinyal Özeti ({BOT_VERSION})</b>\n"
+        f"• 🧠 TOPLAMA: {join_list(toplama)}\n"
+        f"• 🧠 AYRIŞMA: {join_list(ayrisma)}\n"
+        f"• ⚠️ KÂR KORUMA: {join_list(kar)}\n\n"
+        "Not: v1.1'de hacim/delta için Top10 hacim ranking kullanılır. (Stabil mod)"
+    )
+    return msg
+
+# -----------------------------
+# Telegram Handlers
+# -----------------------------
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"🏓 Pong! Bot ayakta. ({BOT_VERSION})")
-
 
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
@@ -214,19 +254,25 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(msg1, parse_mode=ParseMode.HTML)
 
-    await update.message.reply_text(make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>"), parse_mode=ParseMode.HTML)
+    await update.message.reply_text(
+        make_table_v11(first20, "📍 <b>Hisse Radar (ilk 20)</b>"),
+        parse_mode=ParseMode.HTML
+    )
 
     if top10_vol:
-        await update.message.reply_text(make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"), parse_mode=ParseMode.HTML)
+        await update.message.reply_text(
+            make_table_v11(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"),
+            parse_mode=ParseMode.HTML
+        )
 
+    # Sinyal özeti (v1.1 gibi)
+    await update.message.reply_text(summarize_signals(rows), parse_mode=ParseMode.HTML)
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
-
-    close, xu_change = get_xu100_summary()
 
     n = 1
     if context.args:
@@ -244,13 +290,16 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     part_list = chunks[n - 1]
+    close, xu_change = get_xu100_summary()
     rows = build_rows_from_is_list(part_list)
     compute_signal_rows(rows, xu_change)
 
     title = f"📡 <b>BIST200 RADAR – Parça {n}/{total_parts}</b>\n(20 hisse)"
-    await update.message.reply_text(make_table(rows, title), parse_mode=ParseMode.HTML)
+    await update.message.reply_text(make_table_v11(rows, title), parse_mode=ParseMode.HTML)
 
-
+# -----------------------------
+# Main
+# -----------------------------
 def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
@@ -262,8 +311,15 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
 
     logger.info("Bot starting... version=%s", BOT_VERSION)
-    app.run_polling(drop_pending_updates=True)
 
+    # Timeoutları büyüttüm (gecikme/timeout riskini azaltır)
+    app.run_polling(
+        drop_pending_updates=True,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30,
+        pool_timeout=30,
+    )
 
 if __name__ == "__main__":
     main()
