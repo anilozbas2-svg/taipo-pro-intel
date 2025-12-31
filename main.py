@@ -75,6 +75,19 @@ def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
     return [lst[i:i + size] for i in range(0, len(lst), size)]
 
 
+# ✅ /hisse için temiz argüman
+def clean_ticker_arg(arg: str) -> str:
+    a = (arg or "").strip().upper()
+    a = re.sub(r"[^A-Z0-9\.\:]", "", a)
+    if not a:
+        return ""
+    if a.startswith("BIST:"):
+        a = a.replace("BIST:", "")
+    if a.endswith(".IS"):
+        a = a[:-3]
+    return a
+
+
 # -----------------------------
 # TradingView Scanner (SYNC -> thread)
 # -----------------------------
@@ -132,28 +145,25 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
         if not d:
-            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan")})
+            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-"})
         else:
-            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"]})
+            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-"})
     return rows
 
 
 # -----------------------------
-# Sinyal Mantığı (Hacim + Volume odaklı)
+# 3'lü sistem (stabil) - MINIMAL GÜNCEL
 # -----------------------------
-def compute_brain_signals(rows: List[Dict[str, Any]]) -> None:
+def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> None:
     """
-    Amaç: Hacim/volume ile "yükseliş adayı" yakalamak.
-    Kural (stabil & basit):
-    - Top10 hacim eşiği (Top10'un 10. sırası)
-    - 🧠 TOPLAMA: Top10 hacimde + günlük değişim küçük/orta (abs(%change) <= 0.60)
-    - ⚠️ KÂR: günlük % >= +4.00 (kâr koruma uyarısı)
-    Diğerleri: -
+    v1.1 davranışı (güncellendi):
+    - Top10 hacim eşiğini referans alır (Top10’un 10. sırası)
+    - TOPLAMA: Top10 hacimde olup 0.00 ile +0.60 arası -> 🧠 + "TOPLAMA"
+    - DİP TOPLAMA: Top10 hacimde olup -0.60 ile -0.01 arası -> 🧲 + "DİP TOPLAMA"
+    - AYRIŞMA: Endeks sert düşüşte (<= -0.80) iken hisse +0.40 ve üstü + Top10 hacim -> 🧠 + "AYRIŞMA"
+    - KÂR KORUMA: hisse >= +4.00 -> ⚠️
     """
-    rows_with_vol = [
-        r for r in rows
-        if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])
-    ]
+    rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10 = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
     top10_min_vol = top10[-1]["volume"] if len(top10) == 10 else (top10[-1]["volume"] if top10 else float("inf"))
 
@@ -161,81 +171,94 @@ def compute_brain_signals(rows: List[Dict[str, Any]]) -> None:
         ch = r.get("change", float("nan"))
         vol = r.get("volume", float("nan"))
 
-        r["brain"] = ""          # 🧠 veya boş
-        r["signal_text"] = ""    # TOPLAMA / KÂR / boş
-
-        if ch != ch:  # nan
+        if ch != ch:
+            r["signal"] = "-"
+            r["signal_text"] = ""
             continue
 
+        # KÂR KORUMA
         if ch >= 4.0:
-            r["brain"] = "⚠️"
-            r["signal_text"] = "KÂR"
+            r["signal"] = "⚠️"
+            r["signal_text"] = "KÂR KORUMA"
             continue
 
+        # Top10 hacim şartı
         in_top10 = (vol == vol) and (vol >= top10_min_vol)
 
-        if in_top10 and abs(ch) <= 0.60:
-            r["brain"] = "🧠"
+        # AYRIŞMA
+        if in_top10 and (xu100_change == xu100_change) and (xu100_change <= -0.80) and (ch >= 0.40):
+            r["signal"] = "🧠"
+            r["signal_text"] = "AYRIŞMA"
+            continue
+
+        # TOPLAMA (0.00 .. +0.60)
+        if in_top10 and (0.00 <= ch <= 0.60):
+            r["signal"] = "🧠"
             r["signal_text"] = "TOPLAMA"
+            continue
+
+        # DİP TOPLAMA (-0.60 .. -0.01)
+        if in_top10 and (-0.60 <= ch < 0.00):
+            r["signal"] = "🧲"
+            r["signal_text"] = "DİP TOPLAMA"
+            continue
+
+        r["signal"] = "-"
+        r["signal_text"] = ""
 
 
 # -----------------------------
-# Tablo Görünümü (🧠 yanına)
+# v1.1 tablo görünümü (SİNYAL kolonu eklendi)
 # -----------------------------
-def make_table(rows: List[Dict[str, Any]], title: str) -> str:
-    header = f"{'HİSSE':<6} {'S':<2} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
-    sep = "-" * len(header)
+def make_table_v11(rows: List[Dict[str, Any]], title: str) -> str:
+    header1 = f"{'HİSSE':<6} {'S':<2} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
+    sep = "-" * len(header1)
 
-    lines = [title, "<pre>", header, sep]
+    lines = [title, "<pre>", header1, sep]
+
     for r in rows:
         t = r.get("ticker", "n/a")
-        s = r.get("brain", "") or ""  # 🧠 / ⚠️ / boş
-
         ch = r.get("change", float("nan"))
         cl = r.get("close", float("nan"))
         vol = r.get("volume", float("nan"))
 
+        sig = r.get("signal", "-")
         ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
         vol_s = format_volume(vol)
 
-        lines.append(f"{t:<6} {s:<2} {ch_s:>8} {cl_s:>10} {vol_s:>10}")
-    lines.append("</pre>")
-    return "\n".join(lines)
-
-
-def make_brain_table(rows: List[Dict[str, Any]], title: str) -> str:
-    """
-    Sadece 🧠 (TOPLAMA) olanları listeler.
-    """
-    brain_rows = [r for r in rows if r.get("brain") == "🧠"]
-    # En yüksek hacimden aşağı sırala
-    brain_rows = sorted(brain_rows, key=lambda x: x.get("volume", 0) or 0, reverse=True)
-
-    header = f"{'HİSSE':<6} {'🧠':<2} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
-    sep = "-" * len(header)
-
-    lines = [title, "<pre>", header, sep]
-
-    if not brain_rows:
-        lines.append("—  🧠 sinyal yok (Top10+abs<=0.60 koşulu tutmadı)")
-        lines.append("</pre>")
-        return "\n".join(lines)
-
-    for r in brain_rows:
-        t = r.get("ticker", "n/a")
-        ch = r.get("change", float("nan"))
-        cl = r.get("close", float("nan"))
-        vol = r.get("volume", float("nan"))
-
-        ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
-        cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
-        vol_s = format_volume(vol)
-
-        lines.append(f"{t:<6} {'🧠':<2} {ch_s:>8} {cl_s:>10} {vol_s:>10}")
+        lines.append(f"{t:<6} {sig:<2} {ch_s:>8} {cl_s:>10} {vol_s:>10}")
 
     lines.append("</pre>")
     return "\n".join(lines)
+
+
+def summarize_signals(rows: List[Dict[str, Any]]) -> str:
+    toplama = [r["ticker"] for r in rows if r.get("signal_text") == "TOPLAMA"]
+    dip = [r["ticker"] for r in rows if r.get("signal_text") == "DİP TOPLAMA"]
+    ayrisma = [r["ticker"] for r in rows if r.get("signal_text") == "AYRIŞMA"]
+    kar = [r["ticker"] for r in rows if r.get("signal_text") == "KÂR KORUMA"]
+
+    def join_list(lst: List[str]) -> str:
+        return ", ".join(lst) if lst else "—"
+
+    msg = (
+        f"🧠 <b>Sinyal Özeti ({BOT_VERSION})</b>\n"
+        f"• 🧠 TOPLAMA: {join_list(toplama)}\n"
+        f"• 🧲 DİP TOPLAMA: {join_list(dip)}\n"
+        f"• 🧠 AYRIŞMA: {join_list(ayrisma)}\n"
+        f"• ⚠️ KÂR KORUMA: {join_list(kar)}\n\n"
+        "Not: Hacim/delta için Top10 hacim ranking kullanılır. (Stabil mod)"
+    )
+    return msg
+
+
+def pick_candidates(rows: List[Dict[str, Any]], kind: str) -> List[Dict[str, Any]]:
+    # kind: "TOPLAMA" / "DİP TOPLAMA"
+    cand = [r for r in rows if r.get("signal_text") == kind]
+    # hacme göre büyükten küçüğe
+    cand_sorted = sorted(cand, key=lambda x: (x.get("volume") or 0) if (x.get("volume") == x.get("volume")) else 0, reverse=True)
+    return cand_sorted
 
 
 # -----------------------------
@@ -258,11 +281,9 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
     rows = await build_rows_from_is_list(bist200_list)
-    compute_brain_signals(rows)
+    compute_signal_rows(rows, xu_change)
 
     first20 = rows[:20]
-
-    # Top10 hacim (ham)
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10_vol = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
 
@@ -277,21 +298,37 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(msg1, parse_mode=ParseMode.HTML)
 
     await update.message.reply_text(
-        make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>"),
+        make_table_v11(first20, "📍 <b>Hisse Radar (ilk 20)</b>"),
         parse_mode=ParseMode.HTML
     )
 
     if top10_vol:
         await update.message.reply_text(
-            make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"),
+            make_table_v11(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"),
             parse_mode=ParseMode.HTML
         )
 
-    # ✅ En altta "yükseliş adayı" listesi (🧠)
-    await update.message.reply_text(
-        make_brain_table(rows, "🧠 <b>YÜKSELECEK ADAYLAR (HACİM + TOPLAMA)</b>"),
-        parse_mode=ParseMode.HTML
-    )
+    # ✅ Aday tabloları (yeni)
+    toplama_cand = pick_candidates(rows, "TOPLAMA")
+    dip_cand = pick_candidates(rows, "DİP TOPLAMA")
+
+    if toplama_cand:
+        await update.message.reply_text(
+            make_table_v11(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>"),
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text("🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—", parse_mode=ParseMode.HTML)
+
+    if dip_cand:
+        await update.message.reply_text(
+            make_table_v11(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>"),
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text("🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—", parse_mode=ParseMode.HTML)
+
+    await update.message.reply_text(summarize_signals(rows), parse_mode=ParseMode.HTML)
 
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -318,11 +355,75 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Veriler çekiliyor...")
 
     part_list = chunks[n - 1]
+    _, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(part_list)
-    compute_brain_signals(rows)
+    compute_signal_rows(rows, xu_change)
 
     title = f"📡 <b>BIST200 RADAR – Parça {n}/{total_parts}</b>\n(20 hisse)"
-    await update.message.reply_text(make_table(rows, title), parse_mode=ParseMode.HTML)
+    await update.message.reply_text(make_table_v11(rows, title), parse_mode=ParseMode.HTML)
+
+
+# /hisse komutu (istersen sonra kaldırırız)
+def build_hisse_card(row: Dict[str, Any], xu_close: float, xu_change: float) -> str:
+    t = row.get("ticker", "n/a")
+    ch = row.get("change", float("nan"))
+    cl = row.get("close", float("nan"))
+    vol = row.get("volume", float("nan"))
+
+    sig_emoji = row.get("signal", "-")
+    sig_text = row.get("signal_text", "") or "—"
+
+    ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}%"
+    cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
+    vol_s = format_volume(vol)
+
+    xu_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
+    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
+
+    msg = (
+        f"📌 <b>HİSSE DETAY</b> — <b>{t}</b>\n"
+        f"• Fiyat: <b>{cl_s}</b>\n"
+        f"• Günlük: <b>{ch_s}</b>\n"
+        f"• Hacim: <b>{vol_s}</b>\n"
+        f"• Sinyal: <b>{sig_emoji} {sig_text}</b>\n\n"
+        f"📊 <b>XU100</b>\n"
+        f"• Kapanış: <b>{xu_close_s}</b>\n"
+        f"• Günlük: <b>{xu_s}</b>\n\n"
+        f"⚙️ Sürüm: <b>{BOT_VERSION}</b>"
+    )
+    return msg
+
+
+async def cmd_hisse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Kullanım: /hisse SASA", parse_mode=ParseMode.HTML)
+        return
+
+    wanted = clean_ticker_arg(context.args[0])
+    if not wanted:
+        await update.message.reply_text("Kullanım: /hisse SASA", parse_mode=ParseMode.HTML)
+        return
+
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        return
+
+    await update.message.reply_text("⏳ Veriler çekiliyor...")
+
+    xu_close, xu_change = await get_xu100_summary()
+    rows = await build_rows_from_is_list(bist200_list)
+    compute_signal_rows(rows, xu_change)
+
+    row = next((r for r in rows if (r.get("ticker") or "").upper() == wanted), None)
+    if not row:
+        await update.message.reply_text(
+            f"❌ Bulunamadı: <b>{wanted}</b>\nÖrnek: /hisse SASA",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    await update.message.reply_text(build_hisse_card(row, xu_close, xu_change), parse_mode=ParseMode.HTML)
 
 
 # -----------------------------
@@ -337,9 +438,9 @@ def main() -> None:
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("radar", cmd_radar))
+    app.add_handler(CommandHandler("hisse", cmd_hisse))  # istersen sonra kaldırırız
 
     logger.info("Bot starting... version=%s", BOT_VERSION)
-
     app.run_polling(drop_pending_updates=True)
 
 
