@@ -14,7 +14,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.3-hybrid").strip() or "v1.3-hybrid"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.3.1-hybrid").strip() or "v1.3.1-hybrid"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -75,22 +75,20 @@ def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
     return [lst[i:i + size] for i in range(0, len(lst), size)]
 
 
-def fmt_pct(x: Any) -> str:
+def f2(x: Any) -> str:
     try:
-        v = float(x)
-        if v != v:
+        if x != x:
             return "n/a"
-        return f"{v:+.2f}%"
+        return f"{float(x):.2f}"
     except Exception:
         return "n/a"
 
 
-def fmt_price(x: Any) -> str:
+def pct2(x: Any) -> str:
     try:
-        v = float(x)
-        if v != v:
+        if x != x:
             return "n/a"
-        return f"{v:.2f}"
+        return f"{float(x):+.2f}%"
     except Exception:
         return "n/a"
 
@@ -152,9 +150,9 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
         if not d:
-            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-"})
+            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-", "signal_text": ""})
         else:
-            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-"})
+            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-", "signal_text": ""})
     return rows
 
 
@@ -163,11 +161,11 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
 # -----------------------------
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> None:
     """
-    Hybrid v1.3:
+    Hybrid v1.3.1:
     - Top10 hacim eşiğini referans alır (Top10’un 10. sırası)
-    - TOPLAMA: Top10 hacimde olup 0.00 ile +0.60 arası -> 🧠
-    - DİP TOPLAMA: Top10 hacimde olup -0.60 ile -0.01 arası -> 🧲
-    - AYRIŞMA: Endeks sert düşüşte (<= -0.80) iken hisse +0.40 ve üstü + Top10 hacim -> 🧠
+    - TOPLAMA: Top10 hacim + 0.00 .. +0.60 -> 🧠
+    - DİP TOPLAMA: Top10 hacim + -0.60 .. -0.01 -> 🧲
+    - AYRIŞMA: XU100 <= -0.80 iken hisse >= +0.40 ve Top10 hacim -> 🧠
     - KÂR KORUMA: hisse >= +4.00 -> ⚠️
     """
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
@@ -210,7 +208,7 @@ def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> None
 
 
 # -----------------------------
-# Table view (compact)
+# Table view (compact + hizalı)
 # -----------------------------
 def make_table(rows: List[Dict[str, Any]], title: str) -> str:
     header = f"{'HİSSE':<6} {'S':<2} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
@@ -243,10 +241,53 @@ def pick_candidates(rows: List[Dict[str, Any]], kind: str) -> List[Dict[str, Any
     )
 
 
-def signal_summary_compact(rows: List[Dict[str, Any]]) -> str:
-    def join(lst: List[str]) -> str:
-        return ", ".join(lst) if lst else "—"
+# -----------------------------
+# NEW: NEDEN blokları (tek satır, kayma yok)
+# -----------------------------
+def build_why_block(rows: List[Dict[str, Any]], kind: str, title: str) -> str:
+    # kind: "TOPLAMA" / "DİP TOPLAMA"
+    picked = pick_candidates(rows, kind)
+    if not picked:
+        return f"{title}\n—"
 
+    lines = [title, "<pre>"]
+    # Tek satır format: TICKER SIG CHG PRICE VOL | reason
+    for r in picked[:10]:
+        t = r.get("ticker", "n/a")
+        sig = r.get("signal", "-")
+        ch = r.get("change", float("nan"))
+        cl = r.get("close", float("nan"))
+        vol = r.get("volume", float("nan"))
+
+        reason = ""
+        if kind == "TOPLAMA":
+            reason = "Top10 hacim + (0.00..0.60) → baskı düşük"
+        elif kind == "DİP TOPLAMA":
+            reason = "Top10 hacim + (-0.60..-0.01) → eksi ama baskı düşük"
+        else:
+            reason = "—"
+
+        line = (
+            f"{t:<6} {sig:<2} {pct2(ch):>8} {f2(cl):>7} {format_volume(vol):>8} | {reason}"
+        )
+        lines.append(line)
+
+    lines.append("</pre>")
+    return "\n".join(lines)
+
+
+# -----------------------------
+# NEW: Sinyal özeti (limitli)
+# -----------------------------
+def _join_limited(lst: List[str], limit: int = 8) -> str:
+    if not lst:
+        return "—"
+    if len(lst) <= limit:
+        return ", ".join(lst)
+    return ", ".join(lst[:limit]) + f" (+{len(lst) - limit} daha)"
+
+
+def signal_summary_compact(rows: List[Dict[str, Any]]) -> str:
     toplama = [r["ticker"] for r in rows if r.get("signal_text") == "TOPLAMA"]
     dip = [r["ticker"] for r in rows if r.get("signal_text") == "DİP TOPLAMA"]
     ayrisma = [r["ticker"] for r in rows if r.get("signal_text") == "AYRIŞMA"]
@@ -254,61 +295,20 @@ def signal_summary_compact(rows: List[Dict[str, Any]]) -> str:
 
     return (
         f"🧠 <b>Sinyal Özeti ({BOT_VERSION})</b>\n"
-        f"• 🧠 TOPLAMA: {join(toplama)}\n"
-        f"• 🧲 DİP TOPLAMA: {join(dip)}\n"
-        f"• 🧠 AYRIŞMA: {join(ayrisma)}\n"
-        f"• ⚠️ KÂR KORUMA: {join(kar)}"
+        f"• 🧠 TOPLAMA: {_join_limited(toplama, 10)}\n"
+        f"• 🧲 DİP TOPLAMA: {_join_limited(dip, 10)}\n"
+        f"• 🧠 AYRIŞMA: {_join_limited(ayrisma, 10)}\n"
+        f"• ⚠️ KÂR KORUMA: {_join_limited(kar, 6)}"
     )
 
 
 # -----------------------------
-# NEW: "NEDEN?" açıklaması (Adım 4)
+# NEW: Kriter tek satır
 # -----------------------------
-def build_why_block(rows: List[Dict[str, Any]], title: str, limit: int = 8) -> str:
-    """
-    Aday listesinin altına kısa "neden?" açıklaması basar.
-    limit: çok uzamasın diye (telegram spam olmasın)
-    """
-    if not rows:
-        return f"{title}\n—"
-
-    lines = [title, "<pre>"]
-    for r in rows[:limit]:
-        t = r.get("ticker", "n/a")
-        sig = r.get("signal", "-")
-        sig_text = r.get("signal_text", "") or "-"
-        ch = r.get("change", float("nan"))
-        cl = r.get("close", float("nan"))
-        vol = r.get("volume", float("nan"))
-
-        # Çok kısa gerekçe
-        if sig_text == "TOPLAMA":
-            reason = "Top10 hacim + baskı düşük (0.00..+0.60)"
-        elif sig_text == "DİP TOPLAMA":
-            reason = "Top10 hacim + eksi ama sığ düşüş (-0.60..-0.01)"
-        elif sig_text == "AYRIŞMA":
-            reason = "Endeks düşüşteyken pozitif (göreli güç)"
-        elif sig_text == "KÂR KORUMA":
-            reason = "%4+ yükseliş (kâr kilitleme)"
-        else:
-            reason = "—"
-
-        lines.append(
-            f"{t:<6} {sig}  {fmt_pct(ch):>8}  {fmt_price(cl):>7}  {format_volume(vol):>8}"
-        )
-        lines.append(f"  ↳ {reason}")
-
-    lines.append("</pre>")
-    return "\n".join(lines)
-
-
-def criteria_note() -> str:
+def criteria_note_one_line() -> str:
     return (
-        "ℹ️ <b>Kriterler</b>\n"
-        "• 🧠 TOPLAMA: Top10 hacim + 0.00 → +0.60\n"
-        "• 🧲 DİP TOPLAMA: Top10 hacim + -0.60 → -0.01\n"
-        "• 🧠 AYRIŞMA: XU100 ≤ -0.80 iken hisse ≥ +0.40 (Top10 hacim)\n"
-        "• ⚠️ KÂR KORUMA: hisse ≥ +4.00\n"
+        "📌 <b>Kriter</b>: Top10 hacim + (0..0.60)=🧠 TOPLAMA | (-0.60..-0.01)=🧲 DİP | "
+        "XU100<=-0.80 & hisse>=+0.40=🧠 AYRIŞMA | hisse>=+4=⚠️ KÂR"
     )
 
 
@@ -348,7 +348,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             parse_mode=ParseMode.HTML
         )
 
-    # 3) Candidates
+    # 3) Aday tabloları
     toplama_cand = pick_candidates(rows, "TOPLAMA")
     dip_cand = pick_candidates(rows, "DİP TOPLAMA")
 
@@ -364,23 +364,23 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode=ParseMode.HTML
     )
 
-    # 4) NEW: NEDEN? blokları (kısa ve etkili)
+    # 4) NEDEN? (tek satır, kayma yok)
     await update.message.reply_text(
-        build_why_block(toplama_cand, "🧠 <b>NEDEN? (TOPLAMA)</b>", limit=8),
+        build_why_block(rows, "TOPLAMA", "🧠 <b>NEDEN? (TOPLAMA)</b>"),
         parse_mode=ParseMode.HTML
     )
     await update.message.reply_text(
-        build_why_block(dip_cand, "🧲 <b>NEDEN? (DİP TOPLAMA)</b>", limit=8),
+        build_why_block(rows, "DİP TOPLAMA", "🧲 <b>NEDEN? (DİP TOPLAMA)</b>"),
         parse_mode=ParseMode.HTML
     )
 
-    # 5) Compact signal summary
+    # 5) Sinyal özeti (limitli)
     await update.message.reply_text(signal_summary_compact(rows), parse_mode=ParseMode.HTML)
 
-    # 6) Criteria note (gözle görünür kurallar)
-    await update.message.reply_text(criteria_note(), parse_mode=ParseMode.HTML)
+    # 6) Kriter tek satır
+    await update.message.reply_text(criteria_note_one_line(), parse_mode=ParseMode.HTML)
 
-    # Optional: show XU100 small line (very compact)
+    # 7) XU100 mini
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     await update.message.reply_text(
