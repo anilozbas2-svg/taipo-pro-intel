@@ -161,6 +161,7 @@ def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> None
 
 
 def make_table(rows: List[Dict[str, Any]], title: str) -> str:
+    # HACİM en sağda (eski düzen)
     header = f"{'HİSSE':<8} {'SİNYAL':<11} {'GÜNLÜK%':>8} {'FİYAT':>10} {'HACİM':>10}"
     sep = "-" * len(header)
 
@@ -225,6 +226,8 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
+    close, xu_change = get_xu100_summary()
+
     n = 1
     if context.args:
         try:
@@ -242,6 +245,8 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     part_list = chunks[n - 1]
     rows = build_rows_from_is_list(part_list)
+    compute_signal_rows(rows, xu_change)
+
     title = f"📡 <b>BIST200 RADAR – Parça {n}/{total_parts}</b>\n(20 hisse)"
     await update.message.reply_text(make_table(rows, title), parse_mode=ParseMode.HTML)
 
