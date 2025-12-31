@@ -14,7 +14,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.2-hybrid").strip() or "v1.2-hybrid"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.3-hybrid").strip() or "v1.3-hybrid"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -73,6 +73,26 @@ def format_volume(v: Any) -> str:
 
 def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
     return [lst[i:i + size] for i in range(0, len(lst), size)]
+
+
+def fmt_pct(x: Any) -> str:
+    try:
+        v = float(x)
+        if v != v:
+            return "n/a"
+        return f"{v:+.2f}%"
+    except Exception:
+        return "n/a"
+
+
+def fmt_price(x: Any) -> str:
+    try:
+        v = float(x)
+        if v != v:
+            return "n/a"
+        return f"{v:.2f}"
+    except Exception:
+        return "n/a"
 
 
 # -----------------------------
@@ -143,7 +163,7 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
 # -----------------------------
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> None:
     """
-    Hybrid v1.2:
+    Hybrid v1.3:
     - Top10 hacim eşiğini referans alır (Top10’un 10. sırası)
     - TOPLAMA: Top10 hacimde olup 0.00 ile +0.60 arası -> 🧠
     - DİP TOPLAMA: Top10 hacimde olup -0.60 ile -0.01 arası -> 🧲
@@ -242,6 +262,57 @@ def signal_summary_compact(rows: List[Dict[str, Any]]) -> str:
 
 
 # -----------------------------
+# NEW: "NEDEN?" açıklaması (Adım 4)
+# -----------------------------
+def build_why_block(rows: List[Dict[str, Any]], title: str, limit: int = 8) -> str:
+    """
+    Aday listesinin altına kısa "neden?" açıklaması basar.
+    limit: çok uzamasın diye (telegram spam olmasın)
+    """
+    if not rows:
+        return f"{title}\n—"
+
+    lines = [title, "<pre>"]
+    for r in rows[:limit]:
+        t = r.get("ticker", "n/a")
+        sig = r.get("signal", "-")
+        sig_text = r.get("signal_text", "") or "-"
+        ch = r.get("change", float("nan"))
+        cl = r.get("close", float("nan"))
+        vol = r.get("volume", float("nan"))
+
+        # Çok kısa gerekçe
+        if sig_text == "TOPLAMA":
+            reason = "Top10 hacim + baskı düşük (0.00..+0.60)"
+        elif sig_text == "DİP TOPLAMA":
+            reason = "Top10 hacim + eksi ama sığ düşüş (-0.60..-0.01)"
+        elif sig_text == "AYRIŞMA":
+            reason = "Endeks düşüşteyken pozitif (göreli güç)"
+        elif sig_text == "KÂR KORUMA":
+            reason = "%4+ yükseliş (kâr kilitleme)"
+        else:
+            reason = "—"
+
+        lines.append(
+            f"{t:<6} {sig}  {fmt_pct(ch):>8}  {fmt_price(cl):>7}  {format_volume(vol):>8}"
+        )
+        lines.append(f"  ↳ {reason}")
+
+    lines.append("</pre>")
+    return "\n".join(lines)
+
+
+def criteria_note() -> str:
+    return (
+        "ℹ️ <b>Kriterler</b>\n"
+        "• 🧠 TOPLAMA: Top10 hacim + 0.00 → +0.60\n"
+        "• 🧲 DİP TOPLAMA: Top10 hacim + -0.60 → -0.01\n"
+        "• 🧠 AYRIŞMA: XU100 ≤ -0.80 iken hisse ≥ +0.40 (Top10 hacim)\n"
+        "• ⚠️ KÂR KORUMA: hisse ≥ +4.00\n"
+    )
+
+
+# -----------------------------
 # Telegram Handlers
 # -----------------------------
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -293,8 +364,21 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode=ParseMode.HTML
     )
 
-    # 4) Compact signal summary (Hybrid add)
+    # 4) NEW: NEDEN? blokları (kısa ve etkili)
+    await update.message.reply_text(
+        build_why_block(toplama_cand, "🧠 <b>NEDEN? (TOPLAMA)</b>", limit=8),
+        parse_mode=ParseMode.HTML
+    )
+    await update.message.reply_text(
+        build_why_block(dip_cand, "🧲 <b>NEDEN? (DİP TOPLAMA)</b>", limit=8),
+        parse_mode=ParseMode.HTML
+    )
+
+    # 5) Compact signal summary
     await update.message.reply_text(signal_summary_compact(rows), parse_mode=ParseMode.HTML)
+
+    # 6) Criteria note (gözle görünür kurallar)
+    await update.message.reply_text(criteria_note(), parse_mode=ParseMode.HTML)
 
     # Optional: show XU100 small line (very compact)
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
