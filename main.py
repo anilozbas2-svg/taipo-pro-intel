@@ -14,7 +14,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.3.2-hybrid").strip() or "v1.3.2-hybrid"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.3.3-hybrid").strip() or "v1.3.3-hybrid"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -30,10 +30,21 @@ TV_TIMEOUT = 12
 # Helpers
 # -----------------------------
 def env_csv(name: str, default: str = "") -> List[str]:
-    raw = os.getenv(name, default).strip()
+    raw = os.getenv(name, default)
+    if raw is None:
+        return []
+    raw = raw.strip()
     if not raw:
         return []
-    return [p.strip() for p in raw.split(",") if p.strip()]
+    # AKBNK, CANTE, EREGL gibi boşlukları da temizle
+    return [p.strip().upper() for p in raw.split(",") if p.strip()]
+
+
+def env_csv_fallback(primary: str, fallback: str, default: str = "") -> List[str]:
+    lst = env_csv(primary, default)
+    if lst:
+        return lst
+    return env_csv(fallback, default)
 
 
 def normalize_is_ticker(t: str) -> str:
@@ -68,7 +79,6 @@ def format_volume(v: Any) -> str:
         s = f"{n/1_000_000_000:.1f}B"
         return s.replace(".0B", "B")
     if absn >= 1_000_000:
-        # 791.17M gibi uzamasın → 791M
         return f"{n/1_000_000:.0f}M"
     if absn >= 1_000:
         return f"{n/1_000:.0f}K"
@@ -147,7 +157,7 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
 # -----------------------------
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> float:
     """
-    Hybrid v1.3.2:
+    Hybrid:
     - Top10 hacim eşiğini referans alır (Top10’un 10. sırası)
     - TOPLAMA: Top10 hacimde olup 0.00 ile +0.60 arası -> 🧠
     - DİP TOPLAMA: Top10 hacimde olup -0.60 ile -0.01 arası -> 🧲
@@ -194,6 +204,43 @@ def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> floa
         r["signal_text"] = ""
 
     return float(top10_min_vol)
+
+
+def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: float, top10_min_vol: float) -> None:
+    """Watchlist için: BIST200 top10 eşiğini kullanarak sinyalleri uygula."""
+    for r in rows:
+        ch = r.get("change", float("nan"))
+        vol = r.get("volume", float("nan"))
+
+        if ch != ch:
+            r["signal"] = "-"
+            r["signal_text"] = ""
+            continue
+
+        if ch >= 4.0:
+            r["signal"] = "⚠️"
+            r["signal_text"] = "KÂR KORUMA"
+            continue
+
+        in_top10 = (vol == vol) and (vol >= top10_min_vol)
+
+        if in_top10 and (xu100_change == xu100_change) and (xu100_change <= -0.80) and (ch >= 0.40):
+            r["signal"] = "🧠"
+            r["signal_text"] = "AYRIŞMA"
+            continue
+
+        if in_top10 and (0.00 <= ch <= 0.60):
+            r["signal"] = "🧠"
+            r["signal_text"] = "TOPLAMA"
+            continue
+
+        if in_top10 and (-0.60 <= ch < 0.00):
+            r["signal"] = "🧲"
+            r["signal_text"] = "DİP TOPLAMA"
+            continue
+
+        r["signal"] = "-"
+        r["signal_text"] = ""
 
 
 # -----------------------------
@@ -356,12 +403,12 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(make_table(rows, title), parse_mode=ParseMode.HTML)
 
 
-# ✅ /watch -> ENV WATCHLIST=AKBNK,CANTE,EREGL
+# ✅ /watch -> ENV WATCHLIST=AKBNK,CANTE,EREGL  (fallback: WATCHLIST_BIST)
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    watch = env_csv("WATCHLIST")
+    watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
     if not watch:
         await update.message.reply_text(
-            "❌ WATCHLIST env boş.\nÖrnek: WATCHLIST=AKBNK,CANTE,EREGL",
+            "❌ WATCHLIST env boş.\nÖrnek: WATCHLIST=AKBNK,CANTE,EREGL\n(Alternatif: WATCHLIST_BIST=AKBNK,CANTE,EREGL)",
             parse_mode=ParseMode.HTML
         )
         return
@@ -382,7 +429,7 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         _apply_signals_with_threshold(rows, xu_change, top10_min_vol)
         thresh_s = format_top10_threshold(top10_min_vol)
     else:
-        # BIST200 yoksa, watchlist'in kendi top10'u ile devam (daha zayıf ama çalışır)
+        # BIST200 yoksa, watchlist'in kendi top10'u ile devam
         top10_min_vol = compute_signal_rows(rows, xu_change)
         thresh_s = format_top10_threshold(top10_min_vol)
 
@@ -391,43 +438,6 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode=ParseMode.HTML
     )
     await update.message.reply_text(make_table(rows, "📌 <b>Watchlist Radar</b>"), parse_mode=ParseMode.HTML)
-
-
-def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: float, top10_min_vol: float) -> None:
-    """Watchlist için: BIST200 top10 eşiğini kullanarak sinyalleri uygula."""
-    for r in rows:
-        ch = r.get("change", float("nan"))
-        vol = r.get("volume", float("nan"))
-
-        if ch != ch:
-            r["signal"] = "-"
-            r["signal_text"] = ""
-            continue
-
-        if ch >= 4.0:
-            r["signal"] = "⚠️"
-            r["signal_text"] = "KÂR KORUMA"
-            continue
-
-        in_top10 = (vol == vol) and (vol >= top10_min_vol)
-
-        if in_top10 and (xu100_change == xu100_change) and (xu100_change <= -0.80) and (ch >= 0.40):
-            r["signal"] = "🧠"
-            r["signal_text"] = "AYRIŞMA"
-            continue
-
-        if in_top10 and (0.00 <= ch <= 0.60):
-            r["signal"] = "🧠"
-            r["signal_text"] = "TOPLAMA"
-            continue
-
-        if in_top10 and (-0.60 <= ch < 0.00):
-            r["signal"] = "🧲"
-            r["signal_text"] = "DİP TOPLAMA"
-            continue
-
-        r["signal"] = "-"
-        r["signal_text"] = ""
 
 
 # -----------------------------
