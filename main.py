@@ -4,9 +4,9 @@ import math
 import time
 import logging
 import asyncio
-import sqlite3
 from typing import Dict, List, Any, Tuple, Optional
-from datetime import datetime, time as dtime
+
+from datetime import datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -17,7 +17,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.3.7-hybrid").strip() or "v1.3.7-hybrid"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.3.4-hybrid").strip() or "v1.3.4-hybrid"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 logging.basicConfig(
@@ -29,36 +29,52 @@ logger = logging.getLogger("TAIPO_PRO_INTEL")
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
 TV_TIMEOUT = 12
 
-TZ = ZoneInfo("Europe/Istanbul")
+TR_TZ = ZoneInfo("Europe/Istanbul")
 
-# Alarm ayarları
-ALARM_COOLDOWN_SEC = 60 * 60  # 60 dk
-ALARM_ALLOWED = {"TOPLAMA", "DİP TOPLAMA"}  # sadece bunlar
+# Otomatik rapor/alarm ayarları
+REPORT_INTERVAL_MIN = int(os.getenv("REPORT_INTERVAL_MIN", "30") or "30")  # 30 dk
+ALARM_COOLDOWN_MIN = int(os.getenv("ALARM_COOLDOWN_MIN", "60") or "60")     # aynı sinyal 60 dk'da 1
+AUTO_ENABLED = (os.getenv("AUTO_ENABLED", "1").strip() != "0")             # 1 = açık, 0 = kapalı
 
-# Job frekansları
-ALARM_SCAN_EVERY_SEC = int(os.getenv("ALARM_SCAN_EVERY_SEC", "300"))       # 5 dk
-REPORT_SCAN_EVERY_SEC = int(os.getenv("REPORT_SCAN_EVERY_SEC", "3600"))    # 60 dk
+# Seans (TR)
+SESSION_START = dtime(10, 0)   # 10:00
+SESSION_END = dtime(17, 50)    # 17:50
 
-# Kapanış raporu saati (TR)
-CLOSE_HOUR = int(os.getenv("CLOSE_HOUR", "17"))
-CLOSE_MINUTE = int(os.getenv("CLOSE_MINUTE", "50"))
-
-# DB
-SQLITE_PATH = os.getenv("SQLITE_PATH", "taipo_pro_intel.db")
+# ENV Chat hedefi (öncelik)
+# 1) ALARM_CHAT_ID  2) CHAT_ID  3) son konuşulan chat
+def env_chat_id() -> Optional[int]:
+    for k in ("ALARM_CHAT_ID", "CHAT_ID"):
+        v = os.getenv(k, "").strip()
+        if v:
+            try:
+                return int(v)
+            except Exception:
+                pass
+    return None
 
 
 # -----------------------------
 # Helpers
 # -----------------------------
 def env_csv(name: str, default: str = "") -> List[str]:
-    raw = os.getenv(name, default).strip()
+    raw = os.getenv(name, default)
+    if raw is None:
+        return []
+    raw = raw.strip()
     if not raw:
         return []
-    return [p.strip() for p in raw.split(",") if p.strip()]
+    return [p.strip().upper() for p in raw.split(",") if p.strip()]
+
+
+def env_csv_fallback(primary: str, fallback: str, default: str = "") -> List[str]:
+    lst = env_csv(primary, default)
+    if lst:
+        return lst
+    return env_csv(fallback, default)
 
 
 def normalize_is_ticker(t: str) -> str:
-    t = (t or "").strip().upper()
+    t = t.strip().upper()
     if not t:
         return t
     if t.startswith("BIST:"):
@@ -77,19 +93,6 @@ def safe_float(x: Any) -> float:
         return float("nan")
 
 
-def clean_ticker(arg: str) -> str:
-    a = (arg or "").strip().upper()
-    a = re.sub(r"[^A-Z0-9\.\:]", "", a)
-    if not a:
-        return ""
-    if a.startswith("BIST:"):
-        a = a.replace("BIST:", "")
-    if a.endswith(".IS"):
-        a = a[:-3]
-    return a
-
-
-# ✅ HACİM KISA FORMAT (wrap engeller)
 def format_volume(v: Any) -> str:
     try:
         n = float(v)
@@ -112,145 +115,16 @@ def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
 
 
 def now_tr() -> datetime:
-    return datetime.now(TZ)
+    return datetime.now(TR_TZ)
 
 
-def is_market_hours_tr(dt: Optional[datetime] = None) -> bool:
-    """Basit seans filtresi: 10:00 - 18:00 arası."""
+def is_session_time(dt: Optional[datetime] = None) -> bool:
     dt = dt or now_tr()
+    # hafta içi 0-4
+    if dt.weekday() > 4:
+        return False
     t = dt.time()
-    return dtime(10, 0) <= t <= dtime(18, 0)
-
-
-# -----------------------------
-# SQLite (persist)
-# -----------------------------
-def db_conn() -> sqlite3.Connection:
-    con = sqlite3.connect(SQLITE_PATH)
-    con.execute("PRAGMA journal_mode=WAL;")
-    con.execute("PRAGMA synchronous=NORMAL;")
-    return con
-
-
-def db_init() -> None:
-    con = db_conn()
-    try:
-        con.execute(
-            """
-            CREATE TABLE IF NOT EXISTS subs (
-              chat_id INTEGER PRIMARY KEY,
-              alarm_enabled INTEGER DEFAULT 0,
-              report_enabled INTEGER DEFAULT 1
-            );
-            """
-        )
-        con.execute(
-            """
-            CREATE TABLE IF NOT EXISTS watchlist (
-              chat_id INTEGER,
-              ticker TEXT,
-              PRIMARY KEY (chat_id, ticker)
-            );
-            """
-        )
-        con.commit()
-    finally:
-        con.close()
-
-
-def db_ensure_sub(chat_id: int) -> None:
-    con = db_conn()
-    try:
-        con.execute("INSERT OR IGNORE INTO subs(chat_id, alarm_enabled, report_enabled) VALUES(?,0,1);", (chat_id,))
-        con.commit()
-    finally:
-        con.close()
-
-
-def db_set_alarm(chat_id: int, enabled: bool) -> None:
-    db_ensure_sub(chat_id)
-    con = db_conn()
-    try:
-        con.execute("UPDATE subs SET alarm_enabled=? WHERE chat_id=?;", (1 if enabled else 0, chat_id))
-        con.commit()
-    finally:
-        con.close()
-
-
-def db_set_report(chat_id: int, enabled: bool) -> None:
-    db_ensure_sub(chat_id)
-    con = db_conn()
-    try:
-        con.execute("UPDATE subs SET report_enabled=? WHERE chat_id=?;", (1 if enabled else 0, chat_id))
-        con.commit()
-    finally:
-        con.close()
-
-
-def db_get_subs(flag: str) -> List[int]:
-    if flag not in ("alarm_enabled", "report_enabled"):
-        return []
-    con = db_conn()
-    try:
-        cur = con.execute(f"SELECT chat_id FROM subs WHERE {flag}=1;")
-        return [int(r[0]) for r in cur.fetchall()]
-    finally:
-        con.close()
-
-
-def db_get_watchlist(chat_id: int) -> List[str]:
-    con = db_conn()
-    try:
-        cur = con.execute("SELECT ticker FROM watchlist WHERE chat_id=? ORDER BY ticker ASC;", (chat_id,))
-        return [str(r[0]) for r in cur.fetchall()]
-    finally:
-        con.close()
-
-
-def db_watch_add(chat_id: int, ticker: str) -> bool:
-    t = clean_ticker(ticker)
-    if not t:
-        return False
-    db_ensure_sub(chat_id)
-    con = db_conn()
-    try:
-        con.execute("INSERT OR IGNORE INTO watchlist(chat_id, ticker) VALUES(?,?);", (chat_id, t))
-        con.commit()
-        return True
-    finally:
-        con.close()
-
-
-def db_watch_del(chat_id: int, ticker: str) -> bool:
-    t = clean_ticker(ticker)
-    if not t:
-        return False
-    con = db_conn()
-    try:
-        cur = con.execute("DELETE FROM watchlist WHERE chat_id=? AND ticker=?;", (chat_id, t))
-        con.commit()
-        return cur.rowcount > 0
-    finally:
-        con.close()
-
-
-def db_watch_set(chat_id: int, tickers: List[str]) -> int:
-    cleaned = []
-    for x in tickers:
-        t = clean_ticker(x)
-        if t:
-            cleaned.append(t)
-    cleaned = sorted(set(cleaned))
-    db_ensure_sub(chat_id)
-    con = db_conn()
-    try:
-        con.execute("DELETE FROM watchlist WHERE chat_id=?;", (chat_id,))
-        for t in cleaned:
-            con.execute("INSERT OR IGNORE INTO watchlist(chat_id, ticker) VALUES(?,?);", (chat_id, t))
-        con.commit()
-        return len(cleaned)
-    finally:
-        con.close()
+    return (t >= SESSION_START) and (t <= SESSION_END)
 
 
 # -----------------------------
@@ -317,18 +191,9 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
 
 
 # -----------------------------
-# Signal System (Hybrid)
+# Hybrid signal engine
 # -----------------------------
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> float:
-    """
-    Hybrid:
-    - Top10 hacim eşiği (Top10'un 10. sırası)
-    - TOPLAMA: Top10 + 0.00 .. +0.60 -> 🧠
-    - DİP TOPLAMA: Top10 + -0.60 .. -0.01 -> 🧲
-    - AYRIŞMA: XU100 <= -0.80 iken hisse >= +0.40 + Top10 -> 🧠
-    - KÂR KORUMA: hisse >= +4.00 -> ⚠️
-    Returns: top10_min_vol
-    """
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10 = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
     top10_min_vol = top10[-1]["volume"] if len(top10) == 10 else (top10[-1]["volume"] if top10 else float("inf"))
@@ -371,7 +236,6 @@ def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> floa
 
 
 def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: float, top10_min_vol: float) -> None:
-    """Watchlist için: BIST200 top10 eşiğini kullanarak sinyalleri uygula."""
     for r in rows:
         ch = r.get("change", float("nan"))
         vol = r.get("volume", float("nan"))
@@ -432,79 +296,143 @@ def make_table(rows: List[Dict[str, Any]], title: str) -> str:
     return "\n".join(lines)
 
 
-def pick_candidates(rows: List[Dict[str, Any]], kind: str) -> List[Dict[str, Any]]:
-    cand = [r for r in rows if r.get("signal_text") == kind]
-    return sorted(
-        cand,
-        key=lambda x: (x.get("volume") or 0) if (x.get("volume") == x.get("volume")) else 0,
-        reverse=True
-    )
-
-
-def signal_summary_compact(rows: List[Dict[str, Any]]) -> str:
-    def join(lst: List[str]) -> str:
-        return ", ".join(lst) if lst else "—"
-
-    toplama = [r["ticker"] for r in rows if r.get("signal_text") == "TOPLAMA"]
-    dip = [r["ticker"] for r in rows if r.get("signal_text") == "DİP TOPLAMA"]
-    ayrisma = [r["ticker"] for r in rows if r.get("signal_text") == "AYRIŞMA"]
-    kar = [r["ticker"] for r in rows if r.get("signal_text") == "KÂR KORUMA"]
-
-    return (
-        f"🧠 <b>Sinyal Özeti ({BOT_VERSION})</b>\n"
-        f"• 🧠 TOPLAMA: {join(toplama)}\n"
-        f"• 🧲 DİP TOPLAMA: {join(dip)}\n"
-        f"• 🧠 AYRIŞMA: {join(ayrisma)}\n"
-        f"• ⚠️ KÂR KORUMA: {join(kar)}"
-    )
-
-
 def format_top10_threshold(min_vol: float) -> str:
     if not isinstance(min_vol, (int, float)) or math.isnan(min_vol) or min_vol == float("inf"):
         return "n/a"
     return format_volume(min_vol)
 
 
-async def get_bist200_threshold(xu_change: float) -> Tuple[float, List[Dict[str, Any]]]:
+# -----------------------------
+# Auto Watch Report + Alarm (single message)
+# -----------------------------
+def _get_target_chat_id(context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
+    cid = env_chat_id()
+    if cid:
+        return cid
+    # fallback: son chat
+    last = context.application.bot_data.get("last_chat_id")
+    if isinstance(last, int):
+        return last
+    return None
+
+
+def _cooldown_ok(context: ContextTypes.DEFAULT_TYPE, key: str, now_ts: float) -> bool:
+    cd = context.application.bot_data.setdefault("alarm_cooldown", {})  # key->last_ts
+    last_ts = cd.get(key)
+    if last_ts is None:
+        cd[key] = now_ts
+        return True
+    if (now_ts - float(last_ts)) >= (ALARM_COOLDOWN_MIN * 60):
+        cd[key] = now_ts
+        return True
+    return False
+
+
+async def build_watch_rows_with_threshold() -> Tuple[List[Dict[str, Any]], str, float, float]:
+    watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
+    if not watch:
+        return [], "WATCHLIST env boş", float("nan"), float("nan")
+
+    xu_close, xu_change = await get_xu100_summary()
+
+    rows = await build_rows_from_is_list(watch)
+
+    # threshold: BIST200 varsa oradan al (daha stabil)
     bist200_list = env_csv("BIST200_TICKERS")
-    if not bist200_list:
-        return float("nan"), []
-    rows = await build_rows_from_is_list(bist200_list)
-    top10_min_vol = compute_signal_rows(rows, xu_change)
-    return top10_min_vol, rows
+    if bist200_list:
+        all_rows = await build_rows_from_is_list(bist200_list)
+        top10_min_vol = compute_signal_rows(all_rows, xu_change)
+        _apply_signals_with_threshold(rows, xu_change, top10_min_vol)
+    else:
+        top10_min_vol = compute_signal_rows(rows, xu_change)
+
+    thresh_s = format_top10_threshold(top10_min_vol)
+    return rows, thresh_s, xu_close, xu_change
+
+
+async def job_watch_report(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not AUTO_ENABLED:
+        return
+
+    dt = now_tr()
+    if not is_session_time(dt):
+        return
+
+    chat_id = _get_target_chat_id(context)
+    if not chat_id:
+        logger.warning("Auto report: chat_id yok (ALARM_CHAT_ID/CHAT_ID/last_chat_id).")
+        return
+
+    rows, thresh_s, xu_close, xu_change = await build_watch_rows_with_threshold()
+    if not rows:
+        # watchlist yoksa sessiz kalma, bilgi ver
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ WATCHLIST env boş.\nÖrnek: WATCHLIST=AKBNK,CANTE,EREGL\n(Alternatif: WATCHLIST_BIST=AKBNK,CANTE,EREGL)",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # Alarm sadece TOPLAMA + DİP TOPLAMA
+    now_ts = dt.timestamp()
+    eligible_alarm = []
+    for r in rows:
+        st = r.get("signal_text", "")
+        if st in ("TOPLAMA", "DİP TOPLAMA"):
+            key = f"{r.get('ticker','?')}|{st}"
+            if _cooldown_ok(context, key, now_ts):
+                eligible_alarm.append(r)
+
+    is_alarm = len(eligible_alarm) > 0
+
+    # Tek mesaj, tek tablo: üstte ALARM / RAPOR başlığı
+    title = "🚨 <b>ALARM GELDİ</b>" if is_alarm else "⏱️ <b>RAPOR</b>"
+    ts_line = f"<b>{dt.strftime('%d.%m.%Y %H:%M')}</b> • {BOT_VERSION}"
+    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
+    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
+
+    header = (
+        f"{title}  —  {ts_line}\n"
+        f"👀 <b>WATCHLIST</b> (Top10 hacim eşiği ≥ <b>{thresh_s}</b>)\n"
+        f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
+    )
+
+    table = make_table(rows, "📌 <b>Watchlist Radar</b>")
+
+    footer = ""
+    if is_alarm:
+        # alarm tickers listesi (tek satır, şık)
+        names = ", ".join([r["ticker"] for r in eligible_alarm]) if eligible_alarm else "—"
+        footer = f"\n<b>Alarm Tetiklenenler</b>: {names}\n<i>(Sadece TOPLAMA/DİP TOPLAMA • Aynı sinyal {ALARM_COOLDOWN_MIN} dk’da 1)</i>"
+    else:
+        footer = f"\n<i>Rapor periyodu: {REPORT_INTERVAL_MIN} dk</i>"
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=header + "\n" + table + footer,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 
 # -----------------------------
-# Telegram Commands
+# Telegram Handlers
 # -----------------------------
+async def _remember_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        cid = int(update.effective_chat.id)
+        context.application.bot_data["last_chat_id"] = cid
+    except Exception:
+        pass
+
+
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_ensure_sub(chat_id)
+    await _remember_chat(update, context)
     await update.message.reply_text(f"🏓 Pong! ({BOT_VERSION})")
 
 
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = (
-        "🧭 <b>Komutlar</b>\n"
-        "• /ping\n"
-        "• /eod  → anlık rapor\n"
-        "• /radar 1  → BIST200 parça radar\n"
-        "• /watch → watchlist tablo\n"
-        "• /watch_set AKBNK,CANTE,EREGL\n"
-        "• /watch_add SASA\n"
-        "• /watch_del SASA\n"
-        "• /alarm_on  /alarm_off\n"
-        "• /report_on /report_off\n"
-        f"\n⚙️ <b>Sürüm</b>: {BOT_VERSION}"
-    )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-
-
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_ensure_sub(chat_id)
+    await _remember_chat(update, context)
 
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
@@ -521,45 +449,22 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10_vol = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
 
-    # 0) Kriter
     await update.message.reply_text(
         f"🧱 <b>Kriter</b>: Top10 hacim eşiği ≥ <b>{format_top10_threshold(top10_min_vol)}</b>",
         parse_mode=ParseMode.HTML
     )
 
-    # 1) İlk 20
     await update.message.reply_text(
         make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>"),
         parse_mode=ParseMode.HTML
     )
 
-    # 2) Top10 hacim
     if top10_vol:
         await update.message.reply_text(
             make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"),
             parse_mode=ParseMode.HTML
         )
 
-    # 3) Adaylar
-    toplama_cand = pick_candidates(rows, "TOPLAMA")
-    dip_cand = pick_candidates(rows, "DİP TOPLAMA")
-
-    await update.message.reply_text(
-        make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>") if toplama_cand
-        else "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—",
-        parse_mode=ParseMode.HTML
-    )
-
-    await update.message.reply_text(
-        make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>") if dip_cand
-        else "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—",
-        parse_mode=ParseMode.HTML
-    )
-
-    # 4) Özet
-    await update.message.reply_text(signal_summary_compact(rows), parse_mode=ParseMode.HTML)
-
-    # 5) XU100 line
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     await update.message.reply_text(
@@ -569,9 +474,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_ensure_sub(chat_id)
+    await _remember_chat(update, context)
 
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
@@ -604,329 +507,77 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(make_table(rows, title), parse_mode=ParseMode.HTML)
 
 
-# ✅ /watch -> DB watchlist (chat bazlı)
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_ensure_sub(chat_id)
+    await _remember_chat(update, context)
 
-    watch = db_get_watchlist(chat_id)
-    if not watch:
+    rows, thresh_s, xu_close, xu_change = await build_watch_rows_with_threshold()
+    if not rows:
         await update.message.reply_text(
-            "❌ Watchlist boş.\nÖrnek: /watch_set AKBNK,CANTE,EREGL",
+            "❌ WATCHLIST env boş.\nÖrnek: WATCHLIST=AKBNK,CANTE,EREGL\n(Alternatif: WATCHLIST_BIST=AKBNK,CANTE,EREGL)",
             parse_mode=ParseMode.HTML
         )
         return
 
-    await update.message.reply_text("⏳ Veriler çekiliyor...")
-
-    _, xu_change = await get_xu100_summary()
-
-    rows = await build_rows_from_is_list(watch)
-
-    # threshold: BIST200 varsa onu baz al
-    top10_min_vol, _all_rows = await get_bist200_threshold(xu_change)
-    if (top10_min_vol == top10_min_vol) and (not math.isnan(top10_min_vol)) and top10_min_vol != float("inf"):
-        _apply_signals_with_threshold(rows, xu_change, top10_min_vol)
-        thresh_s = format_top10_threshold(top10_min_vol)
-    else:
-        tmp = compute_signal_rows(rows, xu_change)
-        thresh_s = format_top10_threshold(tmp)
+    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
+    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
     await update.message.reply_text(
         f"👀 <b>WATCHLIST</b> (Top10 hacim eşiği ≥ <b>{thresh_s}</b>)\n"
-        f"• Liste: <b>{', '.join(watch)}</b>",
+        f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}",
         parse_mode=ParseMode.HTML
     )
     await update.message.reply_text(make_table(rows, "📌 <b>Watchlist Radar</b>"), parse_mode=ParseMode.HTML)
 
 
-async def cmd_watch_set(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_ensure_sub(chat_id)
+async def cmd_auto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /auto on|off  (runtime toggle - bot restart olunca AUTO_ENABLED env'e döner)
+    """
+    await _remember_chat(update, context)
 
-    if not context.args:
-        await update.message.reply_text("Kullanım: /watch_set AKBNK,CANTE,EREGL", parse_mode=ParseMode.HTML)
-        return
-
-    raw = " ".join(context.args).strip()
-    parts = [p.strip() for p in re.split(r"[,\s]+", raw) if p.strip()]
-    count = db_watch_set(chat_id, parts)
-    await update.message.reply_text(f"✅ Watchlist güncellendi: <b>{count}</b> hisse.", parse_mode=ParseMode.HTML)
-
-
-async def cmd_watch_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_ensure_sub(chat_id)
-
-    if not context.args:
-        await update.message.reply_text("Kullanım: /watch_add SASA", parse_mode=ParseMode.HTML)
-        return
-
-    t = clean_ticker(context.args[0])
-    ok = db_watch_add(chat_id, t)
-    if ok:
-        await update.message.reply_text(f"✅ Eklendi: <b>{t}</b>", parse_mode=ParseMode.HTML)
+    global AUTO_ENABLED
+    arg = (context.args[0].lower() if context.args else "").strip()
+    if arg in ("on", "1", "aç", "ac"):
+        AUTO_ENABLED = True
+        await update.message.reply_text("✅ Auto RAPOR/ALARM: AÇIK")
+    elif arg in ("off", "0", "kapat"):
+        AUTO_ENABLED = False
+        await update.message.reply_text("🛑 Auto RAPOR/ALARM: KAPALI")
     else:
-        await update.message.reply_text("❌ Geçersiz hisse.", parse_mode=ParseMode.HTML)
-
-
-async def cmd_watch_del(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_ensure_sub(chat_id)
-
-    if not context.args:
-        await update.message.reply_text("Kullanım: /watch_del SASA", parse_mode=ParseMode.HTML)
-        return
-
-    t = clean_ticker(context.args[0])
-    ok = db_watch_del(chat_id, t)
-    if ok:
-        await update.message.reply_text(f"🗑️ Silindi: <b>{t}</b>", parse_mode=ParseMode.HTML)
-    else:
-        await update.message.reply_text("❌ Bulunamadı / silinemedi.", parse_mode=ParseMode.HTML)
-
-
-async def cmd_alarm_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_set_alarm(chat_id, True)
-    await update.message.reply_text(
-        "🚨 <b>ALARM AÇIK</b>\n"
-        "Sadece <b>TOPLAMA</b> ve <b>DİP TOPLAMA</b> sinyalleri gelir.\n"
-        "Aynı hisse + aynı sinyal: <b>60 dk</b> içinde tekrar gönderilmez.",
-        parse_mode=ParseMode.HTML
-    )
-
-
-async def cmd_alarm_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_set_alarm(chat_id, False)
-    await update.message.reply_text("🔕 <b>ALARM KAPALI</b>", parse_mode=ParseMode.HTML)
-
-
-async def cmd_report_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_set_report(chat_id, True)
-    await update.message.reply_text("🧾 <b>OTOMATİK RAPOR AÇIK</b>", parse_mode=ParseMode.HTML)
-
-
-async def cmd_report_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_init()
-    chat_id = update.effective_chat.id
-    db_set_report(chat_id, False)
-    await update.message.reply_text("🧾 <b>OTOMATİK RAPOR KAPALI</b>", parse_mode=ParseMode.HTML)
+        st = "AÇIK" if AUTO_ENABLED else "KAPALI"
+        await update.message.reply_text(f"ℹ️ Auto durum: {st}\nKullanım: /auto on  veya  /auto off")
 
 
 # -----------------------------
-# Jobs (Auto)
+# Scheduler
 # -----------------------------
-async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Alarm: TOPLAMA + DİP TOPLAMA. Aynı sinyal 60 dk içinde tekrar gitmez."""
-    chat_ids = db_get_subs("alarm_enabled")
-    if not chat_ids:
-        return
-
-    # seans dışı spam olmasın
-    if not is_market_hours_tr():
-        return
-
-    try:
-        _, xu_change = await get_xu100_summary()
-        top10_min_vol, _all_rows = await get_bist200_threshold(xu_change)
-        thresh_ok = (top10_min_vol == top10_min_vol) and (not math.isnan(top10_min_vol)) and top10_min_vol != float("inf")
-        thresh_s = format_top10_threshold(top10_min_vol) if thresh_ok else "n/a"
-
-        # in-memory cooldown (restart olursa sıfırlanır - normal)
-        last_sent = context.application.bot_data.setdefault("alarm_last_sent", {})
-        now_ts = time.time()
-
-        for chat_id in chat_ids:
-            watch = db_get_watchlist(chat_id)
-            if not watch:
-                continue
-
-            rows = await build_rows_from_is_list(watch)
-            if thresh_ok:
-                _apply_signals_with_threshold(rows, xu_change, top10_min_vol)
-            else:
-                compute_signal_rows(rows, xu_change)
-
-            alerts = []
-            chat_map = last_sent.setdefault(chat_id, {})  # ticker -> {signal: ts}
-
-            for r in rows:
-                t = r.get("ticker")
-                st = r.get("signal_text", "")
-
-                if st not in ALARM_ALLOWED:
-                    continue
-
-                sig_icon = r.get("signal", "-")
-                ch = r.get("change", float("nan"))
-                vol = r.get("volume", float("nan"))
-                ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}%"
-                vol_s = format_volume(vol)
-
-                ticker_map = chat_map.setdefault(t, {})  # signal -> ts
-                last_ts = float(ticker_map.get(st, 0.0) or 0.0)
-
-                if (now_ts - last_ts) < ALARM_COOLDOWN_SEC:
-                    continue
-
-                ticker_map[st] = now_ts
-                alerts.append(f"{sig_icon} <b>{t}</b> • {st} • {ch_s} • {vol_s}")
-
-            if alerts:
-                msg = (
-                    f"🚨 <b>ALARM</b> (Top10 eşik ≥ <b>{thresh_s}</b>)\n"
-                    + "\n".join(alerts)
-                )
-                await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.HTML)
-
-    except Exception as e:
-        logger.exception("alarm job error: %s", e)
-
-
-async def job_report_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Daha sık otomatik rapor: Watchlist Radar (abonelere)."""
-    chat_ids = db_get_subs("report_enabled")
-    if not chat_ids:
-        return
-
-    if not is_market_hours_tr():
-        return
-
-    try:
-        _, xu_change = await get_xu100_summary()
-        top10_min_vol, _all_rows = await get_bist200_threshold(xu_change)
-        thresh_ok = (top10_min_vol == top10_min_vol) and (not math.isnan(top10_min_vol)) and top10_min_vol != float("inf")
-        thresh_s = format_top10_threshold(top10_min_vol) if thresh_ok else "n/a"
-
-        for chat_id in chat_ids:
-            watch = db_get_watchlist(chat_id)
-            if not watch:
-                continue
-
-            rows = await build_rows_from_is_list(watch)
-            if thresh_ok:
-                _apply_signals_with_threshold(rows, xu_change, top10_min_vol)
-            else:
-                compute_signal_rows(rows, xu_change)
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"🧾 <b>OTOMATİK RAPOR</b> • Watchlist (Top10 eşik ≥ <b>{thresh_s}</b>)\n"
-                     f"• Liste: <b>{', '.join(watch)}</b>",
-                parse_mode=ParseMode.HTML
-            )
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=make_table(rows, "📌 <b>Watchlist Radar</b>"),
-                parse_mode=ParseMode.HTML
-            )
-
-    except Exception as e:
-        logger.exception("report job error: %s", e)
-
-
-async def job_close_report(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """17:50 kapanışa yakın tam EOD raporu (abonelere)."""
-    chat_ids = db_get_subs("report_enabled")
-    if not chat_ids:
-        return
-
-    try:
-        bist200_list = env_csv("BIST200_TICKERS")
-        if not bist200_list:
-            return
-
-        xu_close, xu_change = await get_xu100_summary()
-        rows = await build_rows_from_is_list(bist200_list)
-        top10_min_vol = compute_signal_rows(rows, xu_change)
-
-        first20 = rows[:20]
-        rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
-        top10_vol = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
-        toplama_cand = pick_candidates(rows, "TOPLAMA")
-        dip_cand = pick_candidates(rows, "DİP TOPLAMA")
-
-        xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
-        xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
-
-        for chat_id in chat_ids:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"🕔 <b>KAPANIŞ RAPORU (17:50)</b>\n"
-                     f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
-                     f"🧱 <b>Kriter</b>: Top10 hacim eşiği ≥ <b>{format_top10_threshold(top10_min_vol)}</b>",
-                parse_mode=ParseMode.HTML
-            )
-            await context.bot.send_message(chat_id=chat_id, text=make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>"), parse_mode=ParseMode.HTML)
-            if top10_vol:
-                await context.bot.send_message(chat_id=chat_id, text=make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"), parse_mode=ParseMode.HTML)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>") if toplama_cand else "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—",
-                parse_mode=ParseMode.HTML
-            )
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>") if dip_cand else "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—",
-                parse_mode=ParseMode.HTML
-            )
-            await context.bot.send_message(chat_id=chat_id, text=signal_summary_compact(rows), parse_mode=ParseMode.HTML)
-
-    except Exception as e:
-        logger.exception("close report job error: %s", e)
-
-
 def schedule_jobs(app: Application) -> None:
-    """JobQueue kurulum."""
     jq = app.job_queue
+    if not jq:
+        logger.warning("JobQueue yok. requirements: python-telegram-bot[job-queue]==22.5")
+        return
 
-    # Alarm taraması
-    jq.run_repeating(job_alarm_scan, interval=ALARM_SCAN_EVERY_SEC, first=15)
-
-    # Daha sık rapor
-    jq.run_repeating(job_report_scan, interval=REPORT_SCAN_EVERY_SEC, first=30)
-
-    # Kapanış raporu: her gün 17:50 TR
-    jq.run_daily(job_close_report, time=dtime(CLOSE_HOUR, CLOSE_MINUTE, tzinfo=TZ))
+    # 30 dakikada bir rapor/alarm (tek mesaj)
+    interval = max(5, REPORT_INTERVAL_MIN) * 60
+    jq.run_repeating(job_watch_report, interval=interval, first=10, name="watch_report_alarm")
+    logger.info("Scheduled watch report/alarm every %s minutes", REPORT_INTERVAL_MIN)
 
 
 # -----------------------------
 # Main
 # -----------------------------
 def main() -> None:
-    db_init()
-
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
 
     app = Application.builder().token(token).build()
 
-    # Commands
     app.add_handler(CommandHandler("ping", cmd_ping))
-    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("radar", cmd_radar))
-
     app.add_handler(CommandHandler("watch", cmd_watch))
-    app.add_handler(CommandHandler("watch_set", cmd_watch_set))
-    app.add_handler(CommandHandler("watch_add", cmd_watch_add))
-    app.add_handler(CommandHandler("watch_del", cmd_watch_del))
-
-    app.add_handler(CommandHandler("alarm_on", cmd_alarm_on))
-    app.add_handler(CommandHandler("alarm_off", cmd_alarm_off))
-    app.add_handler(CommandHandler("report_on", cmd_report_on))
-    app.add_handler(CommandHandler("report_off", cmd_report_off))
+    app.add_handler(CommandHandler("auto", cmd_auto))
 
     schedule_jobs(app)
 
