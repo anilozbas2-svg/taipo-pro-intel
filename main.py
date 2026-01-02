@@ -6,7 +6,7 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple
 
 import requests
 from telegram import Update
@@ -16,7 +16,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.3.5-hybrid").strip() or "v1.3.5-hybrid"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.3.6-premium").strip() or "v1.3.6-premium"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -31,11 +31,14 @@ TZ = ZoneInfo(os.getenv("TZ", "Europe/Istanbul"))
 
 # Alarm config
 ALARM_ENABLED = os.getenv("ALARM_ENABLED", "1").strip() == "1"  # 1/0
-ALARM_CHAT_ID = os.getenv("ALARM_CHAT_ID", "").strip()          # Telegram chat id (string)
+ALARM_CHAT_ID = os.getenv("ALARM_CHAT_ID", "").strip()          # group chat id (string) ex: -100....
 ALARM_INTERVAL_MIN = int(os.getenv("ALARM_INTERVAL_MIN", "30")) # 30 dk
 ALARM_COOLDOWN_MIN = int(os.getenv("ALARM_COOLDOWN_MIN", "60")) # aynı hisse 60 dk içinde tekrar yok
+
 EOD_HOUR = int(os.getenv("EOD_HOUR", "17"))
 EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
+
+WATCHLIST_MAX = int(os.getenv("WATCHLIST_MAX", "12"))
 
 # In-memory cooldown store: { "TICKER": last_sent_unix }
 LAST_ALARM_TS: Dict[str, float] = {}
@@ -76,14 +79,12 @@ def safe_float(x: Any) -> float:
     except Exception:
         return float("nan")
 
-# ✅ HACİM KISA FORMAT (wrap engeller)
 def format_volume(v: Any) -> str:
     try:
         n = float(v)
     except Exception:
         return "n/a"
     absn = abs(n)
-
     if absn >= 1_000_000_000:
         s = f"{n/1_000_000_000:.1f}B"
         return s.replace(".0B", "B")
@@ -102,15 +103,25 @@ def now_tr() -> datetime:
 def next_aligned_run(minutes: int) -> datetime:
     """Bir sonraki (00/30 gibi) dakikaya hizalar."""
     n = now_tr()
-    # dakika hizalama
     m = n.minute
-    step = minutes
-    # bir sonraki step'e yuvarla
+    step = max(1, int(minutes))
     next_m = ((m // step) + 1) * step
     if next_m >= 60:
         nn = (n.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1))
         return nn
     return n.replace(second=0, microsecond=0, minute=next_m)
+
+def st_short(sig_text: str) -> str:
+    # tablo sığsın diye kısa kod
+    if sig_text == "TOPLAMA":
+        return "TOP"
+    if sig_text == "DİP TOPLAMA":
+        return "DIP"
+    if sig_text == "AYRIŞMA":
+        return "AYR"
+    if sig_text == "KÂR KORUMA":
+        return "KAR"
+    return ""
 
 # -----------------------------
 # TradingView Scanner (SYNC -> thread)
@@ -175,24 +186,13 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
 # 3'lü sistem (stabil) - Hybrid
 # -----------------------------
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float) -> float:
-    """
-    Hybrid:
-    - Top10 hacim eşiğini referans alır (Top10’un 10. sırası)
-    - TOPLAMA: Top10 hacimde olup 0.00 ile +0.60 arası -> 🧠
-    - DİP TOPLAMA: Top10 hacimde olup -0.60 ile -0.01 arası -> 🧲
-    - AYRIŞMA: Endeks sert düşüşte (<= -0.80) iken hisse +0.40 ve üstü + Top10 hacim -> 🧠
-    - KÂR KORUMA: hisse >= +4.00 -> ⚠️
-    Returns: top10_min_vol (float)
-    """
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10 = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
     top10_min_vol = top10[-1]["volume"] if len(top10) == 10 else (top10[-1]["volume"] if top10 else float("inf"))
-
     _apply_signals_with_threshold(rows, xu100_change, top10_min_vol)
     return float(top10_min_vol)
 
 def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: float, top10_min_vol: float) -> None:
-    """BIST200 top10 eşiğiyle sinyal üretir (Watchlist/Alarm için stabil)."""
     for r in rows:
         ch = r.get("change", float("nan"))
         vol = r.get("volume", float("nan"))
@@ -228,29 +228,37 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
         r["signal_text"] = ""
 
 # -----------------------------
-# Table view (compact, wrap-safe)
+# Table view (compact, wrap-safe) ✅
 # -----------------------------
-def make_table(rows: List[Dict[str, Any]], title: str, include_note: bool = False) -> str:
-    header = f"{'HİSSE':<6} {'S':<2} {'GÜNLÜK%':>7} {'FİYAT':>8} {'HACİM':>7}" + (f"  {'NOT':<10}" if include_note else "")
+def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = False) -> str:
+    """
+    Telegram mobil wrap önlemek için dar tablo.
+    include_kind=True => K sütunu (TOP/DIP/AYR/KAR)
+    """
+    if include_kind:
+        header = f"{'HIS':<5} {'S':<1} {'K':<3} {'%':>5} {'FYT':>7} {'HCM':>5}"
+    else:
+        header = f"{'HIS':<5} {'S':<1} {'%':>5} {'FYT':>7} {'HCM':>5}"
+
     sep = "-" * len(header)
     lines = [title, "<pre>", header, sep]
 
     for r in rows:
-        t = r.get("ticker", "n/a")
-        sig = r.get("signal", "-")
+        t = (r.get("ticker", "n/a") or "n/a")[:5]
+        sig = (r.get("signal", "-") or "-")[:1]
         ch = r.get("change", float("nan"))
         cl = r.get("close", float("nan"))
         vol = r.get("volume", float("nan"))
-        note = r.get("signal_text", "")
 
         ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
         vol_s = format_volume(vol)
 
-        if include_note:
-            lines.append(f"{t:<6} {sig:<2} {ch_s:>7} {cl_s:>8} {vol_s:>7}  {note:<10}")
+        if include_kind:
+            k = st_short(r.get("signal_text", ""))
+            lines.append(f"{t:<5} {sig:<1} {k:<3} {ch_s:>5} {cl_s:>7} {vol_s:>5}")
         else:
-            lines.append(f"{t:<6} {sig:<2} {ch_s:>7} {cl_s:>8} {vol_s:>7}")
+            lines.append(f"{t:<5} {sig:<1} {ch_s:>5} {cl_s:>7} {vol_s:>5}")
 
     lines.append("</pre>")
     return "\n".join(lines)
@@ -294,25 +302,62 @@ def parse_watch_args(args: List[str]) -> List[str]:
         return []
     joined = " ".join(args).strip()
     joined = joined.replace(";", ",")
-    parts = []
+    parts: List[str] = []
     for p in joined.split(","):
         p = p.strip()
         if not p:
             continue
         parts.extend(p.split())
-    out = []
+
+    out: List[str] = []
     for t in parts:
         tt = re.sub(r"[^A-Za-z0-9:_\.]", "", t).upper()
         if tt:
             out.append(tt)
-    # uniq preserve order
+
     seen = set()
-    uniq = []
+    uniq: List[str] = []
     for t in out:
         if t not in seen:
             seen.add(t)
             uniq.append(t)
     return uniq
+
+# -----------------------------
+# Premium Alarm message ✅
+# -----------------------------
+def build_alarm_message(
+    alarm_rows: List[Dict[str, Any]],
+    watch_rows: List[Dict[str, Any]],
+    xu_close: float,
+    xu_change: float,
+    thresh_s: str,
+) -> str:
+    now_s = now_tr().strftime("%H:%M")
+    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
+    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
+
+    # Tetiklenen özet
+    trig = []
+    for r in alarm_rows:
+        k = st_short(r.get("signal_text", ""))
+        t = r.get("ticker", "")
+        if t:
+            trig.append(f"{t}({k})")
+    trig_s = ", ".join(trig) if trig else "—"
+
+    head = (
+        f"🚨 <b>ALARM GELDİ</b> • <b>{now_s}</b> • <b>{BOT_VERSION}</b>\n"
+        f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
+        f"🧱 <b>Top10 Eşik</b>: ≥ <b>{thresh_s}</b>\n"
+        f"🎯 <b>Tetiklenen</b>: {trig_s}\n"
+    )
+
+    alarm_table = make_table(alarm_rows, "🔥 <b>ALARM RADAR (TOP/DIP)</b>", include_kind=True)
+    watch_table = make_table(watch_rows, "👀 <b>WATCHLIST (Alarm Eki)</b>", include_kind=True)
+
+    foot = f"\n⏳ <i>Aynı hisse için {ALARM_COOLDOWN_MIN} dk cooldown aktif.</i>"
+    return head + "\n" + alarm_table + "\n\n" + watch_table + foot
 
 # -----------------------------
 # Alarm logic
@@ -324,15 +369,16 @@ def can_send_alarm_for(ticker: str, now_ts: float) -> bool:
     return (now_ts - last) >= (ALARM_COOLDOWN_MIN * 60)
 
 def mark_alarm_sent(ticker: str, now_ts: float) -> None:
-    LAST_ALARM_TS[ticker] = now_ts
+    if ticker:
+        LAST_ALARM_TS[ticker] = now_ts
 
 def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Alarm sadece TOPLAMA + DİP TOPLAMA.
-    Aynı hisse 60 dk cooldown.
+    Aynı hisse cooldown.
     """
     now_ts = time.time()
-    out = []
+    out: List[Dict[str, Any]] = []
     for r in rows:
         kind = r.get("signal_text", "")
         if kind not in ("TOPLAMA", "DİP TOPLAMA"):
@@ -342,8 +388,12 @@ def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         if can_send_alarm_for(t, now_ts):
             out.append(r)
-    # hacme göre sırala
-    out = sorted(out, key=lambda x: (x.get("volume") or 0) if (x.get("volume") == x.get("volume")) else 0, reverse=True)
+
+    out = sorted(
+        out,
+        key=lambda x: (x.get("volume") or 0) if (x.get("volume") == x.get("volume")) else 0,
+        reverse=True
+    )
     return out
 
 # -----------------------------
@@ -356,6 +406,19 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     cid = update.effective_chat.id
     await update.message.reply_text(f"🧾 Chat ID: <code>{cid}</code>", parse_mode=ParseMode.HTML)
 
+async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = (
+        f"🚨 <b>Alarm Durumu</b>\n"
+        f"• Enabled: <b>{'ON' if ALARM_ENABLED else 'OFF'}</b>\n"
+        f"• Interval: <b>{ALARM_INTERVAL_MIN} dk</b>\n"
+        f"• Cooldown: <b>{ALARM_COOLDOWN_MIN} dk</b>\n"
+        f"• ChatID env: <code>{ALARM_CHAT_ID or 'YOK'}</code>\n"
+        f"• EOD: <b>{EOD_HOUR:02d}:{EOD_MINUTE:02d}</b>\n"
+        f"• TZ: <b>{TZ.key}</b>\n"
+        f"• WATCHLIST_MAX: <b>{WATCHLIST_MAX}</b>"
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
@@ -367,56 +430,51 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
     top10_min_vol = compute_signal_rows(rows, xu_change)
+    thresh_s = format_top10_threshold(top10_min_vol)
 
     first20 = rows[:20]
+
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10_vol = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
 
     toplama_cand = pick_candidates(rows, "TOPLAMA")
     dip_cand = pick_candidates(rows, "DİP TOPLAMA")
 
-    # 0) Mini kriter satırı (Top10 eşiği)
+    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
+    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
+
+    # 0) Kriter + XU100
     await update.message.reply_text(
-        f"🧱 <b>Kriter</b>: Top10 hacim eşiği ≥ <b>{format_top10_threshold(top10_min_vol)}</b>",
+        f"🧱 <b>Kriter</b>: Top10 hacim eşiği ≥ <b>{thresh_s}</b>\n"
+        f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}",
         parse_mode=ParseMode.HTML
     )
 
     # 1) Radar first 20
+    await update.message.reply_text(make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>", include_kind=True), parse_mode=ParseMode.HTML)
+
+    # 2) Top 10 volume
     await update.message.reply_text(
-        make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>"),
+        make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>", include_kind=True) if top10_vol
+        else "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>\n—",
         parse_mode=ParseMode.HTML
     )
 
-    # 2) Top 10 volume
-    if top10_vol:
-        await update.message.reply_text(
-            make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>"),
-            parse_mode=ParseMode.HTML
-        )
-
     # 3) Candidates
     await update.message.reply_text(
-        make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>") if toplama_cand
+        make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>", include_kind=True) if toplama_cand
         else "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—",
         parse_mode=ParseMode.HTML
     )
 
     await update.message.reply_text(
-        make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>") if dip_cand
+        make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>", include_kind=True) if dip_cand
         else "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—",
         parse_mode=ParseMode.HTML
     )
 
-    # 4) Compact signal summary
+    # 4) Compact summary
     await update.message.reply_text(signal_summary_compact(rows), parse_mode=ParseMode.HTML)
-
-    # 5) XU100 compact line
-    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
-    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
-    await update.message.reply_text(
-        f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}",
-        parse_mode=ParseMode.HTML
-    )
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
@@ -442,20 +500,23 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Veriler çekiliyor...")
 
     part_list = chunks[n - 1]
-    _, xu_change = await get_xu100_summary()
+    xu_close, xu_change = await get_xu100_summary()
+
     rows = await build_rows_from_is_list(part_list)
 
-    # Threshold'ı BIST200 üzerinden alıp (stabil), bu 20'liye uygula
+    # Threshold'ı BIST200 üzerinden alıp stabil uygula
     all_rows = await build_rows_from_is_list(bist200_list)
     top10_min_vol = compute_signal_rows(all_rows, xu_change)
     _apply_signals_with_threshold(rows, xu_change, top10_min_vol)
 
-    title = f"📡 <b>BIST200 RADAR – Parça {n}/{total_parts}</b>\n(20 hisse)"
-    await update.message.reply_text(make_table(rows, title), parse_mode=ParseMode.HTML)
+    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
+    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
+
+    title = f"📡 <b>BIST200 RADAR – Parça {n}/{total_parts}</b>\n📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}"
+    await update.message.reply_text(make_table(rows, title, include_kind=True), parse_mode=ParseMode.HTML)
 
 # ✅ /watch -> ENV WATCHLIST=...  (fallback: WATCHLIST_BIST) + args override
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Args varsa env'i override etsin
     arg_list = parse_watch_args(context.args or [])
     if arg_list:
         watch = arg_list
@@ -470,18 +531,12 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    # 10-12 önerin: pratik limit koyalım (istersen env ile değişir)
-    max_watch = int(os.getenv("WATCHLIST_MAX", "12"))
-    watch = watch[:max_watch]
-
+    watch = watch[:WATCHLIST_MAX]
     await update.message.reply_text("⏳ Veriler çekiliyor...")
 
     xu_close, xu_change = await get_xu100_summary()
-
-    # watchlist hisselerini çek
     rows = await build_rows_from_is_list(watch)
 
-    # Top10 eşiği: BIST200 üzerinden stabil
     bist200_list = env_csv("BIST200_TICKERS")
     if bist200_list:
         all_rows = await build_rows_from_is_list(bist200_list)
@@ -496,32 +551,24 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
     await update.message.reply_text(
-        f"👀 <b>WATCHLIST</b> (Top10 hacim eşiği ≥ <b>{thresh_s}</b>)\n"
+        f"👀 <b>WATCHLIST</b> (Top10 Eşik ≥ <b>{thresh_s}</b>)\n"
         f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}",
         parse_mode=ParseMode.HTML
     )
-    await update.message.reply_text(make_table(rows, "📌 <b>Watchlist Radar</b>"), parse_mode=ParseMode.HTML)
-
-async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = (
-        f"🚨 <b>Alarm Durumu</b>\n"
-        f"• Enabled: <b>{'ON' if ALARM_ENABLED else 'OFF'}</b>\n"
-        f"• Interval: <b>{ALARM_INTERVAL_MIN} dk</b>\n"
-        f"• Cooldown: <b>{ALARM_COOLDOWN_MIN} dk</b>\n"
-        f"• ChatID env: <code>{ALARM_CHAT_ID or 'YOK'}</code>\n"
-        f"• EOD: <b>{EOD_HOUR:02d}:{EOD_MINUTE:02d}</b>\n"
-        f"• TZ: <b>{TZ.key}</b>"
-    )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(make_table(rows, "📌 <b>Watchlist Radar</b>", include_kind=True), parse_mode=ParseMode.HTML)
 
 # -----------------------------
 # Scheduled jobs
 # -----------------------------
 async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """30 dk’da bir: BIST200 tarar, yalnız TOPLAMA/DİP TOPLAMA alarm üretir + WATCHLIST tablosunu ekler."""
-    if not ALARM_ENABLED:
-        return
-    if not ALARM_CHAT_ID:
+    """
+    30 dk’da bir:
+    - BIST200 tarar
+    - Sadece TOPLAMA / DİP TOPLAMA alarm üretir
+    - Premium tek mesaj: Alarm tablosu + Watchlist tablosu
+    - Alarm sadece ALARM_CHAT_ID (grup) gider ✅
+    """
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
     bist200_list = env_csv("BIST200_TICKERS")
@@ -535,42 +582,29 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         top10_min_vol = compute_signal_rows(all_rows, xu_change)
         thresh_s = format_top10_threshold(top10_min_vol)
 
-        # Alarm adayları (yalnız TOPLAMA + DİP TOPLAMA)
         alarm_rows = filter_new_alarms(all_rows)
         if not alarm_rows:
             return
 
-        # Cooldown işaretle
+        # cooldown işaretle
         ts_now = time.time()
         for r in alarm_rows:
             mark_alarm_sent(r.get("ticker", ""), ts_now)
 
-        # Alarm tablosu (tek tablo, NOT sütunu ile)
-        alarm_title = (
-            f"🚨🚨 <b>ALARM GELDİ</b> ({BOT_VERSION}) 🚨🚨\n"
-            f"🕒 {now_tr().strftime('%H:%M')}  |  Top10 Eşik ≥ <b>{thresh_s}</b>\n"
-        )
-
-        xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
-        xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
-        alarm_title += f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}"
-
-        # Alarm tabloda sadece seçilenler kalsın
-        alarm_table = make_table(alarm_rows, alarm_title, include_note=True)
-
-        # WATCHLIST tablosu ekle (alarmla birlikte otomatik)
+        # Watchlist (env)
         watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
-        watch_table = ""
-        if watch:
-            max_watch = int(os.getenv("WATCHLIST_MAX", "12"))
-            watch = watch[:max_watch]
-            w_rows = await build_rows_from_is_list(watch)
+        watch = (watch or [])[:WATCHLIST_MAX]
+        w_rows = await build_rows_from_is_list(watch) if watch else []
+        if w_rows:
             _apply_signals_with_threshold(w_rows, xu_change, top10_min_vol)
-            watch_table = "\n\n" + make_table(w_rows, "👀 <b>WATCHLIST (Alarm Eki)</b>")
 
-        footer = f"\n\n⏳ <i>Aynı hisse için {ALARM_COOLDOWN_MIN} dk cooldown aktif.</i>"
-
-        text = alarm_table + watch_table + footer
+        text = build_alarm_message(
+            alarm_rows=alarm_rows,
+            watch_rows=w_rows if w_rows else [],
+            xu_close=xu_close,
+            xu_change=xu_change,
+            thresh_s=thresh_s,
+        )
 
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
@@ -582,10 +616,8 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Alarm job error: %s", e)
 
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Her gün 17:50: EOD raporu atar (env chat id)."""
-    if not ALARM_ENABLED:
-        return
-    if not ALARM_CHAT_ID:
+    """Her gün 17:50: EOD raporu (ALARM_CHAT_ID'e gider)"""
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
     bist200_list = env_csv("BIST200_TICKERS")
@@ -596,35 +628,33 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_close, xu_change = await get_xu100_summary()
         rows = await build_rows_from_is_list(bist200_list)
         top10_min_vol = compute_signal_rows(rows, xu_change)
+        thresh_s = format_top10_threshold(top10_min_vol)
 
         first20 = rows[:20]
         rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
         top10_vol = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
-
         toplama_cand = pick_candidates(rows, "TOPLAMA")
         dip_cand = pick_candidates(rows, "DİP TOPLAMA")
-
-        thresh_s = format_top10_threshold(top10_min_vol)
 
         xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
         xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
         header = (
-            f"📌 <b>EOD RAPOR</b> ({BOT_VERSION})\n"
-            f"🕒 {now_tr().strftime('%H:%M')}  |  Top10 Eşik ≥ <b>{thresh_s}</b>\n"
+            f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
+            f"🕒 {now_tr().strftime('%H:%M')}  |  🧱 Top10 Eşik ≥ <b>{thresh_s}</b>\n"
             f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}"
         )
 
         parts = [
             header,
-            make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>"),
-            make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>") if top10_vol else "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>\n—",
-            make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>") if toplama_cand else "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—",
-            make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>") if dip_cand else "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—",
+            make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>", include_kind=True),
+            make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>", include_kind=True) if top10_vol else "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>\n—",
+            make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>", include_kind=True) if toplama_cand else "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—",
+            make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>", include_kind=True) if dip_cand else "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—",
             signal_summary_compact(rows),
         ]
 
-        # Tek mesaja sığmazsa parçalayalım
+        # Telegram limiti için parçala
         buf = ""
         for p in parts:
             chunk = (p + "\n\n")
@@ -635,16 +665,15 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
         if buf.strip():
             await context.bot.send_message(chat_id=int(ALARM_CHAT_ID), text=buf.strip(), parse_mode=ParseMode.HTML)
 
-        # WATCHLIST’i EOD sonunda da ekleyelim
+        # EOD sonunda Watchlist de gelsin
         watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
+        watch = (watch or [])[:WATCHLIST_MAX]
         if watch:
-            max_watch = int(os.getenv("WATCHLIST_MAX", "12"))
-            watch = watch[:max_watch]
             w_rows = await build_rows_from_is_list(watch)
             _apply_signals_with_threshold(w_rows, xu_change, top10_min_vol)
             await context.bot.send_message(
                 chat_id=int(ALARM_CHAT_ID),
-                text=make_table(w_rows, "👀 <b>WATCHLIST (EOD Eki)</b>"),
+                text=make_table(w_rows, "👀 <b>WATCHLIST (EOD Eki)</b>", include_kind=True),
                 parse_mode=ParseMode.HTML
             )
     except Exception as e:
@@ -652,13 +681,12 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def schedule_jobs(app: Application) -> None:
     """
-    Alarm: 30 dk’da bir (10:00–17:30 arası)
+    Alarm: 30 dk’da bir (hizalı)
     EOD: 17:50
     """
     jq = getattr(app, "job_queue", None)
     if jq is None:
-        # JobQueue yoksa bot çökmesin diye sadece log atalım
-        logger.warning("JobQueue bulunamadı. requirements.txt -> python-telegram-bot[job-queue]==22.5 gerekli.")
+        logger.warning("JobQueue yok. requirements.txt: python-telegram-bot[job-queue]==22.5 kullan.")
         return
 
     if not ALARM_ENABLED:
@@ -669,7 +697,6 @@ def schedule_jobs(app: Application) -> None:
         logger.info("ALARM_CHAT_ID env yok. Alarm/EOD gönderilmeyecek.")
         return
 
-    # 1) Repeating alarm scan (30 dk alignment)
     first = next_aligned_run(ALARM_INTERVAL_MIN)
     jq.run_repeating(
         job_alarm_scan,
@@ -679,7 +706,6 @@ def schedule_jobs(app: Application) -> None:
     )
     logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
 
-    # 2) Daily EOD (17:50)
     jq.run_daily(
         job_eod_report,
         time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
@@ -705,7 +731,7 @@ def main() -> None:
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
 
-    # Schedule jobs (safe)
+    # Schedule jobs
     schedule_jobs(app)
 
     logger.info("Bot starting... version=%s", BOT_VERSION)
