@@ -2,11 +2,12 @@ import os
 import re
 import math
 import time
+import json
 import logging
 import asyncio
-from datetime import datetime, timedelta, time as dtime
+from datetime import datetime, timedelta, time as dtime, date
 from zoneinfo import ZoneInfo
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 
 import requests
 from telegram import Update
@@ -16,7 +17,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.3.7-premium-topN").strip() or "v1.3.7-premium-topN"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.4.0-premium-topN-disk30d").strip() or "v1.4.0-premium-topN-disk30d"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -49,7 +50,13 @@ EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
 WATCHLIST_MAX = int(os.getenv("WATCHLIST_MAX", "12"))
 
 # ✅ TopN hacim eşiği (Top10 yerine Top50 default)
-VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))  # 50 önerdiğin hedef
+VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))
+
+# ✅ Disk / 30G arşiv
+DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
+HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "30"))
+HISTORY_MAX_SAMPLES_PER_TICKER = int(os.getenv("HISTORY_MAX_SAMPLES_PER_TICKER", "4000"))  # güvenli limit
+ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))  # alarm mesajında kaç hisse için 30G not üretelim
 
 # In-memory cooldown store: { "TICKER": last_sent_unix }
 LAST_ALARM_TS: Dict[str, float] = {}
@@ -91,10 +98,6 @@ def safe_float(x: Any) -> float:
         return float("nan")
 
 def format_volume(v: Any) -> str:
-    """
-    Mobil wrap engellemek için K/M/B kısa format.
-    Not: uzun gelirse tablo kayıyor, bu yüzden kompakt.
-    """
     try:
         n = float(v)
     except Exception:
@@ -116,7 +119,6 @@ def now_tr() -> datetime:
     return datetime.now(tz=TZ)
 
 def next_aligned_run(minutes: int) -> datetime:
-    """Bir sonraki 00/30 gibi dakikaya hizalar."""
     n = now_tr()
     m = n.minute
     step = max(1, int(minutes))
@@ -127,14 +129,12 @@ def next_aligned_run(minutes: int) -> datetime:
     return n.replace(second=0, microsecond=0, minute=next_m)
 
 def within_alarm_window(dt: datetime) -> bool:
-    """Saat aralığı kontrolü (10:00–17:30 default)."""
     start = dtime(ALARM_START_HOUR, ALARM_START_MIN)
     end = dtime(ALARM_END_HOUR, ALARM_END_MIN)
     t = dt.timetz().replace(tzinfo=None)
     return start <= t <= end
 
 def st_short(sig_text: str) -> str:
-    # tablo sığsın diye kısa kod
     if sig_text == "TOPLAMA":
         return "TOP"
     if sig_text == "DİP TOPLAMA":
@@ -144,6 +144,171 @@ def st_short(sig_text: str) -> str:
     if sig_text == "KÂR KORUMA":
         return "KAR"
     return ""
+
+# -----------------------------
+# Disk storage (30G history)
+# -----------------------------
+def _ensure_data_dir() -> str:
+    # Disk yoksa /tmp'ye düş (bot kırılmasın)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        test_path = os.path.join(DATA_DIR, ".write_test")
+        with open(test_path, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(test_path)
+        return DATA_DIR
+    except Exception:
+        fallback = "/tmp/taipo_data"
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
+
+EFFECTIVE_DATA_DIR = _ensure_data_dir()
+HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "history_30d.json")
+
+def _load_json(path: str) -> Dict[str, Any]:
+    try:
+        if not os.path.exists(path):
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception as e:
+        logger.warning("History load failed: %s", e)
+        return {}
+
+def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.warning("History write failed: %s", e)
+
+def _cutoff_ts(days: int) -> float:
+    return (now_tr() - timedelta(days=days)).timestamp()
+
+def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
+    """
+    Her taramada/EOD'de:
+    - ticker için {ts, close, volume} sample ekler
+    - 30 gün dışını temizler
+    - aşırı büyümeyi limitler
+    """
+    if not rows:
+        return
+
+    data = _load_json(HISTORY_FILE)
+    if not isinstance(data, dict):
+        data = {}
+
+    cutoff = _cutoff_ts(HISTORY_DAYS)
+    ts_now = now_tr().timestamp()
+
+    for r in rows:
+        t = (r.get("ticker") or "").strip().upper()
+        cl = r.get("close", float("nan"))
+        vol = r.get("volume", float("nan"))
+        if not t:
+            continue
+        if cl != cl or vol != vol:
+            continue
+
+        series = data.get(t, [])
+        if not isinstance(series, list):
+            series = []
+
+        series.append({"ts": ts_now, "close": float(cl), "volume": float(vol)})
+
+        # prune by cutoff
+        series = [s for s in series if isinstance(s, dict) and float(s.get("ts", 0)) >= cutoff]
+
+        # hard limit
+        if len(series) > HISTORY_MAX_SAMPLES_PER_TICKER:
+            series = series[-HISTORY_MAX_SAMPLES_PER_TICKER:]
+
+        data[t] = series
+
+    _atomic_write_json(HISTORY_FILE, data)
+
+def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
+    """
+    30G:
+    - min/max fiyat (close)
+    - ortalama hacim
+    - bugün hacim (son sample)
+    - bugün / ort hacim oranı
+    """
+    t = (ticker or "").strip().upper()
+    if not t:
+        return None
+
+    data = _load_json(HISTORY_FILE)
+    series = data.get(t, [])
+    if not isinstance(series, list) or not series:
+        return None
+
+    cutoff = _cutoff_ts(HISTORY_DAYS)
+    series = [s for s in series if isinstance(s, dict) and float(s.get("ts", 0)) >= cutoff]
+    if not series:
+        return None
+
+    closes = []
+    vols = []
+    for s in series:
+        cl = safe_float(s.get("close"))
+        vo = safe_float(s.get("volume"))
+        if cl == cl:
+            closes.append(cl)
+        if vo == vo:
+            vols.append(vo)
+
+    if not closes or not vols:
+        return None
+
+    closes_min = float(min(closes))
+    closes_max = float(max(closes))
+    avg_vol = float(sum(vols) / max(1, len(vols)))
+    latest = series[-1]
+    today_vol = safe_float(latest.get("volume"))
+    ratio = (today_vol / avg_vol) if (avg_vol and avg_vol == avg_vol and today_vol == today_vol) else float("nan")
+
+    return {
+        "min": closes_min,
+        "max": closes_max,
+        "avg_vol": avg_vol,
+        "today_vol": today_vol,
+        "ratio": ratio,
+        "samples": len(series),
+    }
+
+def format_30d_note(ticker: str, current_close: float) -> str:
+    st = compute_30d_stats(ticker)
+    if not st:
+        return f"• <b>{ticker}</b>: 30G veri yok (disk yeni) ⏳"
+
+    mn = st["min"]
+    mx = st["max"]
+    av = st["avg_vol"]
+    tv = st["today_vol"]
+    ratio = st["ratio"]
+
+    # basit "bölge" okuması (tamamen bağlam)
+    zone = "N/A"
+    if current_close == current_close and mx > mn:
+        pos = (current_close - mn) / (mx - mn)
+        if pos <= 0.25:
+            zone = "DİP BÖLGE"
+        elif pos >= 0.75:
+            zone = "TEPE BÖLGE"
+        else:
+            zone = "ORTA BÖLGE"
+
+    ratio_s = "n/a" if (ratio != ratio) else f"{ratio:.2f}x"
+    return (
+        f"• <b>{ticker}</b>: 30G Min/Max <b>{mn:.2f}</b>/<b>{mx:.2f}</b> • "
+        f"Ort.Hcm <b>{format_volume(av)}</b> • Bugün <b>{format_volume(tv)}</b> • "
+        f"<b>{ratio_s}</b> • {zone}"
+    )
 
 # -----------------------------
 # TradingView Scanner (SYNC -> thread)
@@ -205,7 +370,7 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
     return rows
 
 # -----------------------------
-# Signal logic (TopN threshold) ✅
+# Signal logic (TopN threshold)
 # -----------------------------
 def compute_volume_threshold(rows: List[Dict[str, Any]], top_n: int) -> float:
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
@@ -239,19 +404,16 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
 
         in_topN = (vol == vol) and (vol >= min_vol_threshold)
 
-        # AYRIŞMA
         if in_topN and (xu100_change == xu100_change) and (xu100_change <= -0.80) and (ch >= 0.40):
             r["signal"] = "🧠"
             r["signal_text"] = "AYRIŞMA"
             continue
 
-        # TOPLAMA
         if in_topN and (0.00 <= ch <= 0.60):
             r["signal"] = "🧠"
             r["signal_text"] = "TOPLAMA"
             continue
 
-        # DİP TOPLAMA
         if in_topN and (-0.60 <= ch < 0.00):
             r["signal"] = "🧲"
             r["signal_text"] = "DİP TOPLAMA"
@@ -261,13 +423,9 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
         r["signal_text"] = ""
 
 # -----------------------------
-# Table view (premium + wrap-safe) ✅
+# Table view (premium + wrap-safe)
 # -----------------------------
 def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = False) -> str:
-    """
-    Mobil wrap önlemek için dar tablo.
-    include_kind=True => K sütunu (TOP/DIP/AYR/KAR)
-    """
     if include_kind:
         header = f"{'HIS':<5} {'S':<1} {'K':<3} {'%':>5} {'FYT':>7} {'HCM':>6}"
     else:
@@ -287,7 +445,7 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
 
         vol_s = format_volume(vol)
-        vol_s = vol_s[:6]  # aşırı uzarsa kırp
+        vol_s = vol_s[:6]
 
         if include_kind:
             k = st_short(r.get("signal_text", ""))
@@ -329,14 +487,9 @@ def format_threshold(min_vol: float) -> str:
     return format_volume(min_vol)
 
 def parse_watch_args(args: List[str]) -> List[str]:
-    """
-    /watch AKBNK,CANTE,EREGL
-    /watch AKBNK CANTE EREGL
-    """
     if not args:
         return []
-    joined = " ".join(args).strip()
-    joined = joined.replace(";", ",")
+    joined = " ".join(args).strip().replace(";", ",")
     parts: List[str] = []
     for p in joined.split(","):
         p = p.strip()
@@ -359,7 +512,7 @@ def parse_watch_args(args: List[str]) -> List[str]:
     return uniq
 
 # -----------------------------
-# Premium Alarm message ✅
+# Premium Alarm message (+30G note)
 # -----------------------------
 def build_alarm_message(
     alarm_rows: List[Dict[str, Any]],
@@ -390,13 +543,23 @@ def build_alarm_message(
 
     alarm_table = make_table(alarm_rows, "🔥 <b>ALARM RADAR (TOP/DIP)</b>", include_kind=True)
 
-    if watch_rows:
-        watch_table = make_table(watch_rows, "👀 <b>WATCHLIST (Alarm Eki)</b>", include_kind=True)
-        foot = f"\n⏳ <i>Aynı hisse için {ALARM_COOLDOWN_MIN} dk cooldown aktif.</i>"
-        return head + "\n" + alarm_table + "\n\n" + watch_table + foot
+    # 30G notlar (ilk N hisse)
+    notes_lines = ["\n📌 <b>30G Notlar (Disk Arşivi)</b>"]
+    for r in alarm_rows[:max(1, ALARM_NOTE_MAX)]:
+        t = r.get("ticker", "")
+        cl = r.get("close", float("nan"))
+        if not t:
+            continue
+        notes_lines.append(format_30d_note(t, cl))
+    notes = "\n".join(notes_lines)
 
     foot = f"\n⏳ <i>Aynı hisse için {ALARM_COOLDOWN_MIN} dk cooldown aktif.</i>"
-    return head + "\n" + alarm_table + foot
+
+    if watch_rows:
+        watch_table = make_table(watch_rows, "👀 <b>WATCHLIST (Alarm Eki)</b>", include_kind=True)
+        return head + "\n" + alarm_table + "\n" + notes + "\n\n" + watch_table + foot
+
+    return head + "\n" + alarm_table + "\n" + notes + foot
 
 # -----------------------------
 # Alarm logic
@@ -412,10 +575,6 @@ def mark_alarm_sent(ticker: str, now_ts: float) -> None:
         LAST_ALARM_TS[ticker] = now_ts
 
 def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Alarm sadece TOPLAMA + DİP TOPLAMA.
-    Aynı hisse cooldown.
-    """
     now_ts = time.time()
     out: List[Dict[str, Any]] = []
     for r in rows:
@@ -456,7 +615,41 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• EOD: <b>{EOD_HOUR:02d}:{EOD_MINUTE:02d}</b>\n"
         f"• TZ: <b>{TZ.key}</b>\n"
         f"• WATCHLIST_MAX: <b>{WATCHLIST_MAX}</b>\n"
-        f"• VOLUME_TOP_N: <b>{VOLUME_TOP_N}</b>"
+        f"• VOLUME_TOP_N: <b>{VOLUME_TOP_N}</b>\n"
+        f"• DATA_DIR: <code>{EFFECTIVE_DATA_DIR}</code>\n"
+        f"• HISTORY_DAYS: <b>{HISTORY_DAYS}</b>"
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /stats AKBNK
+    """
+    if not context.args:
+        await update.message.reply_text("Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
+        return
+
+    t = re.sub(r"[^A-Za-z0-9:_\.]", "", context.args[0]).upper().replace("BIST:", "")
+    if not t:
+        await update.message.reply_text("Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
+        return
+
+    st = compute_30d_stats(t)
+    if not st:
+        await update.message.reply_text(f"❌ <b>{t}</b> için 30G veri yok (disk yeni olabilir).", parse_mode=ParseMode.HTML)
+        return
+
+    ratio = st["ratio"]
+    ratio_s = "n/a" if (ratio != ratio) else f"{ratio:.2f}x"
+
+    msg = (
+        f"📌 <b>{t}</b> • <b>30G İstatistik</b>\n"
+        f"• Min/Max: <b>{st['min']:.2f}</b> / <b>{st['max']:.2f}</b>\n"
+        f"• Ort. Hacim: <b>{format_volume(st['avg_vol'])}</b>\n"
+        f"• Bugün Hacim: <b>{format_volume(st['today_vol'])}</b>\n"
+        f"• Bugün / Ortalama: <b>{ratio_s}</b>\n"
+        f"• Sample: <b>{st['samples']}</b>\n"
+        f"• Dosya: <code>{HISTORY_FILE}</code>"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -470,12 +663,14 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
+
+    # ✅ Disk: 30G arşive yaz
+    update_history_from_rows(rows)
+
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
 
     first20 = rows[:20]
-
-    # (Bilgi amaçlı) Top10 hacim listesi de kalsın istiyorsun diye bırakıyorum.
     rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     top10_vol = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)[:10]
 
@@ -487,7 +682,8 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(
         f"🧱 <b>Kriter</b>: Top{VOLUME_TOP_N} hacim eşiği ≥ <b>{thresh_s}</b>\n"
-        f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}",
+        f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
+        f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>",
         parse_mode=ParseMode.HTML
     )
 
@@ -541,7 +737,6 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     rows = await build_rows_from_is_list(part_list)
 
-    # Threshold'ı BIST200 üzerinden alıp stabil uygula
     all_rows = await build_rows_from_is_list(bist200_list)
     min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
     _apply_signals_with_threshold(rows, xu_change, min_vol)
@@ -599,10 +794,9 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     30 dk’da bir:
     - BIST200 tarar
+    - Disk’e 30G sample yazar
     - Sadece TOPLAMA / DİP TOPLAMA alarm üretir
-    - Premium tek mesaj: Alarm tablosu + Watchlist tablosu
-    - Alarm sadece ALARM_CHAT_ID (grup) gider ✅
-    - Saat aralığı: 10:00–17:30 (env ile değişir)
+    - Alarm mesajına 30G not ekler
     """
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
@@ -618,6 +812,10 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_close, xu_change = await get_xu100_summary()
 
         all_rows = await build_rows_from_is_list(bist200_list)
+
+        # ✅ Disk: her taramada arşive yaz
+        update_history_from_rows(all_rows)
+
         min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
 
@@ -665,6 +863,10 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         xu_close, xu_change = await get_xu100_summary()
         rows = await build_rows_from_is_list(bist200_list)
+
+        # ✅ Disk: EOD de arşive yaz
+        update_history_from_rows(rows)
+
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
 
@@ -680,7 +882,8 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
         header = (
             f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
             f"🕒 {now_tr().strftime('%H:%M')}  |  🧱 Top{VOLUME_TOP_N} Eşik ≥ <b>{thresh_s}</b>\n"
-            f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}"
+            f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
+            f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>"
         )
 
         parts = [
@@ -716,13 +919,8 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("EOD job error: %s", e)
 
 def schedule_jobs(app: Application) -> None:
-    """
-    Alarm: 30 dk’da bir (hizalı)
-    EOD: 17:50
-    """
     jq = getattr(app, "job_queue", None)
     if jq is None:
-        # En yaygın sebep: requirements'ta job-queue extras yok
         logger.warning("JobQueue yok. requirements.txt: python-telegram-bot[job-queue]==22.5 olmalı.")
         return
 
@@ -767,11 +965,12 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
+    app.add_handler(CommandHandler("stats", cmd_stats))  # ✅ yeni: /stats AKBNK
 
     # Schedule jobs
     schedule_jobs(app)
 
-    logger.info("Bot starting... version=%s", BOT_VERSION)
+    logger.info("Bot starting... version=%s data_dir=%s", BOT_VERSION, EFFECTIVE_DATA_DIR)
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
