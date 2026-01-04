@@ -10,14 +10,14 @@ from zoneinfo import ZoneInfo
 from typing import Dict, List, Any, Tuple, Optional
 
 import requests
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.4.0-premium-topN-disk30d").strip() or "v1.4.0-premium-topN-disk30d"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.5.0-premium-tomorrowlist-disk30d").strip() or "v1.5.0-premium-tomorrowlist-disk30d"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -46,6 +46,9 @@ ALARM_END_MIN = int(os.getenv("ALARM_END_MIN", "30"))
 EOD_HOUR = int(os.getenv("EOD_HOUR", "17"))
 EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
 
+# ✅ Tomorrow list (ertesi gün toplama listesi) – EOD’den kaç dk sonra gitsin?
+TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))  # 2 dk sonra ayrı mesaj atar (17:52)
+
 # Watchlist
 WATCHLIST_MAX = int(os.getenv("WATCHLIST_MAX", "12"))
 
@@ -57,8 +60,35 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "30"))
 ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))  # alarm mesajında kaç hisse için 30G not üretelim
 
+# ✅ Tomorrow list filtreleri (ertesi güne “kesin liste” mantığı)
+TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))  # “altın liste” default 12
+TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))  # bugün/ort hacim >= 1.20x
+TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))  # Band % <= 65 (tepeye yakınları ele)
+TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"  # 1 ise AYRIŞMA da ek tablo
+
 # In-memory cooldown store: { "TICKER": last_sent_unix }
 LAST_ALARM_TS: Dict[str, float] = {}
+
+# ✅ Telegram "/" menüsü için komut kayıtları
+BOT_COMMANDS: List[BotCommand] = [
+    BotCommand("help", "Komut listesi ve kullanım"),
+    BotCommand("ping", "Bot çalışıyor mu?"),
+    BotCommand("chatid", "Chat ID göster"),
+    BotCommand("watch", "Watchlist radar (örn: /watch AKBNK,CANTE)"),
+    BotCommand("radar", "BIST200 radar parça (örn: /radar 1)"),
+    BotCommand("eod", "Anlık EOD raporu (manuel)"),
+    BotCommand("tomorrow", "Ertesi güne kesin toplama listesi (manuel)"),
+    BotCommand("alarm", "Alarm durumu/ayarlar"),
+    BotCommand("stats", "30G istatistik (örn: /stats AKBNK)"),
+]
+
+async def post_init(app: Application) -> None:
+    """Bot açılırken Telegram komut menüsünü set eder ("/" ile hepsi görünür)."""
+    try:
+        await app.bot.set_my_commands(BOT_COMMANDS)
+        logger.info("Bot commands registered to Telegram menu.")
+    except Exception as e:
+        logger.exception("Failed to set bot commands: %s", e)
 
 # -----------------------------
 # Helpers
@@ -585,6 +615,106 @@ def parse_watch_args(args: List[str]) -> List[str]:
     return uniq
 
 # -----------------------------
+# Tomorrow List (ERTESİ GÜNE TOPLAMA – KESİN LİSTE)
+# -----------------------------
+def tomorrow_score(row: Dict[str, Any]) -> float:
+    """
+    Sıralama skoru:
+    - hacim (yüksek daha iyi)
+    - dip bölgeye yakınlık (band düşük daha iyi)
+    - sinyal önceliği (DIP > TOP)
+    """
+    t = row.get("ticker", "")
+    vol = row.get("volume", float("nan"))
+    kind = row.get("signal_text", "")
+    st = compute_30d_stats(t) if t else None
+    band = st.get("band_pct", 50.0) if st else 50.0
+
+    kind_bonus = 0.0
+    if kind == "DİP TOPLAMA":
+        kind_bonus = 15.0
+    elif kind == "TOPLAMA":
+        kind_bonus = 8.0
+    elif kind == "AYRIŞMA":
+        kind_bonus = 4.0
+
+    vol_term = 0.0
+    if vol == vol and vol > 0:
+        # log ölçek: aşırı hacimler skoru patlatmasın
+        vol_term = math.log10(vol + 1.0) * 10.0
+
+    band_term = max(0.0, (70.0 - float(band)))  # band düşükse + puan
+    return vol_term + band_term + kind_bonus
+
+def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    “Kesin liste” mantığı:
+    - Sinyal: TOPLAMA / DİP TOPLAMA (opsiyon: AYRIŞMA)
+    - 30G band <= TOMORROW_MAX_BAND
+    - bugün/ort hacim >= TOMORROW_MIN_VOL_RATIO
+    """
+    out: List[Dict[str, Any]] = []
+    for r in all_rows:
+        kind = r.get("signal_text", "")
+        if kind not in ("TOPLAMA", "DİP TOPLAMA") and not (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
+            continue
+        t = r.get("ticker", "")
+        if not t:
+            continue
+
+        st = compute_30d_stats(t)
+        if not st:
+            continue
+
+        ratio = st.get("ratio", float("nan"))
+        band = st.get("band_pct", 50.0)
+
+        if ratio != ratio or ratio < TOMORROW_MIN_VOL_RATIO:
+            continue
+        if band > TOMORROW_MAX_BAND:
+            continue
+
+        out.append(r)
+
+    out.sort(key=tomorrow_score, reverse=True)
+    return out[:max(1, TOMORROW_MAX)]
+
+def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_change: float, thresh_s: str) -> str:
+    now_s = now_tr().strftime("%H:%M")
+    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
+    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
+    tomorrow = (now_tr().date() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    head = (
+        f"🌙 <b>ERTESİ GÜNE TOPLAMA – KESİN LİSTE</b> • <b>{tomorrow}</b>\n"
+        f"🕒 Hazırlandı: <b>{now_s}</b> • <b>{BOT_VERSION}</b>\n"
+        f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
+        f"🧱 <b>Top{VOLUME_TOP_N} Eşik</b>: ≥ <b>{thresh_s}</b>\n"
+        f"🎯 Filtre: Band ≤ <b>%{TOMORROW_MAX_BAND:.0f}</b> • Hacim ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b>\n"
+    )
+
+    if not rows:
+        return head + "\n❌ <b>Bugün kriterlere uyan “kesin liste” çıkmadı.</b>\n<i>Disk doldukça ve gün sayısı arttıkça sistem daha keskinleşir.</i>"
+
+    table = make_table(rows, "✅ <b>ALTIN LİSTE (Tomorrow Candidates)</b>", include_kind=True)
+
+    notes_lines = ["\n📌 <b>30G Notlar</b>"]
+    for r in rows[:min(len(rows), ALARM_NOTE_MAX)]:
+        t = r.get("ticker", "")
+        cl = r.get("close", float("nan"))
+        notes_lines.append(format_30d_note(t, cl))
+    notes = "\n".join(notes_lines)
+
+    foot = (
+        "\n\n🟢 <b>Sabah Planı (Pratik)</b>\n"
+        "• Açılışta ilk 5–15 dk “sakin+yeşil” teyidi\n"
+        "• +%2–%4 kademeli çıkış (hızlı kâr)\n"
+        "• Ters mum gelirse: disiplin, zarar büyütme yok"
+    )
+
+    return head + "\n" + table + "\n" + notes + foot
+
+# -----------------------------
 # Premium Alarm message (+30G note)
 # -----------------------------
 def build_alarm_message(
@@ -670,6 +800,22 @@ def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # -----------------------------
 # Telegram Handlers
 # -----------------------------
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = (
+        f"🤖 <b>TAIPO PRO INTEL</b> • <b>{BOT_VERSION}</b>\n\n"
+        f"✅ <b>Komutlar</b>\n"
+        f"• <code>/ping</code> → bot çalışıyor mu?\n"
+        f"• <code>/chatid</code> → chat id\n"
+        f"• <code>/watch</code> → watchlist radar (örn: <code>/watch AKBNK,CANTE</code>)\n"
+        f"• <code>/radar</code> → BIST200 radar parça (örn: <code>/radar 1</code>)\n"
+        f"• <code>/eod</code> → manuel EOD raporu\n"
+        f"• <code>/tomorrow</code> → ertesi güne kesin toplama listesi\n"
+        f"• <code>/alarm</code> → alarm durumu/ayarlar\n"
+        f"• <code>/stats</code> → 30G istatistik (örn: <code>/stats AKBNK</code>)\n\n"
+        f"📌 <i>'/' yazınca komutların görünmesi için menü otomatik güncellenir.</i>"
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"🏓 Pong! ({BOT_VERSION})")
 
@@ -691,7 +837,8 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• VOLUME_TOP_N: <b>{VOLUME_TOP_N}</b>\n"
         f"• DATA_DIR: <code>{EFFECTIVE_DATA_DIR}</code>\n"
         f"• HISTORY_DAYS: <b>{HISTORY_DAYS}</b>\n"
-        f"• FILES: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>"
+        f"• FILES: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>\n"
+        f"• TOMORROW_MAX: <b>{TOMORROW_MAX}</b> | MIN_VOL_RATIO: <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b> | MAX_BAND: <b>%{TOMORROW_MAX_BAND:.0f}</b>"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -726,6 +873,31 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"• Dosyalar: <code>{PRICE_HISTORY_FILE}</code> & <code>{VOLUME_HISTORY_FILE}</code>"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /tomorrow  -> ertesi güne toplama listesi (manuel)
+    """
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        return
+
+    await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
+
+    xu_close, xu_change = await get_xu100_summary()
+    rows = await build_rows_from_is_list(bist200_list)
+
+    # disk snapshot
+    update_history_from_rows(rows)
+
+    min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+    thresh_s = format_threshold(min_vol)
+
+    tom_rows = build_tomorrow_rows(rows)
+    msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
+
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
@@ -926,6 +1098,40 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("Alarm job error: %s", e)
 
+async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Her gün EOD’den hemen sonra (varsayılan +2 dk):
+    - “ERTESİ GÜNE TOPLAMA – KESİN LİSTE” mesajını ALARM_CHAT_ID'e gönderir
+    """
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
+        return
+
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return
+
+    try:
+        xu_close, xu_change = await get_xu100_summary()
+        rows = await build_rows_from_is_list(bist200_list)
+
+        # disk snapshot
+        update_history_from_rows(rows)
+
+        min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+        thresh_s = format_threshold(min_vol)
+
+        tom_rows = build_tomorrow_rows(rows)
+        msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
+
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.exception("Tomorrow job error: %s", e)
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Her gün 17:50: EOD raporu (ALARM_CHAT_ID'e gider)"""
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
@@ -1017,12 +1223,22 @@ def schedule_jobs(app: Application) -> None:
     )
     logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
 
+    # EOD
     jq.run_daily(
         job_eod_report,
         time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
         name="eod_daily"
     )
     logger.info("EOD scheduled daily at %02d:%02d", EOD_HOUR, EOD_MINUTE)
+
+    # Tomorrow list: EOD + delay
+    base = datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ) + timedelta(minutes=TOMORROW_DELAY_MIN)
+    jq.run_daily(
+        job_tomorrow_list,
+        time=base.timetz(),
+        name="tomorrow_daily"
+    )
+    logger.info("Tomorrow list scheduled daily at %02d:%02d (+%d min)", base.hour, base.minute, TOMORROW_DELAY_MIN)
 
 # -----------------------------
 # Main
@@ -1032,16 +1248,18 @@ def main() -> None:
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
 
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(post_init).build()
 
     # Commands
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
-    app.add_handler(CommandHandler("stats", cmd_stats))  # ✅ /stats AKBNK
+    app.add_handler(CommandHandler("stats", cmd_stats))       # ✅ /stats AKBNK
+    app.add_handler(CommandHandler("tomorrow", cmd_tomorrow)) # ✅ /tomorrow
 
     # Schedule jobs
     schedule_jobs(app)
