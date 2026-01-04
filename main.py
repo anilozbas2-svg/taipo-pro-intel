@@ -55,7 +55,6 @@ VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))
 # ✅ Disk / 30G arşiv
 DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "30"))
-HISTORY_MAX_SAMPLES_PER_TICKER = int(os.getenv("HISTORY_MAX_SAMPLES_PER_TICKER", "4000"))  # güvenli limit
 ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))  # alarm mesajında kaç hisse için 30G not üretelim
 
 # In-memory cooldown store: { "TICKER": last_sent_unix }
@@ -146,7 +145,7 @@ def st_short(sig_text: str) -> str:
     return ""
 
 # -----------------------------
-# Disk storage (30G history)
+# Disk storage (30G daily history)  ✅ price_history.json + volume_history.json
 # -----------------------------
 def _ensure_data_dir() -> str:
     # Disk yoksa /tmp'ye düş (bot kırılmasın)
@@ -163,7 +162,8 @@ def _ensure_data_dir() -> str:
         return fallback
 
 EFFECTIVE_DATA_DIR = _ensure_data_dir()
-HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "history_30d.json")
+PRICE_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "price_history.json")
+VOLUME_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "volume_history.json")
 
 def _load_json(path: str) -> Dict[str, Any]:
     try:
@@ -172,7 +172,7 @@ def _load_json(path: str) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception as e:
-        logger.warning("History load failed: %s", e)
+        logger.warning("History load failed (%s): %s", path, e)
         return {}
 
 def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
@@ -182,27 +182,44 @@ def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
             json.dump(data, f, ensure_ascii=False)
         os.replace(tmp, path)
     except Exception as e:
-        logger.warning("History write failed: %s", e)
+        logger.warning("History write failed (%s): %s", path, e)
 
-def _cutoff_ts(days: int) -> float:
-    return (now_tr() - timedelta(days=days)).timestamp()
+def _today_key() -> str:
+    return now_tr().strftime("%Y-%m-%d")
+
+def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
+    if not isinstance(d, dict):
+        return {}
+    keys = sorted(d.keys())
+    if len(keys) <= keep_days:
+        return d
+    cut = keys[:-keep_days]
+    for k in cut:
+        d.pop(k, None)
+    return d
 
 def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     """
     Her taramada/EOD'de:
-    - ticker için {ts, close, volume} sample ekler
-    - 30 gün dışını temizler
-    - aşırı büyümeyi limitler
+    - price_history.json: { "YYYY-MM-DD": {"AKBNK": close, ...} }
+    - volume_history.json: { "YYYY-MM-DD": {"AKBNK": volume, ...} }
+    Aynı gün tekrar yazarsa gün içindeki "son görülen" değer güncellenir.
     """
     if not rows:
         return
 
-    data = _load_json(HISTORY_FILE)
-    if not isinstance(data, dict):
-        data = {}
+    day = _today_key()
 
-    cutoff = _cutoff_ts(HISTORY_DAYS)
-    ts_now = now_tr().timestamp()
+    price_hist = _load_json(PRICE_HISTORY_FILE)
+    vol_hist = _load_json(VOLUME_HISTORY_FILE)
+
+    if not isinstance(price_hist, dict):
+        price_hist = {}
+    if not isinstance(vol_hist, dict):
+        vol_hist = {}
+
+    price_hist.setdefault(day, {})
+    vol_hist.setdefault(day, {})
 
     for r in rows:
         t = (r.get("ticker") or "").strip().upper()
@@ -213,73 +230,134 @@ def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
         if cl != cl or vol != vol:
             continue
 
-        series = data.get(t, [])
-        if not isinstance(series, list):
-            series = []
+        # günlük snapshot
+        price_hist[day][t] = float(cl)
+        vol_hist[day][t] = float(vol)
 
-        series.append({"ts": ts_now, "close": float(cl), "volume": float(vol)})
+    _prune_days(price_hist, HISTORY_DAYS)
+    _prune_days(vol_hist, HISTORY_DAYS)
 
-        # prune by cutoff
-        series = [s for s in series if isinstance(s, dict) and float(s.get("ts", 0)) >= cutoff]
-
-        # hard limit
-        if len(series) > HISTORY_MAX_SAMPLES_PER_TICKER:
-            series = series[-HISTORY_MAX_SAMPLES_PER_TICKER:]
-
-        data[t] = series
-
-    _atomic_write_json(HISTORY_FILE, data)
+    _atomic_write_json(PRICE_HISTORY_FILE, price_hist)
+    _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
 
 def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
     """
     30G:
-    - min/max fiyat (close)
-    - ortalama hacim
-    - bugün hacim (son sample)
-    - bugün / ort hacim oranı
+    - min/max/avg close
+    - 30g avg vol
+    - today vol & today close (bugün yoksa son gün)
+    - today/avg vol ratio
+    - band konumu (%0..%100)
     """
     t = (ticker or "").strip().upper()
     if not t:
         return None
 
-    data = _load_json(HISTORY_FILE)
-    series = data.get(t, [])
-    if not isinstance(series, list) or not series:
+    price_hist = _load_json(PRICE_HISTORY_FILE)
+    vol_hist = _load_json(VOLUME_HISTORY_FILE)
+
+    if not isinstance(price_hist, dict) or not isinstance(vol_hist, dict):
         return None
 
-    cutoff = _cutoff_ts(HISTORY_DAYS)
-    series = [s for s in series if isinstance(s, dict) and float(s.get("ts", 0)) >= cutoff]
-    if not series:
+    days = sorted(set(list(price_hist.keys()) + list(vol_hist.keys())))
+    if not days:
         return None
 
-    closes = []
-    vols = []
-    for s in series:
-        cl = safe_float(s.get("close"))
-        vo = safe_float(s.get("volume"))
-        if cl == cl:
-            closes.append(cl)
-        if vo == vo:
-            vols.append(vo)
+    days = days[-HISTORY_DAYS:]
+    closes: List[float] = []
+    vols: List[float] = []
 
-    if not closes or not vols:
+    today = _today_key()
+    today_close = None
+    today_vol = None
+
+    for d in days:
+        pd = price_hist.get(d, {})
+        vd = vol_hist.get(d, {})
+        if isinstance(pd, dict) and t in pd:
+            c = safe_float(pd.get(t))
+            if c == c:
+                closes.append(c)
+                if d == today:
+                    today_close = c
+        if isinstance(vd, dict) and t in vd:
+            v = safe_float(vd.get(t))
+            if v == v:
+                vols.append(v)
+                if d == today:
+                    today_vol = v
+
+    if len(closes) < 5 or len(vols) < 5:
         return None
 
-    closes_min = float(min(closes))
-    closes_max = float(max(closes))
-    avg_vol = float(sum(vols) / max(1, len(vols)))
-    latest = series[-1]
-    today_vol = safe_float(latest.get("volume"))
-    ratio = (today_vol / avg_vol) if (avg_vol and avg_vol == avg_vol and today_vol == today_vol) else float("nan")
+    mn = float(min(closes))
+    mx = float(max(closes))
+    avg_close = float(sum(closes) / len(closes))
+    avg_vol = float(sum(vols) / len(vols))
+
+    # today yoksa: son güne düş
+    if today_close is None:
+        today_close = closes[-1]
+    if today_vol is None:
+        today_vol = vols[-1]
+
+    ratio = (today_vol / avg_vol) if avg_vol > 0 else float("nan")
+
+    # band % (today_close üzerinden)
+    if mx > mn:
+        band_pct = (today_close - mn) / (mx - mn) * 100.0
+        band_pct = max(0.0, min(100.0, band_pct))
+    else:
+        band_pct = 50.0
 
     return {
-        "min": closes_min,
-        "max": closes_max,
+        "min": mn,
+        "max": mx,
+        "avg_close": avg_close,
         "avg_vol": avg_vol,
-        "today_vol": today_vol,
-        "ratio": ratio,
-        "samples": len(series),
+        "today_close": float(today_close),
+        "today_vol": float(today_vol),
+        "ratio": float(ratio),
+        "band_pct": float(band_pct),
+        "days_used": len(days),
+        "samples_close": len(closes),
+        "samples_vol": len(vols),
     }
+
+def soft_plan_line(stats: Dict[str, Any], current_close: float) -> str:
+    """
+    Soft plan satırı (tamamen bilgi amaçlı):
+    band + hacim ratio ile 2–4% mikro hedef senaryosu.
+    """
+    if not stats:
+        return "Plan: Veri yetersiz (30g dolsun)."
+
+    band = stats.get("band_pct", 50.0)
+    ratio = stats.get("ratio", float("nan"))
+
+    # band etiketi
+    if band <= 25:
+        band_tag = "ALT BANT (dip bölgesi)"
+        base_plan = "Sakin açılışta takip; +%2–%4 kademeli kâr mantıklı."
+    elif band <= 60:
+        band_tag = "ORTA BANT"
+        base_plan = "Trend teyidi bekle; hacim sürerse +%2–%4 hedeflenebilir."
+    else:
+        band_tag = "ÜST BANT (kâr bölgesi)"
+        base_plan = "Kâr koruma modu; sert dönüşte temkin."
+
+    # hacim vurgusu
+    if ratio == ratio:
+        if ratio >= 2.0:
+            vol_tag = f"Hacim {ratio:.2f}x (anormal güçlü)"
+        elif ratio >= 1.2:
+            vol_tag = f"Hacim {ratio:.2f}x (güçlü)"
+        else:
+            vol_tag = f"Hacim {ratio:.2f}x (normal)"
+    else:
+        vol_tag = "Hacim n/a"
+
+    return f"{band_tag} | {vol_tag} | {base_plan}"
 
 def format_30d_note(ticker: str, current_close: float) -> str:
     st = compute_30d_stats(ticker)
@@ -288,26 +366,21 @@ def format_30d_note(ticker: str, current_close: float) -> str:
 
     mn = st["min"]
     mx = st["max"]
-    av = st["avg_vol"]
+    avc = st["avg_close"]
+    avv = st["avg_vol"]
     tv = st["today_vol"]
     ratio = st["ratio"]
-
-    # basit "bölge" okuması (tamamen bağlam)
-    zone = "N/A"
-    if current_close == current_close and mx > mn:
-        pos = (current_close - mn) / (mx - mn)
-        if pos <= 0.25:
-            zone = "DİP BÖLGE"
-        elif pos >= 0.75:
-            zone = "TEPE BÖLGE"
-        else:
-            zone = "ORTA BÖLGE"
+    band = st["band_pct"]
 
     ratio_s = "n/a" if (ratio != ratio) else f"{ratio:.2f}x"
+
+    plan = soft_plan_line(st, current_close)
+
     return (
-        f"• <b>{ticker}</b>: 30G Min/Max <b>{mn:.2f}</b>/<b>{mx:.2f}</b> • "
-        f"Ort.Hcm <b>{format_volume(av)}</b> • Bugün <b>{format_volume(tv)}</b> • "
-        f"<b>{ratio_s}</b> • {zone}"
+        f"• <b>{ticker}</b>: 30G Close min/avg/max <b>{mn:.2f}</b>/<b>{avc:.2f}</b>/<b>{mx:.2f}</b> • "
+        f"30G Ort.Hcm <b>{format_volume(avv)}</b> • Bugün <b>{format_volume(tv)}</b> • "
+        f"<b>{ratio_s}</b> • Band <b>%{band:.0f}</b>\n"
+        f"  ↳ <i>{plan}</i>"
     )
 
 # -----------------------------
@@ -617,7 +690,8 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• WATCHLIST_MAX: <b>{WATCHLIST_MAX}</b>\n"
         f"• VOLUME_TOP_N: <b>{VOLUME_TOP_N}</b>\n"
         f"• DATA_DIR: <code>{EFFECTIVE_DATA_DIR}</code>\n"
-        f"• HISTORY_DAYS: <b>{HISTORY_DAYS}</b>"
+        f"• HISTORY_DAYS: <b>{HISTORY_DAYS}</b>\n"
+        f"• FILES: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -644,12 +718,12 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     msg = (
         f"📌 <b>{t}</b> • <b>30G İstatistik</b>\n"
-        f"• Min/Max: <b>{st['min']:.2f}</b> / <b>{st['max']:.2f}</b>\n"
-        f"• Ort. Hacim: <b>{format_volume(st['avg_vol'])}</b>\n"
+        f"• Close min/avg/max: <b>{st['min']:.2f}</b> / <b>{st['avg_close']:.2f}</b> / <b>{st['max']:.2f}</b>\n"
+        f"• 30G Ort. Hacim: <b>{format_volume(st['avg_vol'])}</b>\n"
         f"• Bugün Hacim: <b>{format_volume(st['today_vol'])}</b>\n"
         f"• Bugün / Ortalama: <b>{ratio_s}</b>\n"
-        f"• Sample: <b>{st['samples']}</b>\n"
-        f"• Dosya: <code>{HISTORY_FILE}</code>"
+        f"• Band: <b>%{st['band_pct']:.0f}</b>\n"
+        f"• Dosyalar: <code>{PRICE_HISTORY_FILE}</code> & <code>{VOLUME_HISTORY_FILE}</code>"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -683,7 +757,8 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"🧱 <b>Kriter</b>: Top{VOLUME_TOP_N} hacim eşiği ≥ <b>{thresh_s}</b>\n"
         f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
-        f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>",
+        f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>\n"
+        f"📁 <i>price_history.json + volume_history.json güncellendi</i>",
         parse_mode=ParseMode.HTML
     )
 
@@ -794,9 +869,9 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     30 dk’da bir:
     - BIST200 tarar
-    - Disk’e 30G sample yazar
+    - Disk’e 30G daily snapshot yazar
     - Sadece TOPLAMA / DİP TOPLAMA alarm üretir
-    - Alarm mesajına 30G not ekler
+    - Alarm mesajına 30G premium not ekler
     """
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
@@ -813,7 +888,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         all_rows = await build_rows_from_is_list(bist200_list)
 
-        # ✅ Disk: her taramada arşive yaz
+        # ✅ Disk: her taramada daily snapshot yaz
         update_history_from_rows(all_rows)
 
         min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
@@ -864,7 +939,7 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_close, xu_change = await get_xu100_summary()
         rows = await build_rows_from_is_list(bist200_list)
 
-        # ✅ Disk: EOD de arşive yaz
+        # ✅ Disk: EOD de daily snapshot yaz
         update_history_from_rows(rows)
 
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -883,7 +958,8 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
             f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
             f"🕒 {now_tr().strftime('%H:%M')}  |  🧱 Top{VOLUME_TOP_N} Eşik ≥ <b>{thresh_s}</b>\n"
             f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
-            f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>"
+            f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>\n"
+            f"📁 <i>price_history.json + volume_history.json güncellendi</i>"
         )
 
         parts = [
@@ -965,12 +1041,18 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
-    app.add_handler(CommandHandler("stats", cmd_stats))  # ✅ yeni: /stats AKBNK
+    app.add_handler(CommandHandler("stats", cmd_stats))  # ✅ /stats AKBNK
 
     # Schedule jobs
     schedule_jobs(app)
 
-    logger.info("Bot starting... version=%s data_dir=%s", BOT_VERSION, EFFECTIVE_DATA_DIR)
+    logger.info(
+        "Bot starting... version=%s data_dir=%s files=%s,%s",
+        BOT_VERSION,
+        EFFECTIVE_DATA_DIR,
+        os.path.basename(PRICE_HISTORY_FILE),
+        os.path.basename(VOLUME_HISTORY_FILE),
+    )
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
