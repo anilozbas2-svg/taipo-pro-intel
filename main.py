@@ -10,14 +10,14 @@ from zoneinfo import ZoneInfo
 from typing import Dict, List, Any, Tuple, Optional
 
 import requests
-from telegram import Update, BotCommand
+from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.5.0-premium-tomorrowlist-disk30d").strip() or "v1.5.0-premium-tomorrowlist-disk30d"
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil").strip() or "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -46,49 +46,41 @@ ALARM_END_MIN = int(os.getenv("ALARM_END_MIN", "30"))
 EOD_HOUR = int(os.getenv("EOD_HOUR", "17"))
 EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
 
-# ✅ Tomorrow list (ertesi gün toplama listesi) – EOD’den kaç dk sonra gitsin?
+# Tomorrow list – EOD’den kaç dk sonra gitsin?
 TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))  # 2 dk sonra ayrı mesaj atar (17:52)
 
 # Watchlist
 WATCHLIST_MAX = int(os.getenv("WATCHLIST_MAX", "12"))
 
-# ✅ TopN hacim eşiği (Top10 yerine Top50 default)
+# TopN hacim eşiği (Top10 yerine Top50 default)
 VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))
 
-# ✅ Disk / 30G arşiv
+# Disk / 30G arşiv
 DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "30"))
 ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))  # alarm mesajında kaç hisse için 30G not üretelim
 
-# ✅ Tomorrow list filtreleri (ertesi güne “kesin liste” mantığı)
+# Tomorrow list filtreleri (PRO)
 TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))  # “altın liste” default 12
 TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))  # bugün/ort hacim >= 1.20x
 TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))  # Band % <= 65 (tepeye yakınları ele)
-TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"  # 1 ise AYRIŞMA da ek tablo
+TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
+
+# ✅ Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
+TORPIL_ENABLED = os.getenv("TORPIL_ENABLED", "1").strip() == "1"
+TORPIL_MIN_SAMPLES = int(os.getenv("TORPIL_MIN_SAMPLES", "10"))  # 30G sample <10 ise torpil devreye girer
+TORPIL_MIN_VOL_RATIO = float(os.getenv("TORPIL_MIN_VOL_RATIO", "1.05"))  # torpil: 1.05x
+TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))  # torpil: %75
+
+# ✅ Yahoo bootstrap (1 defalık geçmiş doldurma)
+BOOTSTRAP_ON_START = os.getenv("BOOTSTRAP_ON_START", "1").strip() == "1"
+BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "60"))   # 30-60 öneri → default 60
+BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"  # 1 olursa her açılış bootstrap dener (genelde 0 kalmalı)
+YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
+YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))  # rate-limit için mini sleep
 
 # In-memory cooldown store: { "TICKER": last_sent_unix }
 LAST_ALARM_TS: Dict[str, float] = {}
-
-# ✅ Telegram "/" menüsü için komut kayıtları
-BOT_COMMANDS: List[BotCommand] = [
-    BotCommand("help", "Komut listesi ve kullanım"),
-    BotCommand("ping", "Bot çalışıyor mu?"),
-    BotCommand("chatid", "Chat ID göster"),
-    BotCommand("watch", "Watchlist radar (örn: /watch AKBNK,CANTE)"),
-    BotCommand("radar", "BIST200 radar parça (örn: /radar 1)"),
-    BotCommand("eod", "Anlık EOD raporu (manuel)"),
-    BotCommand("tomorrow", "Ertesi güne kesin toplama listesi (manuel)"),
-    BotCommand("alarm", "Alarm durumu/ayarlar"),
-    BotCommand("stats", "30G istatistik (örn: /stats AKBNK)"),
-]
-
-async def post_init(app: Application) -> None:
-    """Bot açılırken Telegram komut menüsünü set eder ("/" ile hepsi görünür)."""
-    try:
-        await app.bot.set_my_commands(BOT_COMMANDS)
-        logger.info("Bot commands registered to Telegram menu.")
-    except Exception as e:
-        logger.exception("Failed to set bot commands: %s", e)
 
 # -----------------------------
 # Helpers
@@ -175,10 +167,37 @@ def st_short(sig_text: str) -> str:
     return ""
 
 # -----------------------------
-# Disk storage (30G daily history)  ✅ price_history.json + volume_history.json
+# ✅ Trading-day key (Market kapalıysa son işlem gününü baz al)
+# - Cumartesi/Pazar -> Cuma
+# - Hafta içi ama 10:00'dan önce -> bir önceki iş günü (Pazartesi sabahı -> Cuma)
+# -----------------------------
+def prev_business_day(d: date) -> date:
+    dd = d
+    while True:
+        dd = dd - timedelta(days=1)
+        if dd.weekday() < 5:  # 0=Mon..4=Fri
+            return dd
+
+def trading_day_for_snapshot(dt: datetime) -> date:
+    # weekend -> Friday
+    if dt.weekday() == 5:  # Sat
+        return (dt.date() - timedelta(days=1))  # Fri
+    if dt.weekday() == 6:  # Sun
+        return (dt.date() - timedelta(days=2))  # Fri
+
+    # weekday but before market open -> prev business day
+    if dt.timetz().replace(tzinfo=None) < dtime(ALARM_START_HOUR, ALARM_START_MIN):
+        return prev_business_day(dt.date())
+
+    return dt.date()
+
+def today_key_tradingday() -> str:
+    return trading_day_for_snapshot(now_tr()).strftime("%Y-%m-%d")
+
+# -----------------------------
+# Disk storage (30G daily history) ✅ price_history.json + volume_history.json
 # -----------------------------
 def _ensure_data_dir() -> str:
-    # Disk yoksa /tmp'ye düş (bot kırılmasın)
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         test_path = os.path.join(DATA_DIR, ".write_test")
@@ -214,9 +233,6 @@ def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
     except Exception as e:
         logger.warning("History write failed (%s): %s", path, e)
 
-def _today_key() -> str:
-    return now_tr().strftime("%Y-%m-%d")
-
 def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
     if not isinstance(d, dict):
         return {}
@@ -233,12 +249,12 @@ def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     Her taramada/EOD'de:
     - price_history.json: { "YYYY-MM-DD": {"AKBNK": close, ...} }
     - volume_history.json: { "YYYY-MM-DD": {"AKBNK": volume, ...} }
-    Aynı gün tekrar yazarsa gün içindeki "son görülen" değer güncellenir.
+    Market kapalıysa (Pazar) -> Cuma gününe yazar.
     """
     if not rows:
         return
 
-    day = _today_key()
+    day = today_key_tradingday()
 
     price_hist = _load_json(PRICE_HISTORY_FILE)
     vol_hist = _load_json(VOLUME_HISTORY_FILE)
@@ -260,7 +276,6 @@ def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
         if cl != cl or vol != vol:
             continue
 
-        # günlük snapshot
         price_hist[day][t] = float(cl)
         vol_hist[day][t] = float(vol)
 
@@ -297,7 +312,8 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
     closes: List[float] = []
     vols: List[float] = []
 
-    today = _today_key()
+    # ✅ "bugün" = trading day key (market kapalıysa son işlem günü)
+    today = today_key_tradingday()
     today_close = None
     today_vol = None
 
@@ -325,7 +341,6 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
     avg_close = float(sum(closes) / len(closes))
     avg_vol = float(sum(vols) / len(vols))
 
-    # today yoksa: son güne düş
     if today_close is None:
         today_close = closes[-1]
     if today_vol is None:
@@ -333,7 +348,6 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
 
     ratio = (today_vol / avg_vol) if avg_vol > 0 else float("nan")
 
-    # band % (today_close üzerinden)
     if mx > mn:
         band_pct = (today_close - mn) / (mx - mn) * 100.0
         band_pct = max(0.0, min(100.0, band_pct))
@@ -355,17 +369,12 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
     }
 
 def soft_plan_line(stats: Dict[str, Any], current_close: float) -> str:
-    """
-    Soft plan satırı (tamamen bilgi amaçlı):
-    band + hacim ratio ile 2–4% mikro hedef senaryosu.
-    """
     if not stats:
         return "Plan: Veri yetersiz (30g dolsun)."
 
     band = stats.get("band_pct", 50.0)
     ratio = stats.get("ratio", float("nan"))
 
-    # band etiketi
     if band <= 25:
         band_tag = "ALT BANT (dip bölgesi)"
         base_plan = "Sakin açılışta takip; +%2–%4 kademeli kâr mantıklı."
@@ -376,7 +385,6 @@ def soft_plan_line(stats: Dict[str, Any], current_close: float) -> str:
         band_tag = "ÜST BANT (kâr bölgesi)"
         base_plan = "Kâr koruma modu; sert dönüşte temkin."
 
-    # hacim vurgusu
     if ratio == ratio:
         if ratio >= 2.0:
             vol_tag = f"Hacim {ratio:.2f}x (anormal güçlü)"
@@ -403,7 +411,6 @@ def format_30d_note(ticker: str, current_close: float) -> str:
     band = st["band_pct"]
 
     ratio_s = "n/a" if (ratio != ratio) else f"{ratio:.2f}x"
-
     plan = soft_plan_line(st, current_close)
 
     return (
@@ -547,8 +554,7 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
         ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
 
-        vol_s = format_volume(vol)
-        vol_s = vol_s[:6]
+        vol_s = format_volume(vol)[:6]
 
         if include_kind:
             k = st_short(r.get("signal_text", ""))
@@ -615,15 +621,155 @@ def parse_watch_args(args: List[str]) -> List[str]:
     return uniq
 
 # -----------------------------
+# ✅ Yahoo Bootstrap (1 defalık geçmiş doldurma)
+# Yahoo chart endpoint ile close/volume çekip json'a yazar.
+# -----------------------------
+def _to_yahoo_symbol_bist(ticker: str) -> str:
+    # AKBNK -> AKBNK.IS
+    t = (ticker or "").strip().upper().replace("BIST:", "")
+    if not t:
+        return ""
+    if t.endswith(".IS"):
+        return t
+    return f"{t}.IS"
+
+def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, float]]:
+    """
+    Return list of (YYYY-MM-DD, close, volume)
+    """
+    sym = (symbol or "").strip()
+    if not sym:
+        return []
+
+    # days-> range: 60d / 3mo / 6mo
+    # 60 gün için 3mo güvenli.
+    rng = "6mo" if days > 90 else ("3mo" if days > 45 else "2mo")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
+    params = {"range": rng, "interval": "1d"}
+
+    for attempt in range(3):
+        try:
+            r = requests.get(url, params=params, timeout=YAHOO_TIMEOUT)
+            r.raise_for_status()
+            j = r.json() or {}
+            chart = (j.get("chart") or {})
+            res = (chart.get("result") or [])
+            if not res:
+                return []
+            res0 = res[0]
+            ts_list = res0.get("timestamp") or []
+            ind = (res0.get("indicators") or {}).get("quote") or []
+            if not ind:
+                return []
+            q0 = ind[0]
+            closes = q0.get("close") or []
+            vols = q0.get("volume") or []
+
+            out: List[Tuple[str, float, float]] = []
+            for i, ts in enumerate(ts_list):
+                if i >= len(closes) or i >= len(vols):
+                    continue
+                c = closes[i]
+                v = vols[i]
+                if c is None or v is None:
+                    continue
+                dt = datetime.fromtimestamp(int(ts), tz=TZ).date()
+                day_s = dt.strftime("%Y-%m-%d")
+                out.append((day_s, float(c), float(v)))
+
+            # son N gün (takvim değil, bar sayısı)
+            if days > 0 and len(out) > days:
+                out = out[-days:]
+            return out
+        except Exception as e:
+            logger.warning("Yahoo fetch error (%s) attempt=%d: %s", sym, attempt + 1, e)
+            time.sleep(0.6 * (attempt + 1))
+
+    return []
+
+def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, int]:
+    """
+    Fill price_history.json and volume_history.json with historical data.
+    Returns (filled_ticker_count, total_points_added)
+    """
+    if not tickers:
+        return (0, 0)
+
+    price_hist = _load_json(PRICE_HISTORY_FILE)
+    vol_hist = _load_json(VOLUME_HISTORY_FILE)
+    if not isinstance(price_hist, dict):
+        price_hist = {}
+    if not isinstance(vol_hist, dict):
+        vol_hist = {}
+
+    total_points = 0
+    filled = 0
+
+    for t in tickers:
+        short = (t or "").strip().upper().replace("BIST:", "")
+        if not short:
+            continue
+        sym = _to_yahoo_symbol_bist(short)
+        data = yahoo_fetch_history_sync(sym, days)
+        if not data:
+            time.sleep(YAHOO_SLEEP_SEC)
+            continue
+
+        for day_s, close, vol in data:
+            price_hist.setdefault(day_s, {})
+            vol_hist.setdefault(day_s, {})
+            # overwrite ok (bootstrap tek sefer)
+            price_hist[day_s][short] = float(close)
+            vol_hist[day_s][short] = float(vol)
+            total_points += 1
+
+        filled += 1
+        time.sleep(YAHOO_SLEEP_SEC)
+
+    _prune_days(price_hist, max(HISTORY_DAYS, days))
+    _prune_days(vol_hist, max(HISTORY_DAYS, days))
+
+    _atomic_write_json(PRICE_HISTORY_FILE, price_hist)
+    _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
+
+    return (filled, total_points)
+
+async def yahoo_bootstrap_if_needed() -> str:
+    """
+    Run bootstrap only when files are empty/new OR forced.
+    """
+    try:
+        ph = _load_json(PRICE_HISTORY_FILE)
+        vh = _load_json(VOLUME_HISTORY_FILE)
+        empty = (not ph) or (not vh)
+
+        if not BOOTSTRAP_ON_START and not BOOTSTRAP_FORCE:
+            return "BOOTSTRAP kapalı (BOOTSTRAP_ON_START=0)."
+        if not empty and not BOOTSTRAP_FORCE:
+            return "BOOTSTRAP atlandı (history dolu)."
+
+        bist200 = env_csv("BIST200_TICKERS")
+        if not bist200:
+            return "BOOTSTRAP: BIST200_TICKERS env boş."
+
+        # tickers list: already like AKBNK or BIST:AKBNK
+        tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200 if x.strip()]
+        msg = f"BOOTSTRAP başlıyor… Yahoo’dan {BOOTSTRAP_DAYS} gün çekiliyor (hisse sayısı={len(tickers)})"
+        logger.info(msg)
+
+        filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, BOOTSTRAP_DAYS)
+        done = f"BOOTSTRAP tamam ✅ filled={filled} hisse • points={points} • files={os.path.basename(PRICE_HISTORY_FILE)},{os.path.basename(VOLUME_HISTORY_FILE)}"
+        logger.info(done)
+        return done
+    except Exception as e:
+        logger.exception("Bootstrap error: %s", e)
+        return f"BOOTSTRAP hata: {e}"
+
+# -----------------------------
 # Tomorrow List (ERTESİ GÜNE TOPLAMA – KESİN LİSTE)
+# ✅ PRO ayarlar sabit; Torpil sadece sample azsa devreye girer.
 # -----------------------------
 def tomorrow_score(row: Dict[str, Any]) -> float:
-    """
-    Sıralama skoru:
-    - hacim (yüksek daha iyi)
-    - dip bölgeye yakınlık (band düşük daha iyi)
-    - sinyal önceliği (DIP > TOP)
-    """
     t = row.get("ticker", "")
     vol = row.get("volume", float("nan"))
     kind = row.get("signal_text", "")
@@ -640,19 +786,26 @@ def tomorrow_score(row: Dict[str, Any]) -> float:
 
     vol_term = 0.0
     if vol == vol and vol > 0:
-        # log ölçek: aşırı hacimler skoru patlatmasın
         vol_term = math.log10(vol + 1.0) * 10.0
 
-    band_term = max(0.0, (70.0 - float(band)))  # band düşükse + puan
+    band_term = max(0.0, (70.0 - float(band)))
     return vol_term + band_term + kind_bonus
 
+def _tomorrow_thresholds_for(st: Dict[str, Any]) -> Tuple[float, float, bool]:
+    """
+    Returns (min_vol_ratio, max_band, torpil_used)
+    """
+    if not TORPIL_ENABLED or not st:
+        return (TOMORROW_MIN_VOL_RATIO, TOMORROW_MAX_BAND, False)
+
+    samples = min(int(st.get("samples_close", 0)), int(st.get("samples_vol", 0)))
+    if samples < TORPIL_MIN_SAMPLES:
+        # Torpil aktif
+        return (TORPIL_MIN_VOL_RATIO, TORPIL_MAX_BAND, True)
+
+    return (TOMORROW_MIN_VOL_RATIO, TOMORROW_MAX_BAND, False)
+
 def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    “Kesin liste” mantığı:
-    - Sinyal: TOPLAMA / DİP TOPLAMA (opsiyon: AYRIŞMA)
-    - 30G band <= TOMORROW_MAX_BAND
-    - bugün/ort hacim >= TOMORROW_MIN_VOL_RATIO
-    """
     out: List[Dict[str, Any]] = []
     for r in all_rows:
         kind = r.get("signal_text", "")
@@ -669,9 +822,11 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ratio = st.get("ratio", float("nan"))
         band = st.get("band_pct", 50.0)
 
-        if ratio != ratio or ratio < TOMORROW_MIN_VOL_RATIO:
+        min_ratio, max_band, _ = _tomorrow_thresholds_for(st)
+
+        if ratio != ratio or ratio < min_ratio:
             continue
-        if band > TOMORROW_MAX_BAND:
+        if band > max_band:
             continue
 
         out.append(r)
@@ -685,13 +840,26 @@ def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_chang
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     tomorrow = (now_tr().date() + timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # Torpil bilgisi: eğer listede en az 1 hisse torpille geçtiyse not düşelim
+    torpil_used_any = False
+    for r in rows:
+        st = compute_30d_stats(r.get("ticker", ""))
+        if st:
+            _, _, used = _tomorrow_thresholds_for(st)
+            if used:
+                torpil_used_any = True
+                break
+
     head = (
         f"🌙 <b>ERTESİ GÜNE TOPLAMA – KESİN LİSTE</b> • <b>{tomorrow}</b>\n"
         f"🕒 Hazırlandı: <b>{now_s}</b> • <b>{BOT_VERSION}</b>\n"
         f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
         f"🧱 <b>Top{VOLUME_TOP_N} Eşik</b>: ≥ <b>{thresh_s}</b>\n"
-        f"🎯 Filtre: Band ≤ <b>%{TOMORROW_MAX_BAND:.0f}</b> • Hacim ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b>\n"
+        f"🎯 Filtre (PRO): Band ≤ <b>%{TOMORROW_MAX_BAND:.0f}</b> • Hacim ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b>\n"
     )
+
+    if torpil_used_any:
+        head += f"🧩 <i>Torpil Modu: veri az olan hisselerde geçici yumuşatma aktif.</i>\n"
 
     if not rows:
         return head + "\n❌ <b>Bugün kriterlere uyan “kesin liste” çıkmadı.</b>\n<i>Disk doldukça ve gün sayısı arttıkça sistem daha keskinleşir.</i>"
@@ -746,7 +914,6 @@ def build_alarm_message(
 
     alarm_table = make_table(alarm_rows, "🔥 <b>ALARM RADAR (TOP/DIP)</b>", include_kind=True)
 
-    # 30G notlar (ilk N hisse)
     notes_lines = ["\n📌 <b>30G Notlar (Disk Arşivi)</b>"]
     for r in alarm_rows[:max(1, ALARM_NOTE_MAX)]:
         t = r.get("ticker", "")
@@ -803,16 +970,17 @@ def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (
         f"🤖 <b>TAIPO PRO INTEL</b> • <b>{BOT_VERSION}</b>\n\n"
-        f"✅ <b>Komutlar</b>\n"
-        f"• <code>/ping</code> → bot çalışıyor mu?\n"
-        f"• <code>/chatid</code> → chat id\n"
-        f"• <code>/watch</code> → watchlist radar (örn: <code>/watch AKBNK,CANTE</code>)\n"
-        f"• <code>/radar</code> → BIST200 radar parça (örn: <code>/radar 1</code>)\n"
-        f"• <code>/eod</code> → manuel EOD raporu\n"
-        f"• <code>/tomorrow</code> → ertesi güne kesin toplama listesi\n"
-        f"• <code>/alarm</code> → alarm durumu/ayarlar\n"
-        f"• <code>/stats</code> → 30G istatistik (örn: <code>/stats AKBNK</code>)\n\n"
-        f"📌 <i>'/' yazınca komutların görünmesi için menü otomatik güncellenir.</i>"
+        "✅ <b>Komutlar</b>\n"
+        "• /ping → bot çalışıyor mu?\n"
+        "• /chatid → chat id\n"
+        "• /watch → watchlist radar (örn: /watch AKBNK,CANTE)\n"
+        "• /radar → BIST200 radar parça (örn: /radar 1)\n"
+        "• /eod → manuel EOD raporu\n"
+        "• /tomorrow → ertesi güne kesin toplama listesi\n"
+        "• /alarm → alarm durumu/ayarlar\n"
+        "• /stats → 30G istatistik (örn: /stats AKBNK)\n"
+        "• /bootstrap → Yahoo’dan geçmiş doldurma (1 defa)\n\n"
+        "📌 '/' yazınca komutların görünmesi için menü otomatik güncellenir."
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -838,14 +1006,13 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• DATA_DIR: <code>{EFFECTIVE_DATA_DIR}</code>\n"
         f"• HISTORY_DAYS: <b>{HISTORY_DAYS}</b>\n"
         f"• FILES: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>\n"
-        f"• TOMORROW_MAX: <b>{TOMORROW_MAX}</b> | MIN_VOL_RATIO: <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b> | MAX_BAND: <b>%{TOMORROW_MAX_BAND:.0f}</b>"
+        f"• TOMORROW_MAX: <b>{TOMORROW_MAX}</b> | MIN_VOL_RATIO: <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b> | MAX_BAND: <b>%{TOMORROW_MAX_BAND:.0f}</b>\n"
+        f"• TORPIL: <b>{'ON' if TORPIL_ENABLED else 'OFF'}</b> (min sample < {TORPIL_MIN_SAMPLES})\n"
+        f"• BOOTSTRAP_ON_START: <b>{'1' if BOOTSTRAP_ON_START else '0'}</b> | BOOTSTRAP_DAYS: <b>{BOOTSTRAP_DAYS}</b>"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /stats AKBNK
-    """
     if not context.args:
         await update.message.reply_text("Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
         return
@@ -870,14 +1037,43 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"• Bugün Hacim: <b>{format_volume(st['today_vol'])}</b>\n"
         f"• Bugün / Ortalama: <b>{ratio_s}</b>\n"
         f"• Band: <b>%{st['band_pct']:.0f}</b>\n"
+        f"• Key (trading-day): <code>{today_key_tradingday()}</code>\n"
         f"• Dosyalar: <code>{PRICE_HISTORY_FILE}</code> & <code>{VOLUME_HISTORY_FILE}</code>"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
+async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /bootstrap [60]
+    """
+    days = BOOTSTRAP_DAYS
+    if context.args:
+        try:
+            days = int(re.sub(r"\D+", "", context.args[0]))
+        except Exception:
+            days = BOOTSTRAP_DAYS
+    days = max(20, min(180, days))
+
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        return
+
+    await update.message.reply_text(f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum (1 defalık).")
+
+    tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
+    filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, days)
+
+    await update.message.reply_text(
+        f"✅ Bootstrap tamam!\n"
+        f"• Dolu hisse: <b>{filled}</b>\n"
+        f"• Nokta: <b>{points}</b>\n"
+        f"• Disk: <code>{EFFECTIVE_DATA_DIR}</code>\n"
+        f"• Files: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>",
+        parse_mode=ParseMode.HTML
+    )
+
 async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /tomorrow  -> ertesi güne toplama listesi (manuel)
-    """
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
@@ -888,7 +1084,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
 
-    # disk snapshot
+    # disk snapshot (trading-day key)
     update_history_from_rows(rows)
 
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -910,7 +1106,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
 
-    # ✅ Disk: 30G arşive yaz
+    # Disk: 30G arşive yaz
     update_history_from_rows(rows)
 
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -929,6 +1125,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"🧱 <b>Kriter</b>: Top{VOLUME_TOP_N} hacim eşiği ≥ <b>{thresh_s}</b>\n"
         f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
+        f"🗓️ <b>Key</b> (trading-day): <code>{today_key_tradingday()}</code>\n"
         f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>\n"
         f"📁 <i>price_history.json + volume_history.json güncellendi</i>",
         parse_mode=ParseMode.HTML
@@ -1038,16 +1235,8 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Scheduled jobs
 # -----------------------------
 async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    30 dk’da bir:
-    - BIST200 tarar
-    - Disk’e 30G daily snapshot yazar
-    - Sadece TOPLAMA / DİP TOPLAMA alarm üretir
-    - Alarm mesajına 30G premium not ekler
-    """
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
-
     if not within_alarm_window(now_tr()):
         return
 
@@ -1060,7 +1249,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         all_rows = await build_rows_from_is_list(bist200_list)
 
-        # ✅ Disk: her taramada daily snapshot yaz
+        # Disk snapshot (trading-day key)
         update_history_from_rows(all_rows)
 
         min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
@@ -1099,10 +1288,6 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Alarm job error: %s", e)
 
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Her gün EOD’den hemen sonra (varsayılan +2 dk):
-    - “ERTESİ GÜNE TOPLAMA – KESİN LİSTE” mesajını ALARM_CHAT_ID'e gönderir
-    """
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
@@ -1114,7 +1299,6 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_close, xu_change = await get_xu100_summary()
         rows = await build_rows_from_is_list(bist200_list)
 
-        # disk snapshot
         update_history_from_rows(rows)
 
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -1133,7 +1317,6 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Tomorrow job error: %s", e)
 
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Her gün 17:50: EOD raporu (ALARM_CHAT_ID'e gider)"""
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
@@ -1145,7 +1328,6 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_close, xu_change = await get_xu100_summary()
         rows = await build_rows_from_is_list(bist200_list)
 
-        # ✅ Disk: EOD de daily snapshot yaz
         update_history_from_rows(rows)
 
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -1164,6 +1346,7 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
             f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
             f"🕒 {now_tr().strftime('%H:%M')}  |  🧱 Top{VOLUME_TOP_N} Eşik ≥ <b>{thresh_s}</b>\n"
             f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
+            f"🗓️ <b>Key</b> (trading-day): <code>{today_key_tradingday()}</code>\n"
             f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>\n"
             f"📁 <i>price_history.json + volume_history.json güncellendi</i>"
         )
@@ -1223,7 +1406,6 @@ def schedule_jobs(app: Application) -> None:
     )
     logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
 
-    # EOD
     jq.run_daily(
         job_eod_report,
         time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
@@ -1231,7 +1413,6 @@ def schedule_jobs(app: Application) -> None:
     )
     logger.info("EOD scheduled daily at %02d:%02d", EOD_HOUR, EOD_MINUTE)
 
-    # Tomorrow list: EOD + delay
     base = datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ) + timedelta(minutes=TOMORROW_DELAY_MIN)
     jq.run_daily(
         job_tomorrow_list,
@@ -1248,7 +1429,7 @@ def main() -> None:
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
 
-    app = Application.builder().token(token).post_init(post_init).build()
+    app = Application.builder().token(token).build()
 
     # Commands
     app.add_handler(CommandHandler("help", cmd_help))
@@ -1258,12 +1439,15 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
-    app.add_handler(CommandHandler("stats", cmd_stats))       # ✅ /stats AKBNK
-    app.add_handler(CommandHandler("tomorrow", cmd_tomorrow)) # ✅ /tomorrow
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
+    app.add_handler(CommandHandler("bootstrap", cmd_bootstrap))
 
     # Schedule jobs
     schedule_jobs(app)
 
+    # ✅ One-time bootstrap on startup (async-safe)
+    # Not blocking start too long: run in background thread via asyncio in a separate task after polling starts.
     logger.info(
         "Bot starting... version=%s data_dir=%s files=%s,%s",
         BOT_VERSION,
@@ -1271,6 +1455,20 @@ def main() -> None:
         os.path.basename(PRICE_HISTORY_FILE),
         os.path.basename(VOLUME_HISTORY_FILE),
     )
+
+    async def _post_start_tasks(application: Application) -> None:
+        msg = await yahoo_bootstrap_if_needed()
+        logger.info("Post-start: %s", msg)
+
+    # python-telegram-bot: post_init is supported on newer versions, but to be safe, we schedule after start using create_task
+    # We'll attach to application in a minimal way:
+    async def on_start(app_: Application) -> None:
+        asyncio.create_task(_post_start_tasks(app_))
+
+    # Hook: run a tiny startup task by calling on_start once via job_queue if available, else rely on /bootstrap
+    if getattr(app, "job_queue", None) is not None:
+        app.job_queue.run_once(lambda ctx: asyncio.create_task(_post_start_tasks(app)), when=2, name="post_start_bootstrap")
+
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
