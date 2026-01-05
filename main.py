@@ -168,6 +168,8 @@ def st_short(sig_text: str) -> str:
 
 # -----------------------------
 # ✅ Trading-day key (Market kapalıysa son işlem gününü baz al)
+# - Cumartesi/Pazar -> Cuma
+# - Hafta içi ama 10:00'dan önce -> bir önceki iş günü (Pazartesi sabahı -> Cuma)
 # -----------------------------
 def prev_business_day(d: date) -> date:
     dd = d
@@ -563,46 +565,6 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
     lines.append("</pre>")
     return "\n".join(lines)
 
-def make_tomorrow_table(rows: List[Dict[str, Any]], title: str) -> str:
-    """
-    Compact table for /tomorrow:
-    HIS S K % FYT HCM Rx B% 30G(min-max)
-    """
-    header = f"{'HIS':<5} {'S':<1} {'K':<3} {'%':>5} {'FYT':>7} {'HCM':>6} {'Rx':>4} {'B%':>3} {'30G':>9}"
-    sep = "-" * len(header)
-    lines = [title, "<pre>", header, sep]
-
-    for r in rows:
-        t = (r.get("ticker", "n/a") or "n/a")[:5]
-        sig = (r.get("signal", "-") or "-")[:1]
-        k = st_short(r.get("signal_text", ""))
-
-        ch = r.get("change", float("nan"))
-        cl = r.get("close", float("nan"))
-        vol = r.get("volume", float("nan"))
-
-        ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
-        cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
-        vol_s = format_volume(vol)[:6]
-
-        st = compute_30d_stats(r.get("ticker", ""))
-        if st:
-            ratio = st.get("ratio", float("nan"))
-            band = st.get("band_pct", float("nan"))
-            mn = st.get("min", float("nan"))
-            mx = st.get("max", float("nan"))
-
-            rx_s = "--" if (ratio != ratio) else f"{ratio:.2f}"
-            b_s = "--" if (band != band) else f"{band:>3.0f}"
-            g_s = "--" if (mn != mn or mx != mx) else f"{mn:.0f}-{mx:.0f}"
-        else:
-            rx_s, b_s, g_s = "--", "--", "--"
-
-        lines.append(f"{t:<5} {sig:<1} {k:<3} {ch_s:>5} {cl_s:>7} {vol_s:>6} {rx_s:>4} {b_s:>3} {g_s:>9}")
-
-    lines.append("</pre>")
-    return "\n".join(lines)
-
 def pick_candidates(rows: List[Dict[str, Any]], kind: str) -> List[Dict[str, Any]]:
     cand = [r for r in rows if r.get("signal_text") == kind]
     return sorted(
@@ -660,8 +622,10 @@ def parse_watch_args(args: List[str]) -> List[str]:
 
 # -----------------------------
 # ✅ Yahoo Bootstrap (1 defalık geçmiş doldurma)
+# Yahoo chart endpoint ile close/volume çekip json'a yazar.
 # -----------------------------
 def _to_yahoo_symbol_bist(ticker: str) -> str:
+    # AKBNK -> AKBNK.IS
     t = (ticker or "").strip().upper().replace("BIST:", "")
     if not t:
         return ""
@@ -670,10 +634,15 @@ def _to_yahoo_symbol_bist(ticker: str) -> str:
     return f"{t}.IS"
 
 def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, float]]:
+    """
+    Return list of (YYYY-MM-DD, close, volume)
+    """
     sym = (symbol or "").strip()
     if not sym:
         return []
 
+    # days-> range: 60d / 3mo / 6mo
+    # 60 gün için 3mo güvenli.
     rng = "6mo" if days > 90 else ("3mo" if days > 45 else "2mo")
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
     params = {"range": rng, "interval": "1d"}
@@ -708,6 +677,7 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
                 day_s = dt.strftime("%Y-%m-%d")
                 out.append((day_s, float(c), float(v)))
 
+            # son N gün (takvim değil, bar sayısı)
             if days > 0 and len(out) > days:
                 out = out[-days:]
             return out
@@ -718,6 +688,10 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
     return []
 
 def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, int]:
+    """
+    Fill price_history.json and volume_history.json with historical data.
+    Returns (filled_ticker_count, total_points_added)
+    """
     if not tickers:
         return (0, 0)
 
@@ -744,6 +718,7 @@ def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, in
         for day_s, close, vol in data:
             price_hist.setdefault(day_s, {})
             vol_hist.setdefault(day_s, {})
+            # overwrite ok (bootstrap tek sefer)
             price_hist[day_s][short] = float(close)
             vol_hist[day_s][short] = float(vol)
             total_points += 1
@@ -760,6 +735,9 @@ def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, in
     return (filled, total_points)
 
 async def yahoo_bootstrap_if_needed() -> str:
+    """
+    Run bootstrap only when files are empty/new OR forced.
+    """
     try:
         ph = _load_json(PRICE_HISTORY_FILE)
         vh = _load_json(VOLUME_HISTORY_FILE)
@@ -774,6 +752,7 @@ async def yahoo_bootstrap_if_needed() -> str:
         if not bist200:
             return "BOOTSTRAP: BIST200_TICKERS env boş."
 
+        # tickers list: already like AKBNK or BIST:AKBNK
         tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200 if x.strip()]
         msg = f"BOOTSTRAP başlıyor… Yahoo’dan {BOOTSTRAP_DAYS} gün çekiliyor (hisse sayısı={len(tickers)})"
         logger.info(msg)
@@ -787,12 +766,14 @@ async def yahoo_bootstrap_if_needed() -> str:
         return f"BOOTSTRAP hata: {e}"
 
 # -----------------------------
-# Tomorrow List (NEW) ✅ HAM 20 + HAKİKİ LİSTE
+# Tomorrow List (ERTESİ GÜNE TOPLAMA – KESİN LİSTE)
+# ✅ PRO ayarlar sabit; Torpil sadece sample azsa devreye girer.
 # -----------------------------
 def tomorrow_score(row: Dict[str, Any]) -> float:
+    t = row.get("ticker", "")
     vol = row.get("volume", float("nan"))
     kind = row.get("signal_text", "")
-    st = compute_30d_stats(row.get("ticker", ""))  # may be None
+    st = compute_30d_stats(t) if t else None
     band = st.get("band_pct", 50.0) if st else 50.0
 
     kind_bonus = 0.0
@@ -810,7 +791,7 @@ def tomorrow_score(row: Dict[str, Any]) -> float:
     band_term = max(0.0, (70.0 - float(band)))
     return vol_term + band_term + kind_bonus
 
-def _tomorrow_thresholds_for(st: Optional[Dict[str, Any]]) -> Tuple[float, float, bool]:
+def _tomorrow_thresholds_for(st: Dict[str, Any]) -> Tuple[float, float, bool]:
     """
     Returns (min_vol_ratio, max_band, torpil_used)
     """
@@ -819,149 +800,87 @@ def _tomorrow_thresholds_for(st: Optional[Dict[str, Any]]) -> Tuple[float, float
 
     samples = min(int(st.get("samples_close", 0)), int(st.get("samples_vol", 0)))
     if samples < TORPIL_MIN_SAMPLES:
+        # Torpil aktif
         return (TORPIL_MIN_VOL_RATIO, TORPIL_MAX_BAND, True)
 
     return (TOMORROW_MIN_VOL_RATIO, TOMORROW_MAX_BAND, False)
 
-def build_tomorrow_ham20(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    GARANTİ HAVUZ:
-    - Önce sinyal alanları (TOP/DIP/AYR) hacme göre üstte tut
-    - Kalanı genel hacim TOP20 ile tamamla
-    """
-    rows_valid = [r for r in all_rows if r.get("volume") == r.get("volume") and (r.get("close") == r.get("close"))]
-    rows_valid.sort(key=lambda x: x.get("volume", 0) or 0, reverse=True)
-
-    # Sinyalli olanları öne alalım
-    prefer_kinds = {"TOPLAMA", "DİP TOPLAMA"}
-    if TOMORROW_INCLUDE_AYRISMA:
-        prefer_kinds.add("AYRIŞMA")
-
-    preferred = [r for r in rows_valid if r.get("signal_text") in prefer_kinds]
-    others = [r for r in rows_valid if r.get("signal_text") not in prefer_kinds]
-
-    # birleşik: önce preferred hacim sırası, sonra diğerleri
-    merged = preferred + others
-    # uniq by ticker
-    seen = set()
-    out = []
-    for r in merged:
-        t = r.get("ticker", "")
-        if not t or t in seen:
-            continue
-        seen.add(t)
-        out.append(r)
-        if len(out) >= 20:
-            break
-    return out
-
-def build_tomorrow_gold(ham20: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, int], bool]:
-    """
-    HAKİKİ LİSTE:
-    - ham20 içinden 30G stats olanlara band/ratio filtre uygula
-    - debug counts döndür
-    """
-    counts = {
-        "ham": len(ham20),
-        "signal_ok": 0,
-        "stats_ok": 0,
-        "ratio_ok": 0,
-        "band_ok": 0,
-        "final": 0,
-    }
-    torpil_any = False
-
+def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
-    for r in ham20:
+    for r in all_rows:
         kind = r.get("signal_text", "")
-        if kind in ("TOPLAMA", "DİP TOPLAMA") or (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
-            counts["signal_ok"] += 1
-        else:
-            # sinyal zorunlu değil; ama bu hat/okuma için sayıyoruz
-            pass
-
-        st = compute_30d_stats(r.get("ticker", ""))
-        if not st:
-            # 30G yoksa "hakiki liste"ye sokmuyoruz, ama ham havuzda kalır
+        if kind not in ("TOPLAMA", "DİP TOPLAMA") and not (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
             continue
-        counts["stats_ok"] += 1
+        t = r.get("ticker", "")
+        if not t:
+            continue
+
+        st = compute_30d_stats(t)
+        if not st:
+            continue
 
         ratio = st.get("ratio", float("nan"))
         band = st.get("band_pct", 50.0)
-        min_ratio, max_band, used = _tomorrow_thresholds_for(st)
-        if used:
-            torpil_any = True
 
-        if ratio == ratio and ratio >= min_ratio:
-            counts["ratio_ok"] += 1
-        else:
+        min_ratio, max_band, _ = _tomorrow_thresholds_for(st)
+
+        if ratio != ratio or ratio < min_ratio:
             continue
-
-        if band <= max_band:
-            counts["band_ok"] += 1
-        else:
+        if band > max_band:
             continue
 
         out.append(r)
 
     out.sort(key=tomorrow_score, reverse=True)
-    out = out[:max(1, TOMORROW_MAX)]
-    counts["final"] = len(out)
-    return out, counts, torpil_any
+    return out[:max(1, TOMORROW_MAX)]
 
-def build_tomorrow_message_new(
-    ham20: List[Dict[str, Any]],
-    gold: List[Dict[str, Any]],
-    xu_close: float,
-    xu_change: float,
-    thresh_s: str,
-    debug: Dict[str, int],
-    torpil_any: bool
-) -> str:
+def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_change: float, thresh_s: str) -> str:
     now_s = now_tr().strftime("%H:%M")
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     tomorrow = (now_tr().date() + timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # Torpil bilgisi: eğer listede en az 1 hisse torpille geçtiyse not düşelim
+    torpil_used_any = False
+    for r in rows:
+        st = compute_30d_stats(r.get("ticker", ""))
+        if st:
+            _, _, used = _tomorrow_thresholds_for(st)
+            if used:
+                torpil_used_any = True
+                break
+
     head = (
-        f"🌙 <b>/tomorrow – HAM HAVUZ + HAKİKİ LİSTE</b> • <b>{tomorrow}</b>\n"
+        f"🌙 <b>ERTESİ GÜNE TOPLAMA – KESİN LİSTE</b> • <b>{tomorrow}</b>\n"
         f"🕒 Hazırlandı: <b>{now_s}</b> • <b>{BOT_VERSION}</b>\n"
         f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
         f"🧱 <b>Top{VOLUME_TOP_N} Eşik</b>: ≥ <b>{thresh_s}</b>\n"
         f"🎯 Filtre (PRO): Band ≤ <b>%{TOMORROW_MAX_BAND:.0f}</b> • Hacim ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b>\n"
     )
-    if torpil_any:
+
+    if torpil_used_any:
         head += f"🧩 <i>Torpil Modu: veri az olan hisselerde geçici yumuşatma aktif.</i>\n"
 
-    debug_line = (
-        f"🧪 <b>Debug</b>: ham={debug.get('ham',0)} | signal={debug.get('signal_ok',0)} | "
-        f"30G={debug.get('stats_ok',0)} | ratio={debug.get('ratio_ok',0)} | band={debug.get('band_ok',0)} | final={debug.get('final',0)}"
-    )
+    if not rows:
+        return head + "\n❌ <b>Bugün kriterlere uyan “kesin liste” çıkmadı.</b>\n<i>Disk doldukça ve gün sayısı arttıkça sistem daha keskinleşir.</i>"
 
-    ham_table = make_tomorrow_table(ham20, "🧺 <b>HAM HAVUZ (BIST200 → TOP 20)</b>")
-    if gold:
-        gold_table = make_tomorrow_table(gold, "✅ <b>YARININ HAKİKİ LİSTESİ (Filtreli Altın Liste)</b>")
-    else:
-        gold_table = "❌ <b>Hakiki liste çıkmadı.</b>\n<i>Ham havuzdan izlemeye al; disk doldukça (30G) sistem keskinleşir.</i>"
+    table = make_table(rows, "✅ <b>ALTIN LİSTE (Tomorrow Candidates)</b>", include_kind=True)
 
-    notes_lines = ["\n📌 <b>30G Notlar (Hakiki Liste – İlk 6)</b>"]
-    for r in gold[:min(len(gold), ALARM_NOTE_MAX)]:
+    notes_lines = ["\n📌 <b>30G Notlar</b>"]
+    for r in rows[:min(len(rows), ALARM_NOTE_MAX)]:
         t = r.get("ticker", "")
         cl = r.get("close", float("nan"))
-        if t:
-            notes_lines.append(format_30d_note(t, cl))
-    notes = "\n".join(notes_lines) if gold else ""
+        notes_lines.append(format_30d_note(t, cl))
+    notes = "\n".join(notes_lines)
 
     foot = (
-        "\n\n🟢 <b>Sabah Planı</b>\n"
-        "• Açılış 5–15 dk: sakin+yeşil teyidi\n"
-        "• +%2–%4 kademeli kâr\n"
-        "• Ters mum gelirse: disiplin (zarar büyütme yok)"
+        "\n\n🟢 <b>Sabah Planı (Pratik)</b>\n"
+        "• Açılışta ilk 5–15 dk “sakin+yeşil” teyidi\n"
+        "• +%2–%4 kademeli çıkış (hızlı kâr)\n"
+        "• Ters mum gelirse: disiplin, zarar büyütme yok"
     )
 
-    if notes:
-        return head + debug_line + "\n\n" + ham_table + "\n\n" + gold_table + "\n" + notes + foot
-    return head + debug_line + "\n\n" + ham_table + "\n\n" + gold_table + foot
+    return head + "\n" + table + "\n" + notes + foot
 
 # -----------------------------
 # Premium Alarm message (+30G note)
@@ -1057,7 +976,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /watch → watchlist radar (örn: /watch AKBNK,CANTE)\n"
         "• /radar → BIST200 radar parça (örn: /radar 1)\n"
         "• /eod → manuel EOD raporu\n"
-        "• /tomorrow → ham havuz + hakiki liste (yenilendi)\n"
+        "• /tomorrow → ertesi güne kesin toplama listesi\n"
         "• /alarm → alarm durumu/ayarlar\n"
         "• /stats → 30G istatistik (örn: /stats AKBNK)\n"
         "• /bootstrap → Yahoo’dan geçmiş doldurma (1 defa)\n\n"
@@ -1124,6 +1043,9 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /bootstrap [60]
+    """
     days = BOOTSTRAP_DAYS
     if context.args:
         try:
@@ -1157,7 +1079,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    await update.message.reply_text("⏳ /tomorrow hazırlanıyor (ham havuz + hakiki liste)...")
+    await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
 
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
@@ -1165,23 +1087,11 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # disk snapshot (trading-day key)
     update_history_from_rows(rows)
 
-    # signals
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
 
-    # NEW: ham + gold
-    ham20 = build_tomorrow_ham20(rows)
-    gold, debug, torpil_any = build_tomorrow_gold(ham20)
-
-    msg = build_tomorrow_message_new(
-        ham20=ham20,
-        gold=gold,
-        xu_close=xu_close,
-        xu_change=xu_change,
-        thresh_s=thresh_s,
-        debug=debug,
-        torpil_any=torpil_any
-    )
+    tom_rows = build_tomorrow_rows(rows)
+    msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
 
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
@@ -1196,6 +1106,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
 
+    # Disk: 30G arşive yaz
     update_history_from_rows(rows)
 
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -1337,6 +1248,8 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_close, xu_change = await get_xu100_summary()
 
         all_rows = await build_rows_from_is_list(bist200_list)
+
+        # Disk snapshot (trading-day key)
         update_history_from_rows(all_rows)
 
         min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
@@ -1391,18 +1304,8 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
 
-        ham20 = build_tomorrow_ham20(rows)
-        gold, debug, torpil_any = build_tomorrow_gold(ham20)
-
-        msg = build_tomorrow_message_new(
-            ham20=ham20,
-            gold=gold,
-            xu_close=xu_close,
-            xu_change=xu_change,
-            thresh_s=thresh_s,
-            debug=debug,
-            torpil_any=torpil_any
-        )
+        tom_rows = build_tomorrow_rows(rows)
+        msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
 
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
@@ -1543,6 +1446,8 @@ def main() -> None:
     # Schedule jobs
     schedule_jobs(app)
 
+    # ✅ One-time bootstrap on startup (async-safe)
+    # Not blocking start too long: run in background thread via asyncio in a separate task after polling starts.
     logger.info(
         "Bot starting... version=%s data_dir=%s files=%s,%s",
         BOT_VERSION,
@@ -1555,6 +1460,12 @@ def main() -> None:
         msg = await yahoo_bootstrap_if_needed()
         logger.info("Post-start: %s", msg)
 
+    # python-telegram-bot: post_init is supported on newer versions, but to be safe, we schedule after start using create_task
+    # We'll attach to application in a minimal way:
+    async def on_start(app_: Application) -> None:
+        asyncio.create_task(_post_start_tasks(app_))
+
+    # Hook: run a tiny startup task by calling on_start once via job_queue if available, else rely on /bootstrap
     if getattr(app, "job_queue", None) is not None:
         app.job_queue.run_once(lambda ctx: asyncio.create_task(_post_start_tasks(app)), when=2, name="post_start_bootstrap")
 
