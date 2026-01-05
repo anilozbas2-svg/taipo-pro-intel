@@ -1,6 +1,7 @@
 # main.py — TAIPO PRO INTEL (FINAL)
-# ✅ python-telegram-bot[job-queue]==22.5 önerilir
-# ✅ requests==2.*
+# requirements.txt:
+#   python-telegram-bot[job-queue]==22.5
+#   requests==2.*
 # Render: 1 adet Background Worker (polling) çalıştır
 
 import os
@@ -29,8 +30,10 @@ BOT_VERSION = (
 )
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_LEVEL_NUM = getattr(logging, LOG_LEVEL, logging.INFO)
+
 logging.basicConfig(
-    level=LOG_LEVEL,
+    level=LOG_LEVEL_NUM,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("TAIPO_PRO_INTEL")
@@ -75,13 +78,13 @@ TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))
 TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
 
-# ✅ Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
+# Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
 TORPIL_ENABLED = os.getenv("TORPIL_ENABLED", "1").strip() == "1"
 TORPIL_MIN_SAMPLES = int(os.getenv("TORPIL_MIN_SAMPLES", "10"))
 TORPIL_MIN_VOL_RATIO = float(os.getenv("TORPIL_MIN_VOL_RATIO", "1.05"))
 TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))
 
-# ✅ Yahoo bootstrap (1 defalık geçmiş doldurma)
+# Yahoo bootstrap (1 defalık geçmiş doldurma)
 BOOTSTRAP_ON_START = os.getenv("BOOTSTRAP_ON_START", "1").strip() == "1"
 BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "60"))
 BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"
@@ -195,7 +198,7 @@ def safe_int_chat_id(raw: str) -> Optional[int]:
 ALARM_CHAT_ID_INT = safe_int_chat_id(ALARM_CHAT_ID)
 
 # -----------------------------
-# ✅ Trading-day key (Market kapalıysa son işlem gününü baz al)
+# Trading-day key (Market kapalıysa son işlem gününü baz al)
 # - Cumartesi/Pazar -> Cuma
 # - Hafta içi ama 10:00'dan önce -> bir önceki iş günü (Pazartesi sabahı -> Cuma)
 # -----------------------------
@@ -673,7 +676,7 @@ def parse_watch_args(args: List[str]) -> List[str]:
 
 
 # -----------------------------
-# ✅ Yahoo Bootstrap (1 defalık geçmiş doldurma)
+# Yahoo Bootstrap (1 defalık geçmiş doldurma)
 # -----------------------------
 def _to_yahoo_symbol_bist(ticker: str) -> str:
     t = (ticker or "").strip().upper().replace("BIST:", "")
@@ -722,7 +725,6 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
                 if c is None or v is None:
                     continue
 
-                # Yahoo timestamp UTC'dir -> TR'ye çevirip date al
                 dt_local = datetime.fromtimestamp(int(ts), tz=ZoneInfo("UTC")).astimezone(TZ).date()
                 day_s = dt_local.strftime("%Y-%m-%d")
                 out.append((day_s, float(c), float(v)))
@@ -805,7 +807,10 @@ async def yahoo_bootstrap_if_needed() -> str:
         logger.info("BOOTSTRAP başlıyor… Yahoo’dan %d gün (hisse=%d)", BOOTSTRAP_DAYS, len(tickers))
 
         filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, BOOTSTRAP_DAYS)
-        done = f"BOOTSTRAP tamam ✅ filled={filled} • points={points} • files={os.path.basename(PRICE_HISTORY_FILE)},{os.path.basename(VOLUME_HISTORY_FILE)}"
+        done = (
+            f"BOOTSTRAP tamam ✅ filled={filled} • points={points} • "
+            f"files={os.path.basename(PRICE_HISTORY_FILE)},{os.path.basename(VOLUME_HISTORY_FILE)}"
+        )
         logger.info(done)
         return done
     except Exception as e:
@@ -1536,4 +1541,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-```0
