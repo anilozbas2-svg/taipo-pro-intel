@@ -1,7 +1,6 @@
-# main.py — TAIPO PRO INTEL (FINAL)
-# requirements.txt:
-#   python-telegram-bot[job-queue]==22.5
-#   requests==2.*
+# main.py — TAIPO PRO INTEL (FINAL FIX)
+# ✅ python-telegram-bot[job-queue]==22.5 önerilir
+# ✅ requests==2.*
 # Render: 1 adet Background Worker (polling) çalıştır
 
 import os
@@ -24,23 +23,27 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # Config
 # -----------------------------
 BOT_VERSION = (
-    os.getenv("BOT_VERSION", "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil")
+    os.getenv("BOT_VERSION", "v1.6.1-premium-yahoo-bootstrap-tradingdaykey-torpil-fix")
     .strip()
-    or "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil"
+    or "v1.6.1-premium-yahoo-bootstrap-tradingdaykey-torpil-fix"
 )
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_LEVEL_NUM = getattr(logging, LOG_LEVEL, logging.INFO)
-
 logging.basicConfig(
-    level=LOG_LEVEL_NUM,
+    level=LOG_LEVEL,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("TAIPO_PRO_INTEL")
 
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
 TV_TIMEOUT = int(os.getenv("TV_TIMEOUT", "12"))
-TZ = ZoneInfo(os.getenv("TZ", "Europe/Istanbul"))
+
+# TZ
+try:
+    TZ = ZoneInfo(os.getenv("TZ", "Europe/Istanbul"))
+except Exception:
+    TZ = ZoneInfo("UTC")
+    logger.warning("TZ invalid, fallback UTC")
 
 # Alarm config
 ALARM_ENABLED = os.getenv("ALARM_ENABLED", "1").strip() == "1"
@@ -78,13 +81,13 @@ TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))
 TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
 
-# Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
+# ✅ Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
 TORPIL_ENABLED = os.getenv("TORPIL_ENABLED", "1").strip() == "1"
 TORPIL_MIN_SAMPLES = int(os.getenv("TORPIL_MIN_SAMPLES", "10"))
 TORPIL_MIN_VOL_RATIO = float(os.getenv("TORPIL_MIN_VOL_RATIO", "1.05"))
 TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))
 
-# Yahoo bootstrap (1 defalık geçmiş doldurma)
+# ✅ Yahoo bootstrap (1 defalık geçmiş doldurma)
 BOOTSTRAP_ON_START = os.getenv("BOOTSTRAP_ON_START", "1").strip() == "1"
 BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "60"))
 BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"
@@ -126,6 +129,8 @@ def normalize_is_ticker(t: str) -> str:
 
 def safe_float(x: Any) -> float:
     try:
+        if x is None:
+            return float("nan")
         return float(x)
     except Exception:
         return float("nan")
@@ -197,10 +202,20 @@ def safe_int_chat_id(raw: str) -> Optional[int]:
 
 ALARM_CHAT_ID_INT = safe_int_chat_id(ALARM_CHAT_ID)
 
+
+async def reply(update: Update, text: str, **kwargs) -> None:
+    """
+    ✅ FIX: update.message bazı update tiplerinde None olabiliyor.
+    Her zaman update.effective_message üzerinden reply yap.
+    """
+    msg = update.effective_message
+    if not msg:
+        return
+    await msg.reply_text(text, **kwargs)
+
+
 # -----------------------------
-# Trading-day key (Market kapalıysa son işlem gününü baz al)
-# - Cumartesi/Pazar -> Cuma
-# - Hafta içi ama 10:00'dan önce -> bir önceki iş günü (Pazartesi sabahı -> Cuma)
+# ✅ Trading-day key (Market kapalıysa son işlem gününü baz al)
 # -----------------------------
 def prev_business_day(d: date) -> date:
     dd = d
@@ -398,7 +413,7 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
         "today_vol": float(today_vol),
         "ratio": float(ratio),
         "band_pct": float(band_pct),
-        "days_used": len(days),
+        "days_window": len(days),
         "samples_close": len(closes),
         "samples_vol": len(vols),
     }
@@ -474,15 +489,17 @@ def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 time.sleep(1.5 * (attempt + 1))
                 continue
             r.raise_for_status()
-            data = r.json()
+            data = r.json() or {}
 
             out: Dict[str, Dict[str, Any]] = {}
-            for it in data.get("data", []):
+            for it in (data.get("data") or []):
+                if not isinstance(it, dict):
+                    continue
                 sym = it.get("symbol") or it.get("s")
-                d = it.get("d", [])
+                d = it.get("d")
                 if not sym or not isinstance(d, list) or len(d) < 3:
                     continue
-                short = sym.split(":")[-1].strip().upper()
+                short = str(sym).split(":")[-1].strip().upper()
                 out[short] = {
                     "close": safe_float(d[0]),
                     "change": safe_float(d[1]),
@@ -507,7 +524,7 @@ async def get_xu100_summary() -> Tuple[float, float]:
 
 
 async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
-    tv_symbols = [normalize_is_ticker(t) for t in is_list if t.strip()]
+    tv_symbols = [normalize_is_ticker(t) for t in is_list if (t or "").strip()]
     tv_map = await tv_scan_symbols(tv_symbols)
 
     rows: List[Dict[str, Any]] = []
@@ -519,7 +536,9 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
                 {"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-", "signal_text": ""}
             )
         else:
-            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-", "signal_text": ""})
+            rows.append(
+                {"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-", "signal_text": ""}
+            )
     return rows
 
 
@@ -676,7 +695,7 @@ def parse_watch_args(args: List[str]) -> List[str]:
 
 
 # -----------------------------
-# Yahoo Bootstrap (1 defalık geçmiş doldurma)
+# ✅ Yahoo Bootstrap (1 defalık geçmiş doldurma)
 # -----------------------------
 def _to_yahoo_symbol_bist(ticker: str) -> str:
     t = (ticker or "").strip().upper().replace("BIST:", "")
@@ -807,10 +826,7 @@ async def yahoo_bootstrap_if_needed() -> str:
         logger.info("BOOTSTRAP başlıyor… Yahoo’dan %d gün (hisse=%d)", BOOTSTRAP_DAYS, len(tickers))
 
         filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, BOOTSTRAP_DAYS)
-        done = (
-            f"BOOTSTRAP tamam ✅ filled={filled} • points={points} • "
-            f"files={os.path.basename(PRICE_HISTORY_FILE)},{os.path.basename(VOLUME_HISTORY_FILE)}"
-        )
+        done = f"BOOTSTRAP tamam ✅ filled={filled} • points={points} • files={os.path.basename(PRICE_HISTORY_FILE)},{os.path.basename(VOLUME_HISTORY_FILE)}"
         logger.info(done)
         return done
     except Exception as e:
@@ -1041,20 +1057,20 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /bootstrap → Yahoo’dan geçmiş doldurma (1 defa)\n\n"
         "📌 '/' yazınca komutların görünmesi için menü otomatik güncellenir."
     )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    await reply(update, msg, parse_mode=ParseMode.HTML)
 
 
 async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(f"🧩 Version: <b>{BOT_VERSION}</b>", parse_mode=ParseMode.HTML)
+    await reply(update, f"🧩 Version: <b>{BOT_VERSION}</b>", parse_mode=ParseMode.HTML)
 
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(f"🏓 Pong! ({BOT_VERSION})")
+    await reply(update, f"🏓 Pong! ({BOT_VERSION})")
 
 
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    cid = update.effective_chat.id
-    await update.message.reply_text(f"🧾 Chat ID: <code>{cid}</code>", parse_mode=ParseMode.HTML)
+    cid = update.effective_chat.id if update.effective_chat else None
+    await reply(update, f"🧾 Chat ID: <code>{cid}</code>", parse_mode=ParseMode.HTML)
 
 
 async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1067,7 +1083,7 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• ChatID parsed: <code>{ALARM_CHAT_ID_INT if ALARM_CHAT_ID_INT is not None else 'HATALI'}</code>\n"
         f"• Tarama: <b>{ALARM_START_HOUR:02d}:{ALARM_START_MIN:02d}–{ALARM_END_HOUR:02d}:{ALARM_END_MIN:02d}</b>\n"
         f"• EOD: <b>{EOD_HOUR:02d}:{EOD_MINUTE:02d}</b>\n"
-        f"• TZ: <b>{TZ.key}</b>\n"
+        f"• TZ: <b>{getattr(TZ, 'key', 'n/a')}</b>\n"
         f"• WATCHLIST_MAX: <b>{WATCHLIST_MAX}</b>\n"
         f"• VOLUME_TOP_N: <b>{VOLUME_TOP_N}</b>\n"
         f"• DATA_DIR: <code>{EFFECTIVE_DATA_DIR}</code>\n"
@@ -1077,22 +1093,22 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• TORPIL: <b>{'ON' if TORPIL_ENABLED else 'OFF'}</b> (min sample < {TORPIL_MIN_SAMPLES})\n"
         f"• BOOTSTRAP_ON_START: <b>{'1' if BOOTSTRAP_ON_START else '0'}</b> | BOOTSTRAP_DAYS: <b>{BOOTSTRAP_DAYS}</b>"
     )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    await reply(update, msg, parse_mode=ParseMode.HTML)
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
+        await reply(update, "Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
         return
 
     t = re.sub(r"[^A-Za-z0-9:_\.]", "", context.args[0]).upper().replace("BIST:", "")
     if not t:
-        await update.message.reply_text("Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
+        await reply(update, "Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
         return
 
     st = compute_30d_stats(t)
     if not st:
-        await update.message.reply_text(f"❌ <b>{t}</b> için 30G veri yok (disk yeni olabilir).", parse_mode=ParseMode.HTML)
+        await reply(update, f"❌ <b>{t}</b> için 30G veri yok (disk yeni olabilir).", parse_mode=ParseMode.HTML)
         return
 
     ratio = st["ratio"]
@@ -1108,7 +1124,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"• Key (trading-day): <code>{today_key_tradingday()}</code>\n"
         f"• Dosyalar: <code>{PRICE_HISTORY_FILE}</code> & <code>{VOLUME_HISTORY_FILE}</code>"
     )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    await reply(update, msg, parse_mode=ParseMode.HTML)
 
 
 async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1125,15 +1141,16 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await reply(update, "❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    await update.message.reply_text(f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum (1 defalık).")
+    await reply(update, f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum (1 defalık).")
 
     tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
     filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, days)
 
-    await update.message.reply_text(
+    await reply(
+        update,
         "✅ Bootstrap tamam!\n"
         f"• Dolu hisse: <b>{filled}</b>\n"
         f"• Nokta: <b>{points}</b>\n"
@@ -1146,10 +1163,10 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await reply(update, "❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
+    await reply(update, "⏳ Ertesi gün listesi hazırlanıyor...")
 
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
@@ -1162,16 +1179,16 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     tom_rows = build_tomorrow_rows(rows)
     msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
 
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    await reply(update, msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await reply(update, "❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    await update.message.reply_text("⏳ Veriler çekiliyor...")
+    await reply(update, "⏳ Veriler çekiliyor...")
 
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
@@ -1191,7 +1208,8 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
-    await update.message.reply_text(
+    await reply(
+        update,
         f"🧱 <b>Kriter</b>: Top{VOLUME_TOP_N} hacim eşiği ≥ <b>{thresh_s}</b>\n"
         f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
         f"🗓️ <b>Key</b> (trading-day): <code>{today_key_tradingday()}</code>\n"
@@ -1200,30 +1218,29 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode=ParseMode.HTML,
     )
 
-    await update.message.reply_text(make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>", include_kind=True), parse_mode=ParseMode.HTML)
-
-    await update.message.reply_text(
+    await reply(update, make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>", include_kind=True), parse_mode=ParseMode.HTML)
+    await reply(
+        update,
         make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>", include_kind=True) if top10_vol else "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>\n—",
         parse_mode=ParseMode.HTML,
     )
-
-    await update.message.reply_text(
+    await reply(
+        update,
         make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>", include_kind=True) if toplama_cand else "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—",
         parse_mode=ParseMode.HTML,
     )
-
-    await update.message.reply_text(
+    await reply(
+        update,
         make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>", include_kind=True) if dip_cand else "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—",
         parse_mode=ParseMode.HTML,
     )
-
-    await update.message.reply_text(signal_summary_compact(rows), parse_mode=ParseMode.HTML)
+    await reply(update, signal_summary_compact(rows), parse_mode=ParseMode.HTML)
 
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await reply(update, "❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
     n = 1
@@ -1238,10 +1255,10 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chunks = chunk_list(bist200_list, 20)
     total_parts = len(chunks)
     if n > total_parts:
-        await update.message.reply_text(f"❌ /radar 1–{total_parts} arası. (Sen: {n})")
+        await reply(update, f"❌ /radar 1–{total_parts} arası. (Sen: {n})")
         return
 
-    await update.message.reply_text("⏳ Veriler çekiliyor...")
+    await reply(update, "⏳ Veriler çekiliyor...")
 
     part_list = chunks[n - 1]
     xu_close, xu_change = await get_xu100_summary()
@@ -1255,7 +1272,7 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     title = f"📡 <b>BIST200 RADAR – Parça {n}/{total_parts}</b>\n📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}"
-    await update.message.reply_text(make_table(rows, title, include_kind=True), parse_mode=ParseMode.HTML)
+    await reply(update, make_table(rows, title, include_kind=True), parse_mode=ParseMode.HTML)
 
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1263,7 +1280,8 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = arg_list if arg_list else env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
 
     if not watch:
-        await update.message.reply_text(
+        await reply(
+            update,
             "❌ WATCHLIST env boş.\nÖrnek: WATCHLIST=AKBNK,CANTE,EREGL\n(Alternatif: WATCHLIST_BIST=AKBNK,CANTE,EREGL)\n\n"
             "Veya: /watch AKBNK,CANTE,EREGL",
             parse_mode=ParseMode.HTML,
@@ -1271,7 +1289,7 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     watch = watch[:WATCHLIST_MAX]
-    await update.message.reply_text("⏳ Veriler çekiliyor...")
+    await reply(update, "⏳ Veriler çekiliyor...")
 
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(watch)
@@ -1289,12 +1307,13 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
-    await update.message.reply_text(
+    await reply(
+        update,
         f"👀 <b>WATCHLIST</b> (Top{VOLUME_TOP_N} Eşik ≥ <b>{thresh_s}</b>)\n"
         f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}",
         parse_mode=ParseMode.HTML,
     )
-    await update.message.reply_text(make_table(rows, "📌 <b>Watchlist Radar</b>", include_kind=True), parse_mode=ParseMode.HTML)
+    await reply(update, make_table(rows, "📌 <b>Watchlist Radar</b>", include_kind=True), parse_mode=ParseMode.HTML)
 
 
 # -----------------------------
