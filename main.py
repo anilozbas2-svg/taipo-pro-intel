@@ -1,8 +1,3 @@
-# main.py — TAIPO PRO INTEL (FINAL FIX)
-# ✅ python-telegram-bot[job-queue]==22.5 önerilir
-# ✅ requests==2.*
-# Render: 1 adet Background Worker (polling) çalıştır
-
 import os
 import re
 import math
@@ -22,11 +17,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = (
-    os.getenv("BOT_VERSION", "v1.6.1-premium-yahoo-bootstrap-tradingdaykey-torpil-fix")
-    .strip()
-    or "v1.6.1-premium-yahoo-bootstrap-tradingdaykey-torpil-fix"
-)
+BOT_VERSION = os.getenv("BOT_VERSION", "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil").strip() or "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -36,20 +27,14 @@ logging.basicConfig(
 logger = logging.getLogger("TAIPO_PRO_INTEL")
 
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
-TV_TIMEOUT = int(os.getenv("TV_TIMEOUT", "12"))
-
-# TZ
-try:
-    TZ = ZoneInfo(os.getenv("TZ", "Europe/Istanbul"))
-except Exception:
-    TZ = ZoneInfo("UTC")
-    logger.warning("TZ invalid, fallback UTC")
+TV_TIMEOUT = 12
+TZ = ZoneInfo(os.getenv("TZ", "Europe/Istanbul"))
 
 # Alarm config
-ALARM_ENABLED = os.getenv("ALARM_ENABLED", "1").strip() == "1"
-ALARM_CHAT_ID = os.getenv("ALARM_CHAT_ID", "").strip()  # group chat id ex: -100...
-ALARM_INTERVAL_MIN = int(os.getenv("ALARM_INTERVAL_MIN", "30"))
-ALARM_COOLDOWN_MIN = int(os.getenv("ALARM_COOLDOWN_MIN", "60"))
+ALARM_ENABLED = os.getenv("ALARM_ENABLED", "1").strip() == "1"           # 1/0
+ALARM_CHAT_ID = os.getenv("ALARM_CHAT_ID", "").strip()                   # group chat id ex: -100...
+ALARM_INTERVAL_MIN = int(os.getenv("ALARM_INTERVAL_MIN", "30"))          # 30 dk
+ALARM_COOLDOWN_MIN = int(os.getenv("ALARM_COOLDOWN_MIN", "60"))          # aynı hisse 60 dk içinde tekrar yok
 
 # Tarama saat aralığı (default: 10:00 - 17:30)
 ALARM_START_HOUR = int(os.getenv("ALARM_START_HOUR", "10"))
@@ -62,7 +47,7 @@ EOD_HOUR = int(os.getenv("EOD_HOUR", "17"))
 EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
 
 # Tomorrow list – EOD’den kaç dk sonra gitsin?
-TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))
+TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))  # 2 dk sonra ayrı mesaj atar (17:52)
 
 # Watchlist
 WATCHLIST_MAX = int(os.getenv("WATCHLIST_MAX", "12"))
@@ -73,26 +58,26 @@ VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))
 # Disk / 30G arşiv
 DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "30"))
-ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))
+ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))  # alarm mesajında kaç hisse için 30G not üretelim
 
 # Tomorrow list filtreleri (PRO)
-TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))
-TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))
-TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))
+TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))  # “altın liste” default 12
+TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))  # bugün/ort hacim >= 1.20x
+TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))  # Band % <= 65 (tepeye yakınları ele)
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
 
 # ✅ Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
 TORPIL_ENABLED = os.getenv("TORPIL_ENABLED", "1").strip() == "1"
-TORPIL_MIN_SAMPLES = int(os.getenv("TORPIL_MIN_SAMPLES", "10"))
-TORPIL_MIN_VOL_RATIO = float(os.getenv("TORPIL_MIN_VOL_RATIO", "1.05"))
-TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))
+TORPIL_MIN_SAMPLES = int(os.getenv("TORPIL_MIN_SAMPLES", "10"))  # 30G sample <10 ise torpil devreye girer
+TORPIL_MIN_VOL_RATIO = float(os.getenv("TORPIL_MIN_VOL_RATIO", "1.05"))  # torpil: 1.05x
+TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))  # torpil: %75
 
 # ✅ Yahoo bootstrap (1 defalık geçmiş doldurma)
 BOOTSTRAP_ON_START = os.getenv("BOOTSTRAP_ON_START", "1").strip() == "1"
-BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "60"))
-BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"
+BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "60"))   # 30-60 öneri → default 60
+BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"  # 1 olursa her açılış bootstrap dener (genelde 0 kalmalı)
 YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
-YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))
+YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))  # rate-limit için mini sleep
 
 # In-memory cooldown store: { "TICKER": last_sent_unix }
 LAST_ALARM_TS: Dict[str, float] = {}
@@ -109,32 +94,29 @@ def env_csv(name: str, default: str = "") -> List[str]:
         return []
     return [p.strip().upper() for p in raw.split(",") if p.strip()]
 
-
 def env_csv_fallback(primary: str, fallback: str, default: str = "") -> List[str]:
     lst = env_csv(primary, default)
     if lst:
         return lst
     return env_csv(fallback, default)
 
-
 def normalize_is_ticker(t: str) -> str:
-    t = (t or "").strip().upper()
+    t = t.strip().upper()
     if not t:
         return t
-    base = t.replace("BIST:", "") if t.startswith("BIST:") else t
+    if t.startswith("BIST:"):
+        base = t.replace("BIST:", "")
+    else:
+        base = t
     if base.endswith(".IS"):
         base = base[:-3]
     return f"BIST:{base}"
 
-
 def safe_float(x: Any) -> float:
     try:
-        if x is None:
-            return float("nan")
         return float(x)
     except Exception:
         return float("nan")
-
 
 def format_volume(v: Any) -> str:
     try:
@@ -151,14 +133,11 @@ def format_volume(v: Any) -> str:
         return f"{n/1_000:.0f}K"
     return f"{n:.0f}"
 
-
 def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
-    return [lst[i : i + size] for i in range(0, len(lst), size)]
-
+    return [lst[i:i + size] for i in range(0, len(lst), size)]
 
 def now_tr() -> datetime:
     return datetime.now(tz=TZ)
-
 
 def next_aligned_run(minutes: int) -> datetime:
     n = now_tr()
@@ -170,13 +149,11 @@ def next_aligned_run(minutes: int) -> datetime:
         return nn
     return n.replace(second=0, microsecond=0, minute=next_m)
 
-
 def within_alarm_window(dt: datetime) -> bool:
     start = dtime(ALARM_START_HOUR, ALARM_START_MIN)
     end = dtime(ALARM_END_HOUR, ALARM_END_MIN)
     t = dt.timetz().replace(tzinfo=None)
     return start <= t <= end
-
 
 def st_short(sig_text: str) -> str:
     if sig_text == "TOPLAMA":
@@ -189,31 +166,6 @@ def st_short(sig_text: str) -> str:
         return "KAR"
     return ""
 
-
-def safe_int_chat_id(raw: str) -> Optional[int]:
-    raw = (raw or "").strip()
-    if not raw:
-        return None
-    try:
-        return int(raw)
-    except Exception:
-        return None
-
-
-ALARM_CHAT_ID_INT = safe_int_chat_id(ALARM_CHAT_ID)
-
-
-async def reply(update: Update, text: str, **kwargs) -> None:
-    """
-    ✅ FIX: update.message bazı update tiplerinde None olabiliyor.
-    Her zaman update.effective_message üzerinden reply yap.
-    """
-    msg = update.effective_message
-    if not msg:
-        return
-    await msg.reply_text(text, **kwargs)
-
-
 # -----------------------------
 # ✅ Trading-day key (Market kapalıysa son işlem gününü baz al)
 # -----------------------------
@@ -224,13 +176,12 @@ def prev_business_day(d: date) -> date:
         if dd.weekday() < 5:  # 0=Mon..4=Fri
             return dd
 
-
 def trading_day_for_snapshot(dt: datetime) -> date:
     # weekend -> Friday
     if dt.weekday() == 5:  # Sat
-        return dt.date() - timedelta(days=1)
+        return (dt.date() - timedelta(days=1))  # Fri
     if dt.weekday() == 6:  # Sun
-        return dt.date() - timedelta(days=2)
+        return (dt.date() - timedelta(days=2))  # Fri
 
     # weekday but before market open -> prev business day
     if dt.timetz().replace(tzinfo=None) < dtime(ALARM_START_HOUR, ALARM_START_MIN):
@@ -238,13 +189,11 @@ def trading_day_for_snapshot(dt: datetime) -> date:
 
     return dt.date()
 
-
 def today_key_tradingday() -> str:
     return trading_day_for_snapshot(now_tr()).strftime("%Y-%m-%d")
 
-
 # -----------------------------
-# Disk storage (30G daily history)
+# Disk storage (30G daily history) ✅ price_history.json + volume_history.json
 # -----------------------------
 def _ensure_data_dir() -> str:
     try:
@@ -259,11 +208,9 @@ def _ensure_data_dir() -> str:
         os.makedirs(fallback, exist_ok=True)
         return fallback
 
-
 EFFECTIVE_DATA_DIR = _ensure_data_dir()
 PRICE_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "price_history.json")
 VOLUME_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "volume_history.json")
-
 
 def _load_json(path: str) -> Dict[str, Any]:
     try:
@@ -275,7 +222,6 @@ def _load_json(path: str) -> Dict[str, Any]:
         logger.warning("History load failed (%s): %s", path, e)
         return {}
 
-
 def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
     try:
         tmp = path + ".tmp"
@@ -284,7 +230,6 @@ def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
         os.replace(tmp, path)
     except Exception as e:
         logger.warning("History write failed (%s): %s", path, e)
-
 
 def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
     if not isinstance(d, dict):
@@ -296,7 +241,6 @@ def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
     for k in cut:
         d.pop(k, None)
     return d
-
 
 def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     """
@@ -312,6 +256,7 @@ def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
 
     price_hist = _load_json(PRICE_HISTORY_FILE)
     vol_hist = _load_json(VOLUME_HISTORY_FILE)
+
     if not isinstance(price_hist, dict):
         price_hist = {}
     if not isinstance(vol_hist, dict):
@@ -328,14 +273,15 @@ def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
             continue
         if cl != cl or vol != vol:
             continue
+
         price_hist[day][t] = float(cl)
         vol_hist[day][t] = float(vol)
 
     _prune_days(price_hist, HISTORY_DAYS)
     _prune_days(vol_hist, HISTORY_DAYS)
+
     _atomic_write_json(PRICE_HISTORY_FILE, price_hist)
     _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
-
 
 def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
     """
@@ -352,6 +298,7 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
 
     price_hist = _load_json(PRICE_HISTORY_FILE)
     vol_hist = _load_json(VOLUME_HISTORY_FILE)
+
     if not isinstance(price_hist, dict) or not isinstance(vol_hist, dict):
         return None
 
@@ -363,6 +310,7 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
     closes: List[float] = []
     vols: List[float] = []
 
+    # ✅ "bugün" = trading day key (market kapalıysa son işlem günü)
     today = today_key_tradingday()
     today_close = None
     today_vol = None
@@ -413,11 +361,10 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
         "today_vol": float(today_vol),
         "ratio": float(ratio),
         "band_pct": float(band_pct),
-        "days_window": len(days),
+        "days_used": len(days),
         "samples_close": len(closes),
         "samples_vol": len(vols),
     }
-
 
 def soft_plan_line(stats: Dict[str, Any], current_close: float) -> str:
     if not stats:
@@ -448,7 +395,6 @@ def soft_plan_line(stats: Dict[str, Any], current_close: float) -> str:
 
     return f"{band_tag} | {vol_tag} | {base_plan}"
 
-
 def format_30d_note(ticker: str, current_close: float) -> str:
     st = compute_30d_stats(ticker)
     if not st:
@@ -472,7 +418,6 @@ def format_30d_note(ticker: str, current_close: float) -> str:
         f"  ↳ <i>{plan}</i>"
     )
 
-
 # -----------------------------
 # TradingView Scanner (SYNC -> thread)
 # -----------------------------
@@ -489,17 +434,15 @@ def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 time.sleep(1.5 * (attempt + 1))
                 continue
             r.raise_for_status()
-            data = r.json() or {}
+            data = r.json()
 
             out: Dict[str, Dict[str, Any]] = {}
-            for it in (data.get("data") or []):
-                if not isinstance(it, dict):
-                    continue
+            for it in data.get("data", []):
                 sym = it.get("symbol") or it.get("s")
-                d = it.get("d")
+                d = it.get("d", [])
                 if not sym or not isinstance(d, list) or len(d) < 3:
                     continue
-                short = str(sym).split(":")[-1].strip().upper()
+                short = sym.split(":")[-1].strip().upper()
                 out[short] = {
                     "close": safe_float(d[0]),
                     "change": safe_float(d[1]),
@@ -512,19 +455,16 @@ def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
     return {}
 
-
 async def tv_scan_symbols(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     return await asyncio.to_thread(tv_scan_symbols_sync, symbols)
-
 
 async def get_xu100_summary() -> Tuple[float, float]:
     m = await tv_scan_symbols(["BIST:XU100"])
     d = m.get("XU100", {})
     return d.get("close", float("nan")), d.get("change", float("nan"))
 
-
 async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
-    tv_symbols = [normalize_is_ticker(t) for t in is_list if (t or "").strip()]
+    tv_symbols = [normalize_is_ticker(t) for t in is_list if t.strip()]
     tv_map = await tv_scan_symbols(tv_symbols)
 
     rows: List[Dict[str, Any]] = []
@@ -532,15 +472,10 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
         if not d:
-            rows.append(
-                {"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-", "signal_text": ""}
-            )
+            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-", "signal_text": ""})
         else:
-            rows.append(
-                {"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-", "signal_text": ""}
-            )
+            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-", "signal_text": ""})
     return rows
-
 
 # -----------------------------
 # Signal logic (TopN threshold)
@@ -555,12 +490,10 @@ def compute_volume_threshold(rows: List[Dict[str, Any]], top_n: int) -> float:
     top = ranked[:n]
     return float(top[-1]["volume"]) if top else float("inf")
 
-
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float, top_n: int) -> float:
     threshold = compute_volume_threshold(rows, top_n)
     _apply_signals_with_threshold(rows, xu100_change, threshold)
     return threshold
-
 
 def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: float, min_vol_threshold: float) -> None:
     for r in rows:
@@ -572,7 +505,6 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
             r["signal_text"] = ""
             continue
 
-        # çok yükselen: kâr koruma
         if ch >= 4.0:
             r["signal"] = "⚠️"
             r["signal_text"] = "KÂR KORUMA"
@@ -580,19 +512,16 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
 
         in_topN = (vol == vol) and (vol >= min_vol_threshold)
 
-        # endeks kırmızı iken yeşil ayrışma
         if in_topN and (xu100_change == xu100_change) and (xu100_change <= -0.80) and (ch >= 0.40):
             r["signal"] = "🧠"
             r["signal_text"] = "AYRIŞMA"
             continue
 
-        # toplama bölgesi: yatay/az artı + hacim
         if in_topN and (0.00 <= ch <= 0.60):
             r["signal"] = "🧠"
             r["signal_text"] = "TOPLAMA"
             continue
 
-        # dip toplama: hafif eksi + hacim
         if in_topN and (-0.60 <= ch < 0.00):
             r["signal"] = "🧲"
             r["signal_text"] = "DİP TOPLAMA"
@@ -600,7 +529,6 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
 
         r["signal"] = "-"
         r["signal_text"] = ""
-
 
 # -----------------------------
 # Table view (premium + wrap-safe)
@@ -623,6 +551,7 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
 
         ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
+
         vol_s = format_volume(vol)[:6]
 
         if include_kind:
@@ -634,15 +563,53 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
     lines.append("</pre>")
     return "\n".join(lines)
 
+def make_tomorrow_table(rows: List[Dict[str, Any]], title: str) -> str:
+    """
+    Compact table for /tomorrow:
+    HIS S K % FYT HCM Rx B% 30G(min-max)
+    """
+    header = f"{'HIS':<5} {'S':<1} {'K':<3} {'%':>5} {'FYT':>7} {'HCM':>6} {'Rx':>4} {'B%':>3} {'30G':>9}"
+    sep = "-" * len(header)
+    lines = [title, "<pre>", header, sep]
+
+    for r in rows:
+        t = (r.get("ticker", "n/a") or "n/a")[:5]
+        sig = (r.get("signal", "-") or "-")[:1]
+        k = st_short(r.get("signal_text", ""))
+
+        ch = r.get("change", float("nan"))
+        cl = r.get("close", float("nan"))
+        vol = r.get("volume", float("nan"))
+
+        ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
+        cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
+        vol_s = format_volume(vol)[:6]
+
+        st = compute_30d_stats(r.get("ticker", ""))
+        if st:
+            ratio = st.get("ratio", float("nan"))
+            band = st.get("band_pct", float("nan"))
+            mn = st.get("min", float("nan"))
+            mx = st.get("max", float("nan"))
+
+            rx_s = "--" if (ratio != ratio) else f"{ratio:.2f}"
+            b_s = "--" if (band != band) else f"{band:>3.0f}"
+            g_s = "--" if (mn != mn or mx != mx) else f"{mn:.0f}-{mx:.0f}"
+        else:
+            rx_s, b_s, g_s = "--", "--", "--"
+
+        lines.append(f"{t:<5} {sig:<1} {k:<3} {ch_s:>5} {cl_s:>7} {vol_s:>6} {rx_s:>4} {b_s:>3} {g_s:>9}")
+
+    lines.append("</pre>")
+    return "\n".join(lines)
 
 def pick_candidates(rows: List[Dict[str, Any]], kind: str) -> List[Dict[str, Any]]:
     cand = [r for r in rows if r.get("signal_text") == kind]
     return sorted(
         cand,
         key=lambda x: (x.get("volume") or 0) if (x.get("volume") == x.get("volume")) else 0,
-        reverse=True,
+        reverse=True
     )
-
 
 def signal_summary_compact(rows: List[Dict[str, Any]]) -> str:
     def join(lst: List[str]) -> str:
@@ -661,12 +628,10 @@ def signal_summary_compact(rows: List[Dict[str, Any]]) -> str:
         f"• ⚠️ KÂR KORUMA: {join(kar)}"
     )
 
-
 def format_threshold(min_vol: float) -> str:
     if not isinstance(min_vol, (int, float)) or math.isnan(min_vol) or min_vol == float("inf"):
         return "n/a"
     return format_volume(min_vol)
-
 
 def parse_watch_args(args: List[str]) -> List[str]:
     if not args:
@@ -693,7 +658,6 @@ def parse_watch_args(args: List[str]) -> List[str]:
             uniq.append(t)
     return uniq
 
-
 # -----------------------------
 # ✅ Yahoo Bootstrap (1 defalık geçmiş doldurma)
 # -----------------------------
@@ -705,11 +669,7 @@ def _to_yahoo_symbol_bist(ticker: str) -> str:
         return t
     return f"{t}.IS"
 
-
 def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, float]]:
-    """
-    Return list of (YYYY-MM-DD, close, volume)
-    """
     sym = (symbol or "").strip()
     if not sym:
         return []
@@ -723,7 +683,8 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
             r = requests.get(url, params=params, timeout=YAHOO_TIMEOUT)
             r.raise_for_status()
             j = r.json() or {}
-            res = ((j.get("chart") or {}).get("result") or [])
+            chart = (j.get("chart") or {})
+            res = (chart.get("result") or [])
             if not res:
                 return []
             res0 = res[0]
@@ -743,9 +704,8 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
                 v = vols[i]
                 if c is None or v is None:
                     continue
-
-                dt_local = datetime.fromtimestamp(int(ts), tz=ZoneInfo("UTC")).astimezone(TZ).date()
-                day_s = dt_local.strftime("%Y-%m-%d")
+                dt = datetime.fromtimestamp(int(ts), tz=TZ).date()
+                day_s = dt.strftime("%Y-%m-%d")
                 out.append((day_s, float(c), float(v)))
 
             if days > 0 and len(out) > days:
@@ -757,12 +717,7 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
 
     return []
 
-
 def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, int]:
-    """
-    Fill price_history.json and volume_history.json with historical data.
-    Returns (filled_ticker_count, total_points_added)
-    """
     if not tickers:
         return (0, 0)
 
@@ -798,16 +753,13 @@ def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, in
 
     _prune_days(price_hist, max(HISTORY_DAYS, days))
     _prune_days(vol_hist, max(HISTORY_DAYS, days))
+
     _atomic_write_json(PRICE_HISTORY_FILE, price_hist)
     _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
 
     return (filled, total_points)
 
-
 async def yahoo_bootstrap_if_needed() -> str:
-    """
-    Run bootstrap only when files are empty/new OR forced.
-    """
     try:
         ph = _load_json(PRICE_HISTORY_FILE)
         vh = _load_json(VOLUME_HISTORY_FILE)
@@ -823,25 +775,24 @@ async def yahoo_bootstrap_if_needed() -> str:
             return "BOOTSTRAP: BIST200_TICKERS env boş."
 
         tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200 if x.strip()]
-        logger.info("BOOTSTRAP başlıyor… Yahoo’dan %d gün (hisse=%d)", BOOTSTRAP_DAYS, len(tickers))
+        msg = f"BOOTSTRAP başlıyor… Yahoo’dan {BOOTSTRAP_DAYS} gün çekiliyor (hisse sayısı={len(tickers)})"
+        logger.info(msg)
 
         filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, BOOTSTRAP_DAYS)
-        done = f"BOOTSTRAP tamam ✅ filled={filled} • points={points} • files={os.path.basename(PRICE_HISTORY_FILE)},{os.path.basename(VOLUME_HISTORY_FILE)}"
+        done = f"BOOTSTRAP tamam ✅ filled={filled} hisse • points={points} • files={os.path.basename(PRICE_HISTORY_FILE)},{os.path.basename(VOLUME_HISTORY_FILE)}"
         logger.info(done)
         return done
     except Exception as e:
         logger.exception("Bootstrap error: %s", e)
         return f"BOOTSTRAP hata: {e}"
 
-
 # -----------------------------
-# Tomorrow List (ERTESİ GÜNE TOPLAMA – KESİN LİSTE)
+# Tomorrow List (NEW) ✅ HAM 20 + HAKİKİ LİSTE
 # -----------------------------
 def tomorrow_score(row: Dict[str, Any]) -> float:
-    t = row.get("ticker", "")
     vol = row.get("volume", float("nan"))
     kind = row.get("signal_text", "")
-    st = compute_30d_stats(t) if t else None
+    st = compute_30d_stats(row.get("ticker", ""))  # may be None
     band = st.get("band_pct", 50.0) if st else 50.0
 
     kind_bonus = 0.0
@@ -859,8 +810,7 @@ def tomorrow_score(row: Dict[str, Any]) -> float:
     band_term = max(0.0, (70.0 - float(band)))
     return vol_term + band_term + kind_bonus
 
-
-def _tomorrow_thresholds_for(st: Dict[str, Any]) -> Tuple[float, float, bool]:
+def _tomorrow_thresholds_for(st: Optional[Dict[str, Any]]) -> Tuple[float, float, bool]:
     """
     Returns (min_vol_ratio, max_band, torpil_used)
     """
@@ -873,84 +823,145 @@ def _tomorrow_thresholds_for(st: Dict[str, Any]) -> Tuple[float, float, bool]:
 
     return (TOMORROW_MIN_VOL_RATIO, TOMORROW_MAX_BAND, False)
 
+def build_tomorrow_ham20(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    GARANTİ HAVUZ:
+    - Önce sinyal alanları (TOP/DIP/AYR) hacme göre üstte tut
+    - Kalanı genel hacim TOP20 ile tamamla
+    """
+    rows_valid = [r for r in all_rows if r.get("volume") == r.get("volume") and (r.get("close") == r.get("close"))]
+    rows_valid.sort(key=lambda x: x.get("volume", 0) or 0, reverse=True)
 
-def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for r in all_rows:
-        kind = r.get("signal_text", "")
-        if kind not in ("TOPLAMA", "DİP TOPLAMA") and not (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
-            continue
+    # Sinyalli olanları öne alalım
+    prefer_kinds = {"TOPLAMA", "DİP TOPLAMA"}
+    if TOMORROW_INCLUDE_AYRISMA:
+        prefer_kinds.add("AYRIŞMA")
+
+    preferred = [r for r in rows_valid if r.get("signal_text") in prefer_kinds]
+    others = [r for r in rows_valid if r.get("signal_text") not in prefer_kinds]
+
+    # birleşik: önce preferred hacim sırası, sonra diğerleri
+    merged = preferred + others
+    # uniq by ticker
+    seen = set()
+    out = []
+    for r in merged:
         t = r.get("ticker", "")
-        if not t:
+        if not t or t in seen:
             continue
+        seen.add(t)
+        out.append(r)
+        if len(out) >= 20:
+            break
+    return out
 
-        st = compute_30d_stats(t)
+def build_tomorrow_gold(ham20: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, int], bool]:
+    """
+    HAKİKİ LİSTE:
+    - ham20 içinden 30G stats olanlara band/ratio filtre uygula
+    - debug counts döndür
+    """
+    counts = {
+        "ham": len(ham20),
+        "signal_ok": 0,
+        "stats_ok": 0,
+        "ratio_ok": 0,
+        "band_ok": 0,
+        "final": 0,
+    }
+    torpil_any = False
+
+    out: List[Dict[str, Any]] = []
+    for r in ham20:
+        kind = r.get("signal_text", "")
+        if kind in ("TOPLAMA", "DİP TOPLAMA") or (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
+            counts["signal_ok"] += 1
+        else:
+            # sinyal zorunlu değil; ama bu hat/okuma için sayıyoruz
+            pass
+
+        st = compute_30d_stats(r.get("ticker", ""))
         if not st:
+            # 30G yoksa "hakiki liste"ye sokmuyoruz, ama ham havuzda kalır
             continue
+        counts["stats_ok"] += 1
 
         ratio = st.get("ratio", float("nan"))
         band = st.get("band_pct", 50.0)
+        min_ratio, max_band, used = _tomorrow_thresholds_for(st)
+        if used:
+            torpil_any = True
 
-        min_ratio, max_band, _ = _tomorrow_thresholds_for(st)
-
-        if ratio != ratio or ratio < min_ratio:
+        if ratio == ratio and ratio >= min_ratio:
+            counts["ratio_ok"] += 1
+        else:
             continue
-        if band > max_band:
+
+        if band <= max_band:
+            counts["band_ok"] += 1
+        else:
             continue
 
         out.append(r)
 
     out.sort(key=tomorrow_score, reverse=True)
-    return out[: max(1, TOMORROW_MAX)]
+    out = out[:max(1, TOMORROW_MAX)]
+    counts["final"] = len(out)
+    return out, counts, torpil_any
 
-
-def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_change: float, thresh_s: str) -> str:
+def build_tomorrow_message_new(
+    ham20: List[Dict[str, Any]],
+    gold: List[Dict[str, Any]],
+    xu_close: float,
+    xu_change: float,
+    thresh_s: str,
+    debug: Dict[str, int],
+    torpil_any: bool
+) -> str:
     now_s = now_tr().strftime("%H:%M")
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     tomorrow = (now_tr().date() + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    torpil_used_any = False
-    for r in rows:
-        st = compute_30d_stats(r.get("ticker", ""))
-        if st:
-            _, _, used = _tomorrow_thresholds_for(st)
-            if used:
-                torpil_used_any = True
-                break
-
     head = (
-        f"🌙 <b>ERTESİ GÜNE TOPLAMA – KESİN LİSTE</b> • <b>{tomorrow}</b>\n"
+        f"🌙 <b>/tomorrow – HAM HAVUZ + HAKİKİ LİSTE</b> • <b>{tomorrow}</b>\n"
         f"🕒 Hazırlandı: <b>{now_s}</b> • <b>{BOT_VERSION}</b>\n"
         f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
         f"🧱 <b>Top{VOLUME_TOP_N} Eşik</b>: ≥ <b>{thresh_s}</b>\n"
         f"🎯 Filtre (PRO): Band ≤ <b>%{TOMORROW_MAX_BAND:.0f}</b> • Hacim ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b>\n"
     )
+    if torpil_any:
+        head += f"🧩 <i>Torpil Modu: veri az olan hisselerde geçici yumuşatma aktif.</i>\n"
 
-    if torpil_used_any:
-        head += "🧩 <i>Torpil Modu: veri az olan hisselerde geçici yumuşatma aktif.</i>\n"
-
-    if not rows:
-        return head + "\n❌ <b>Bugün kriterlere uyan “kesin liste” çıkmadı.</b>\n<i>Disk doldukça ve gün sayısı arttıkça sistem daha keskinleşir.</i>"
-
-    table = make_table(rows, "✅ <b>ALTIN LİSTE (Tomorrow Candidates)</b>", include_kind=True)
-
-    notes_lines = ["\n📌 <b>30G Notlar</b>"]
-    for r in rows[: min(len(rows), ALARM_NOTE_MAX)]:
-        t = r.get("ticker", "")
-        cl = r.get("close", float("nan"))
-        notes_lines.append(format_30d_note(t, cl))
-    notes = "\n".join(notes_lines)
-
-    foot = (
-        "\n\n🟢 <b>Sabah Planı (Pratik)</b>\n"
-        "• Açılışta ilk 5–15 dk “sakin+yeşil” teyidi\n"
-        "• +%2–%4 kademeli çıkış (hızlı kâr)\n"
-        "• Ters mum gelirse: disiplin, zarar büyütme yok"
+    debug_line = (
+        f"🧪 <b>Debug</b>: ham={debug.get('ham',0)} | signal={debug.get('signal_ok',0)} | "
+        f"30G={debug.get('stats_ok',0)} | ratio={debug.get('ratio_ok',0)} | band={debug.get('band_ok',0)} | final={debug.get('final',0)}"
     )
 
-    return head + "\n" + table + "\n" + notes + foot
+    ham_table = make_tomorrow_table(ham20, "🧺 <b>HAM HAVUZ (BIST200 → TOP 20)</b>")
+    if gold:
+        gold_table = make_tomorrow_table(gold, "✅ <b>YARININ HAKİKİ LİSTESİ (Filtreli Altın Liste)</b>")
+    else:
+        gold_table = "❌ <b>Hakiki liste çıkmadı.</b>\n<i>Ham havuzdan izlemeye al; disk doldukça (30G) sistem keskinleşir.</i>"
 
+    notes_lines = ["\n📌 <b>30G Notlar (Hakiki Liste – İlk 6)</b>"]
+    for r in gold[:min(len(gold), ALARM_NOTE_MAX)]:
+        t = r.get("ticker", "")
+        cl = r.get("close", float("nan"))
+        if t:
+            notes_lines.append(format_30d_note(t, cl))
+    notes = "\n".join(notes_lines) if gold else ""
+
+    foot = (
+        "\n\n🟢 <b>Sabah Planı</b>\n"
+        "• Açılış 5–15 dk: sakin+yeşil teyidi\n"
+        "• +%2–%4 kademeli kâr\n"
+        "• Ters mum gelirse: disiplin (zarar büyütme yok)"
+    )
+
+    if notes:
+        return head + debug_line + "\n\n" + ham_table + "\n\n" + gold_table + "\n" + notes + foot
+    return head + debug_line + "\n\n" + ham_table + "\n\n" + gold_table + foot
 
 # -----------------------------
 # Premium Alarm message (+30G note)
@@ -985,7 +996,7 @@ def build_alarm_message(
     alarm_table = make_table(alarm_rows, "🔥 <b>ALARM RADAR (TOP/DIP)</b>", include_kind=True)
 
     notes_lines = ["\n📌 <b>30G Notlar (Disk Arşivi)</b>"]
-    for r in alarm_rows[: max(1, ALARM_NOTE_MAX)]:
+    for r in alarm_rows[:max(1, ALARM_NOTE_MAX)]:
         t = r.get("ticker", "")
         cl = r.get("close", float("nan"))
         if not t:
@@ -1001,7 +1012,6 @@ def build_alarm_message(
 
     return head + "\n" + alarm_table + "\n" + notes + foot
 
-
 # -----------------------------
 # Alarm logic
 # -----------------------------
@@ -1011,11 +1021,9 @@ def can_send_alarm_for(ticker: str, now_ts: float) -> bool:
         return True
     return (now_ts - last) >= (ALARM_COOLDOWN_MIN * 60)
 
-
 def mark_alarm_sent(ticker: str, now_ts: float) -> None:
     if ticker:
         LAST_ALARM_TS[ticker] = now_ts
-
 
 def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     now_ts = time.time()
@@ -1033,10 +1041,9 @@ def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out = sorted(
         out,
         key=lambda x: (x.get("volume") or 0) if (x.get("volume") == x.get("volume")) else 0,
-        reverse=True,
+        reverse=True
     )
     return out
-
 
 # -----------------------------
 # Telegram Handlers
@@ -1046,32 +1053,24 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🤖 <b>TAIPO PRO INTEL</b> • <b>{BOT_VERSION}</b>\n\n"
         "✅ <b>Komutlar</b>\n"
         "• /ping → bot çalışıyor mu?\n"
-        "• /version → sürüm\n"
         "• /chatid → chat id\n"
         "• /watch → watchlist radar (örn: /watch AKBNK,CANTE)\n"
         "• /radar → BIST200 radar parça (örn: /radar 1)\n"
         "• /eod → manuel EOD raporu\n"
-        "• /tomorrow → ertesi güne kesin toplama listesi\n"
+        "• /tomorrow → ham havuz + hakiki liste (yenilendi)\n"
         "• /alarm → alarm durumu/ayarlar\n"
         "• /stats → 30G istatistik (örn: /stats AKBNK)\n"
         "• /bootstrap → Yahoo’dan geçmiş doldurma (1 defa)\n\n"
         "📌 '/' yazınca komutların görünmesi için menü otomatik güncellenir."
     )
-    await reply(update, msg, parse_mode=ParseMode.HTML)
-
-
-async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await reply(update, f"🧩 Version: <b>{BOT_VERSION}</b>", parse_mode=ParseMode.HTML)
-
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await reply(update, f"🏓 Pong! ({BOT_VERSION})")
-
+    await update.message.reply_text(f"🏓 Pong! ({BOT_VERSION})")
 
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    cid = update.effective_chat.id if update.effective_chat else None
-    await reply(update, f"🧾 Chat ID: <code>{cid}</code>", parse_mode=ParseMode.HTML)
-
+    cid = update.effective_chat.id
+    await update.message.reply_text(f"🧾 Chat ID: <code>{cid}</code>", parse_mode=ParseMode.HTML)
 
 async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (
@@ -1080,10 +1079,9 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• Interval: <b>{ALARM_INTERVAL_MIN} dk</b>\n"
         f"• Cooldown: <b>{ALARM_COOLDOWN_MIN} dk</b>\n"
         f"• ChatID env: <code>{ALARM_CHAT_ID or 'YOK'}</code>\n"
-        f"• ChatID parsed: <code>{ALARM_CHAT_ID_INT if ALARM_CHAT_ID_INT is not None else 'HATALI'}</code>\n"
         f"• Tarama: <b>{ALARM_START_HOUR:02d}:{ALARM_START_MIN:02d}–{ALARM_END_HOUR:02d}:{ALARM_END_MIN:02d}</b>\n"
         f"• EOD: <b>{EOD_HOUR:02d}:{EOD_MINUTE:02d}</b>\n"
-        f"• TZ: <b>{getattr(TZ, 'key', 'n/a')}</b>\n"
+        f"• TZ: <b>{TZ.key}</b>\n"
         f"• WATCHLIST_MAX: <b>{WATCHLIST_MAX}</b>\n"
         f"• VOLUME_TOP_N: <b>{VOLUME_TOP_N}</b>\n"
         f"• DATA_DIR: <code>{EFFECTIVE_DATA_DIR}</code>\n"
@@ -1093,22 +1091,21 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• TORPIL: <b>{'ON' if TORPIL_ENABLED else 'OFF'}</b> (min sample < {TORPIL_MIN_SAMPLES})\n"
         f"• BOOTSTRAP_ON_START: <b>{'1' if BOOTSTRAP_ON_START else '0'}</b> | BOOTSTRAP_DAYS: <b>{BOOTSTRAP_DAYS}</b>"
     )
-    await reply(update, msg, parse_mode=ParseMode.HTML)
-
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await reply(update, "Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
         return
 
     t = re.sub(r"[^A-Za-z0-9:_\.]", "", context.args[0]).upper().replace("BIST:", "")
     if not t:
-        await reply(update, "Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
         return
 
     st = compute_30d_stats(t)
     if not st:
-        await reply(update, f"❌ <b>{t}</b> için 30G veri yok (disk yeni olabilir).", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(f"❌ <b>{t}</b> için 30G veri yok (disk yeni olabilir).", parse_mode=ParseMode.HTML)
         return
 
     ratio = st["ratio"]
@@ -1124,13 +1121,9 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"• Key (trading-day): <code>{today_key_tradingday()}</code>\n"
         f"• Dosyalar: <code>{PRICE_HISTORY_FILE}</code> & <code>{VOLUME_HISTORY_FILE}</code>"
     )
-    await reply(update, msg, parse_mode=ParseMode.HTML)
-
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /bootstrap [60]
-    """
     days = BOOTSTRAP_DAYS
     if context.args:
         try:
@@ -1141,54 +1134,64 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await reply(update, "❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    await reply(update, f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum (1 defalık).")
+    await update.message.reply_text(f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum (1 defalık).")
 
     tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
     filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, days)
 
-    await reply(
-        update,
-        "✅ Bootstrap tamam!\n"
+    await update.message.reply_text(
+        f"✅ Bootstrap tamam!\n"
         f"• Dolu hisse: <b>{filled}</b>\n"
         f"• Nokta: <b>{points}</b>\n"
         f"• Disk: <code>{EFFECTIVE_DATA_DIR}</code>\n"
         f"• Files: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>",
-        parse_mode=ParseMode.HTML,
+        parse_mode=ParseMode.HTML
     )
-
 
 async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await reply(update, "❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    await reply(update, "⏳ Ertesi gün listesi hazırlanıyor...")
+    await update.message.reply_text("⏳ /tomorrow hazırlanıyor (ham havuz + hakiki liste)...")
 
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
 
+    # disk snapshot (trading-day key)
     update_history_from_rows(rows)
 
+    # signals
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
 
-    tom_rows = build_tomorrow_rows(rows)
-    msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
+    # NEW: ham + gold
+    ham20 = build_tomorrow_ham20(rows)
+    gold, debug, torpil_any = build_tomorrow_gold(ham20)
 
-    await reply(update, msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    msg = build_tomorrow_message_new(
+        ham20=ham20,
+        gold=gold,
+        xu_close=xu_close,
+        xu_change=xu_change,
+        thresh_s=thresh_s,
+        debug=debug,
+        torpil_any=torpil_any
+    )
 
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await reply(update, "❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
-    await reply(update, "⏳ Veriler çekiliyor...")
+    await update.message.reply_text("⏳ Veriler çekiliyor...")
 
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
@@ -1208,39 +1211,41 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
-    await reply(
-        update,
+    await update.message.reply_text(
         f"🧱 <b>Kriter</b>: Top{VOLUME_TOP_N} hacim eşiği ≥ <b>{thresh_s}</b>\n"
         f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}\n"
         f"🗓️ <b>Key</b> (trading-day): <code>{today_key_tradingday()}</code>\n"
         f"💾 <b>Disk</b>: <code>{EFFECTIVE_DATA_DIR}</code>\n"
         f"📁 <i>price_history.json + volume_history.json güncellendi</i>",
-        parse_mode=ParseMode.HTML,
+        parse_mode=ParseMode.HTML
     )
 
-    await reply(update, make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>", include_kind=True), parse_mode=ParseMode.HTML)
-    await reply(
-        update,
-        make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>", include_kind=True) if top10_vol else "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>\n—",
-        parse_mode=ParseMode.HTML,
-    )
-    await reply(
-        update,
-        make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>", include_kind=True) if toplama_cand else "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—",
-        parse_mode=ParseMode.HTML,
-    )
-    await reply(
-        update,
-        make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>", include_kind=True) if dip_cand else "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—",
-        parse_mode=ParseMode.HTML,
-    )
-    await reply(update, signal_summary_compact(rows), parse_mode=ParseMode.HTML)
+    await update.message.reply_text(make_table(first20, "📍 <b>Hisse Radar (ilk 20)</b>", include_kind=True), parse_mode=ParseMode.HTML)
 
+    await update.message.reply_text(
+        make_table(top10_vol, "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>", include_kind=True) if top10_vol
+        else "🔥 <b>EN YÜKSEK HACİM – TOP 10</b>\n—",
+        parse_mode=ParseMode.HTML
+    )
+
+    await update.message.reply_text(
+        make_table(toplama_cand, "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>", include_kind=True) if toplama_cand
+        else "🧠 <b>YÜKSELECEK ADAYLAR (TOPLAMA)</b>\n—",
+        parse_mode=ParseMode.HTML
+    )
+
+    await update.message.reply_text(
+        make_table(dip_cand, "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>", include_kind=True) if dip_cand
+        else "🧲 <b>DİP TOPLAMA ADAYLAR (EKSİ + HACİM)</b>\n—",
+        parse_mode=ParseMode.HTML
+    )
+
+    await update.message.reply_text(signal_summary_compact(rows), parse_mode=ParseMode.HTML)
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await reply(update, "❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
 
     n = 1
@@ -1255,10 +1260,10 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chunks = chunk_list(bist200_list, 20)
     total_parts = len(chunks)
     if n > total_parts:
-        await reply(update, f"❌ /radar 1–{total_parts} arası. (Sen: {n})")
+        await update.message.reply_text(f"❌ /radar 1–{total_parts} arası. (Sen: {n})")
         return
 
-    await reply(update, "⏳ Veriler çekiliyor...")
+    await update.message.reply_text("⏳ Veriler çekiliyor...")
 
     part_list = chunks[n - 1]
     xu_close, xu_change = await get_xu100_summary()
@@ -1272,24 +1277,25 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     title = f"📡 <b>BIST200 RADAR – Parça {n}/{total_parts}</b>\n📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}"
-    await reply(update, make_table(rows, title, include_kind=True), parse_mode=ParseMode.HTML)
-
+    await update.message.reply_text(make_table(rows, title, include_kind=True), parse_mode=ParseMode.HTML)
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     arg_list = parse_watch_args(context.args or [])
-    watch = arg_list if arg_list else env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
+    if arg_list:
+        watch = arg_list
+    else:
+        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
 
     if not watch:
-        await reply(
-            update,
+        await update.message.reply_text(
             "❌ WATCHLIST env boş.\nÖrnek: WATCHLIST=AKBNK,CANTE,EREGL\n(Alternatif: WATCHLIST_BIST=AKBNK,CANTE,EREGL)\n\n"
             "Veya: /watch AKBNK,CANTE,EREGL",
-            parse_mode=ParseMode.HTML,
+            parse_mode=ParseMode.HTML
         )
         return
 
     watch = watch[:WATCHLIST_MAX]
-    await reply(update, "⏳ Veriler çekiliyor...")
+    await update.message.reply_text("⏳ Veriler çekiliyor...")
 
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(watch)
@@ -1307,20 +1313,18 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
-    await reply(
-        update,
+    await update.message.reply_text(
         f"👀 <b>WATCHLIST</b> (Top{VOLUME_TOP_N} Eşik ≥ <b>{thresh_s}</b>)\n"
         f"📊 <b>XU100</b> • {xu_close_s} • {xu_change_s}",
-        parse_mode=ParseMode.HTML,
+        parse_mode=ParseMode.HTML
     )
-    await reply(update, make_table(rows, "📌 <b>Watchlist Radar</b>", include_kind=True), parse_mode=ParseMode.HTML)
-
+    await update.message.reply_text(make_table(rows, "📌 <b>Watchlist Radar</b>", include_kind=True), parse_mode=ParseMode.HTML)
 
 # -----------------------------
 # Scheduled jobs
 # -----------------------------
 async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID_INT:
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
     if not within_alarm_window(now_tr()):
         return
@@ -1331,8 +1335,8 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         xu_close, xu_change = await get_xu100_summary()
-        all_rows = await build_rows_from_is_list(bist200_list)
 
+        all_rows = await build_rows_from_is_list(bist200_list)
         update_history_from_rows(all_rows)
 
         min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
@@ -1362,17 +1366,16 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
         await context.bot.send_message(
-            chat_id=ALARM_CHAT_ID_INT,
+            chat_id=int(ALARM_CHAT_ID),
             text=text,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            disable_web_page_preview=True
         )
     except Exception as e:
         logger.exception("Alarm job error: %s", e)
 
-
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID_INT:
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
     bist200_list = env_csv("BIST200_TICKERS")
@@ -1388,21 +1391,30 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
 
-        tom_rows = build_tomorrow_rows(rows)
-        msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
+        ham20 = build_tomorrow_ham20(rows)
+        gold, debug, torpil_any = build_tomorrow_gold(ham20)
+
+        msg = build_tomorrow_message_new(
+            ham20=ham20,
+            gold=gold,
+            xu_close=xu_close,
+            xu_change=xu_change,
+            thresh_s=thresh_s,
+            debug=debug,
+            torpil_any=torpil_any
+        )
 
         await context.bot.send_message(
-            chat_id=ALARM_CHAT_ID_INT,
+            chat_id=int(ALARM_CHAT_ID),
             text=msg,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            disable_web_page_preview=True
         )
     except Exception as e:
         logger.exception("Tomorrow job error: %s", e)
 
-
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID_INT:
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
     bist200_list = env_csv("BIST200_TICKERS")
@@ -1447,13 +1459,13 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         buf = ""
         for p in parts:
-            chunk = p + "\n\n"
+            chunk = (p + "\n\n")
             if len(buf) + len(chunk) > 3500:
-                await context.bot.send_message(chat_id=ALARM_CHAT_ID_INT, text=buf.strip(), parse_mode=ParseMode.HTML)
+                await context.bot.send_message(chat_id=int(ALARM_CHAT_ID), text=buf.strip(), parse_mode=ParseMode.HTML)
                 buf = ""
             buf += chunk
         if buf.strip():
-            await context.bot.send_message(chat_id=ALARM_CHAT_ID_INT, text=buf.strip(), parse_mode=ParseMode.HTML)
+            await context.bot.send_message(chat_id=int(ALARM_CHAT_ID), text=buf.strip(), parse_mode=ParseMode.HTML)
 
         watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
         watch = (watch or [])[:WATCHLIST_MAX]
@@ -1461,13 +1473,12 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
             w_rows = await build_rows_from_is_list(watch)
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
             await context.bot.send_message(
-                chat_id=ALARM_CHAT_ID_INT,
+                chat_id=int(ALARM_CHAT_ID),
                 text=make_table(w_rows, "👀 <b>WATCHLIST (EOD Eki)</b>", include_kind=True),
-                parse_mode=ParseMode.HTML,
+                parse_mode=ParseMode.HTML
             )
     except Exception as e:
         logger.exception("EOD job error: %s", e)
-
 
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
@@ -1479,8 +1490,8 @@ def schedule_jobs(app: Application) -> None:
         logger.info("Alarm disabled by env.")
         return
 
-    if not ALARM_CHAT_ID_INT:
-        logger.info("ALARM_CHAT_ID env yok / hatalı. Alarm/EOD gönderilmeyecek.")
+    if not ALARM_CHAT_ID:
+        logger.info("ALARM_CHAT_ID env yok. Alarm/EOD gönderilmeyecek.")
         return
 
     first = next_aligned_run(ALARM_INTERVAL_MIN)
@@ -1488,14 +1499,14 @@ def schedule_jobs(app: Application) -> None:
         job_alarm_scan,
         interval=ALARM_INTERVAL_MIN * 60,
         first=first,
-        name="alarm_scan_repeating",
+        name="alarm_scan_repeating"
     )
     logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
 
     jq.run_daily(
         job_eod_report,
         time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
-        name="eod_daily",
+        name="eod_daily"
     )
     logger.info("EOD scheduled daily at %02d:%02d", EOD_HOUR, EOD_MINUTE)
 
@@ -1503,35 +1514,22 @@ def schedule_jobs(app: Application) -> None:
     jq.run_daily(
         job_tomorrow_list,
         time=base.timetz(),
-        name="tomorrow_daily",
+        name="tomorrow_daily"
     )
     logger.info("Tomorrow list scheduled daily at %02d:%02d (+%d min)", base.hour, base.minute, TOMORROW_DELAY_MIN)
-
 
 # -----------------------------
 # Main
 # -----------------------------
-async def post_init(application: Application) -> None:
-    """
-    PTB post_init: polling başladıktan sonra bootstrap gibi işleri başlatmak için ideal.
-    """
-    try:
-        msg = await yahoo_bootstrap_if_needed()
-        logger.info("Post-init: %s", msg)
-    except Exception as e:
-        logger.exception("Post-init error: %s", e)
-
-
 def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
 
-    app = Application.builder().token(token).post_init(post_init).build()
+    app = Application.builder().token(token).build()
 
     # Commands
     app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("version", cmd_version))
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("eod", cmd_eod))
@@ -1546,17 +1544,21 @@ def main() -> None:
     schedule_jobs(app)
 
     logger.info(
-        "Bot starting... version=%s enabled_alarm=%s chat_id=%s data_dir=%s files=%s,%s",
+        "Bot starting... version=%s data_dir=%s files=%s,%s",
         BOT_VERSION,
-        ALARM_ENABLED,
-        ALARM_CHAT_ID_INT if ALARM_CHAT_ID_INT is not None else "None",
         EFFECTIVE_DATA_DIR,
         os.path.basename(PRICE_HISTORY_FILE),
         os.path.basename(VOLUME_HISTORY_FILE),
     )
 
-    app.run_polling(drop_pending_updates=True)
+    async def _post_start_tasks(application: Application) -> None:
+        msg = await yahoo_bootstrap_if_needed()
+        logger.info("Post-start: %s", msg)
 
+    if getattr(app, "job_queue", None) is not None:
+        app.job_queue.run_once(lambda ctx: asyncio.create_task(_post_start_tasks(app)), when=2, name="post_start_bootstrap")
+
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
