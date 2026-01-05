@@ -17,7 +17,10 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil").strip() or "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil"
+BOT_VERSION = os.getenv(
+    "BOT_VERSION",
+    "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil"
+).strip() or "v1.6.0-premium-yahoo-bootstrap-tradingdaykey-torpil"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -79,7 +82,7 @@ BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"  # 1 olursa h
 YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
 YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))  # rate-limit için mini sleep
 
-# In-memory cooldown store: { "TICKER": last_sent_unix }
+# In-memory cooldown store (persisted to disk): { "TICKER": last_sent_unix }
 LAST_ALARM_TS: Dict[str, float] = {}
 
 # -----------------------------
@@ -214,6 +217,9 @@ EFFECTIVE_DATA_DIR = _ensure_data_dir()
 PRICE_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "price_history.json")
 VOLUME_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "volume_history.json")
 
+# ✅ Persist LAST_ALARM_TS (cooldown survives restarts)
+LAST_ALARM_FILE = os.path.join(EFFECTIVE_DATA_DIR, "last_alarm_ts.json")
+
 def _load_json(path: str) -> Dict[str, Any]:
     try:
         if not os.path.exists(path):
@@ -243,6 +249,26 @@ def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
     for k in cut:
         d.pop(k, None)
     return d
+
+def load_last_alarm_ts() -> None:
+    global LAST_ALARM_TS
+    raw = _load_json(LAST_ALARM_FILE)
+    out: Dict[str, float] = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            kk = (k or "").strip().upper()
+            vv = safe_float(v)
+            if kk and vv == vv:
+                out[kk] = float(vv)
+    LAST_ALARM_TS = out
+    logger.info("Loaded LAST_ALARM_TS: %d tickers from %s", len(LAST_ALARM_TS), os.path.basename(LAST_ALARM_FILE))
+
+def save_last_alarm_ts() -> None:
+    try:
+        data = {k: float(v) for k, v in (LAST_ALARM_TS or {}).items()}
+        _atomic_write_json(LAST_ALARM_FILE, data)
+    except Exception as e:
+        logger.warning("save_last_alarm_ts failed: %s", e)
 
 def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     """
@@ -647,9 +673,12 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
     params = {"range": rng, "interval": "1d"}
 
+    # ✅ Yahoo stabilitesi için User-Agent ekle
+    headers = {"User-Agent": "Mozilla/5.0"}
+
     for attempt in range(3):
         try:
-            r = requests.get(url, params=params, timeout=YAHOO_TIMEOUT)
+            r = requests.get(url, params=params, timeout=YAHOO_TIMEOUT, headers=headers)
             r.raise_for_status()
             j = r.json() or {}
             chart = (j.get("chart") or {})
@@ -752,7 +781,6 @@ async def yahoo_bootstrap_if_needed() -> str:
         if not bist200:
             return "BOOTSTRAP: BIST200_TICKERS env boş."
 
-        # tickers list: already like AKBNK or BIST:AKBNK
         tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200 if x.strip()]
         msg = f"BOOTSTRAP başlıyor… Yahoo’dan {BOOTSTRAP_DAYS} gün çekiliyor (hisse sayısı={len(tickers)})"
         logger.info(msg)
@@ -800,7 +828,6 @@ def _tomorrow_thresholds_for(st: Dict[str, Any]) -> Tuple[float, float, bool]:
 
     samples = min(int(st.get("samples_close", 0)), int(st.get("samples_vol", 0)))
     if samples < TORPIL_MIN_SAMPLES:
-        # Torpil aktif
         return (TORPIL_MIN_VOL_RATIO, TORPIL_MAX_BAND, True)
 
     return (TOMORROW_MIN_VOL_RATIO, TOMORROW_MAX_BAND, False)
@@ -840,7 +867,6 @@ def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_chang
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     tomorrow = (now_tr().date() + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Torpil bilgisi: eğer listede en az 1 hisse torpille geçtiyse not düşelim
     torpil_used_any = False
     for r in rows:
         st = compute_30d_stats(r.get("ticker", ""))
@@ -1008,7 +1034,8 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• FILES: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>\n"
         f"• TOMORROW_MAX: <b>{TOMORROW_MAX}</b> | MIN_VOL_RATIO: <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b> | MAX_BAND: <b>%{TOMORROW_MAX_BAND:.0f}</b>\n"
         f"• TORPIL: <b>{'ON' if TORPIL_ENABLED else 'OFF'}</b> (min sample < {TORPIL_MIN_SAMPLES})\n"
-        f"• BOOTSTRAP_ON_START: <b>{'1' if BOOTSTRAP_ON_START else '0'}</b> | BOOTSTRAP_DAYS: <b>{BOOTSTRAP_DAYS}</b>"
+        f"• BOOTSTRAP_ON_START: <b>{'1' if BOOTSTRAP_ON_START else '0'}</b> | BOOTSTRAP_DAYS: <b>{BOOTSTRAP_DAYS}</b>\n"
+        f"• LAST_ALARM persist: <code>{os.path.basename(LAST_ALARM_FILE)}</code> (loaded={len(LAST_ALARM_TS)})"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -1084,7 +1111,6 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
 
-    # disk snapshot (trading-day key)
     update_history_from_rows(rows)
 
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -1106,7 +1132,6 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close, xu_change = await get_xu100_summary()
     rows = await build_rows_from_is_list(bist200_list)
 
-    # Disk: 30G arşive yaz
     update_history_from_rows(rows)
 
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -1249,7 +1274,6 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         all_rows = await build_rows_from_is_list(bist200_list)
 
-        # Disk snapshot (trading-day key)
         update_history_from_rows(all_rows)
 
         min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
@@ -1262,6 +1286,9 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         ts_now = time.time()
         for r in alarm_rows:
             mark_alarm_sent(r.get("ticker", ""), ts_now)
+
+        # ✅ persist cooldown map after marking alarms
+        save_last_alarm_ts()
 
         watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
         watch = (watch or [])[:WATCHLIST_MAX]
@@ -1429,6 +1456,9 @@ def main() -> None:
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
 
+    # ✅ load persisted cooldown map before starting
+    load_last_alarm_ts()
+
     app = Application.builder().token(token).build()
 
     # Commands
@@ -1446,30 +1476,27 @@ def main() -> None:
     # Schedule jobs
     schedule_jobs(app)
 
-    # ✅ One-time bootstrap on startup (async-safe)
-    # Not blocking start too long: run in background thread via asyncio in a separate task after polling starts.
     logger.info(
-        "Bot starting... version=%s data_dir=%s files=%s,%s",
+        "Bot starting... version=%s data_dir=%s files=%s,%s last_alarm_file=%s",
         BOT_VERSION,
         EFFECTIVE_DATA_DIR,
         os.path.basename(PRICE_HISTORY_FILE),
         os.path.basename(VOLUME_HISTORY_FILE),
+        os.path.basename(LAST_ALARM_FILE),
     )
 
-    async def _post_start_tasks(application: Application) -> None:
+    # ✅ Post-start bootstrap FIX (JobQueue async callback)
+    async def post_start_bootstrap(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         msg = await yahoo_bootstrap_if_needed()
         logger.info("Post-start: %s", msg)
 
-    # python-telegram-bot: post_init is supported on newer versions, but to be safe, we schedule after start using create_task
-    # We'll attach to application in a minimal way:
-    async def on_start(app_: Application) -> None:
-        asyncio.create_task(_post_start_tasks(app_))
-
-    # Hook: run a tiny startup task by calling on_start once via job_queue if available, else rely on /bootstrap
     if getattr(app, "job_queue", None) is not None:
-        app.job_queue.run_once(lambda ctx: asyncio.create_task(_post_start_tasks(app)), when=2, name="post_start_bootstrap")
+        app.job_queue.run_once(post_start_bootstrap, when=2, name="post_start_bootstrap")
+    else:
+        logger.warning("JobQueue yok, post-start bootstrap çalışmayacak. Gerekirse /bootstrap kullan.")
 
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
+```0
