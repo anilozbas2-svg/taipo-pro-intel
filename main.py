@@ -89,7 +89,7 @@ TARGET_INTERVAL_MIN = int(os.getenv("TARGET_INTERVAL_MIN", "5"))  # 5 dk
 TARGET_START_HOUR = int(os.getenv("TARGET_START_HOUR", "10"))
 TARGET_START_MIN = int(os.getenv("TARGET_START_MIN", "5"))        # 10:05
 TARGET_END_HOUR = int(os.getenv("TARGET_END_HOUR", "18"))
-TARGET_END_MIN = int(os.getenv("TARGET_END_MIN", "5"))            # 18:05
+TARGET_END_MIN = int(os.getenv("TARGET_END_HOUR", "5"))           # 18:05
 TARGET_LEVELS = [2.0, 2.5, 3.0]  # sabit
 
 # In-memory cooldown store: { "TICKER": last_sent_unix }
@@ -284,7 +284,6 @@ def load_alarm_cooldown() -> None:
     try:
         j = _load_json(ALARM_COOLDOWN_FILE)
         if isinstance(j, dict):
-            # keep only numeric timestamps
             out: Dict[str, float] = {}
             for k, v in j.items():
                 try:
@@ -298,7 +297,6 @@ def load_alarm_cooldown() -> None:
 
 def save_alarm_cooldown() -> None:
     try:
-        # optional: prune too old entries (e.g., > 7 days)
         cutoff = time.time() - 7 * 24 * 3600
         pruned = {k: v for k, v in LAST_ALARM_TS.items() if isinstance(v, (int, float)) and v >= cutoff}
         _atomic_write_json(ALARM_COOLDOWN_FILE, pruned)
@@ -875,7 +873,7 @@ def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_chang
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
 
-    ref_day = trading_day_for_snapshot(now_tr()).date() if isinstance(trading_day_for_snapshot(now_tr()), datetime) else trading_day_for_snapshot(now_tr())
+    ref_day = trading_day_for_snapshot(now_tr())
     target_day = next_business_day(ref_day).strftime("%Y-%m-%d")
 
     torpil_used_any = False
@@ -923,9 +921,6 @@ def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_chang
 # ✅ Persist Tomorrow refs for target alarms
 # -----------------------------
 def save_tomorrow_refs(rows: List[Dict[str, Any]]) -> None:
-    """
-    Tomorrow listesi üretildiğinde referans fiyatları kaydeder.
-    """
     try:
         ref_day = trading_day_for_snapshot(now_tr())
         ref_day_s = ref_day.strftime("%Y-%m-%d")
@@ -944,7 +939,7 @@ def save_tomorrow_refs(rows: List[Dict[str, Any]]) -> None:
             "target_day": target_day_s,
             "created_at": now_tr().isoformat(),
             "refs": refs,
-            "triggers": {},  # day-level triggers: triggers[ticker]={"2.0":true,...}
+            "triggers": {},
         }
         _atomic_write_json(TOMORROW_REFS_FILE, payload)
     except Exception as e:
@@ -1179,7 +1174,6 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     thresh_s = format_threshold(min_vol)
 
     tom_rows = build_tomorrow_rows(rows)
-    # ✅ referansları kaydet (hedef alarm)
     save_tomorrow_refs(tom_rows)
 
     msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
@@ -1389,7 +1383,6 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         tom_rows = build_tomorrow_rows(rows)
 
-        # ✅ referansları kaydet (hedef alarm)
         save_tomorrow_refs(tom_rows)
 
         msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
@@ -1404,12 +1397,6 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Tomorrow job error: %s", e)
 
 async def job_targets_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Altın Liste hedef alarmı:
-    - referans: TOMORROW_REFS_FILE içindeki ref fiyatlar
-    - tetik: %2, %2.5, %3 (günlük tek tetik)
-    - seans: 10:05–18:05 (weekdays)
-    """
     if not TARGETS_ENABLED or not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
     if not within_targets_window(now_tr()):
@@ -1423,10 +1410,8 @@ async def job_targets_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not target_day:
         return
 
-    # bugün hangi trading day?
     today_td = trading_day_for_snapshot(now_tr()).strftime("%Y-%m-%d")
     if today_td != target_day:
-        # hedef gün değil
         return
 
     refs = state.get("refs")
@@ -1558,7 +1543,7 @@ def schedule_jobs(app: Application) -> None:
         first=first,
         name="alarm_scan_repeating"
     )
-    logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
+    logger.info("Alarm job scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
 
     # Targets scan (Altın Liste %2/%2.5/%3) — 5 dk
     if TARGETS_ENABLED:
@@ -1569,7 +1554,7 @@ def schedule_jobs(app: Application) -> None:
             first=first_t,
             name="targets_scan_repeating"
         )
-        logger.info("Targets scan scheduled every %d min. First=%s", TARGET_INTERVAL_MIN, first_t.isoformat())
+        logger.info("Targets job scheduled every %d min. First=%s", TARGET_INTERVAL_MIN, first_t.isoformat())
 
     # EOD daily
     jq.run_daily(
@@ -1577,7 +1562,7 @@ def schedule_jobs(app: Application) -> None:
         time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
         name="eod_daily"
     )
-    logger.info("EOD scheduled daily at %02d:%02d", EOD_HOUR, EOD_MINUTE)
+    logger.info("EOD job scheduled at %02d:%02d", EOD_HOUR, EOD_MINUTE)
 
     # Tomorrow daily (weekend dahil çalışır)
     jq.run_daily(
@@ -1585,7 +1570,7 @@ def schedule_jobs(app: Application) -> None:
         time=datetime(2000, 1, 1, TOMORROW_HOUR, TOMORROW_MINUTE, tzinfo=TZ).timetz(),
         name="tomorrow_daily"
     )
-    logger.info("Tomorrow scheduled daily at %02d:%02d", TOMORROW_HOUR, TOMORROW_MINUTE)
+    logger.info("Tomorrow job scheduled at %02d:%02d", TOMORROW_HOUR, TOMORROW_MINUTE)
 
 # -----------------------------
 # Main
@@ -1594,12 +1579,19 @@ async def post_init(app: Application) -> None:
     # cooldown disk load
     load_alarm_cooldown()
 
+    # ✅ Jobs'ı post-init içinde schedule et (en sağlam)
+    try:
+        schedule_jobs(app)
+        logger.info("POST_INIT: jobs scheduled OK")
+    except Exception as e:
+        logger.exception("POST_INIT: schedule_jobs failed: %s", e)
+
     # bootstrap post-start
     try:
         msg = await yahoo_bootstrap_if_needed()
         logger.info("Post-init: %s", msg)
     except Exception as e:
-        logger.warning("Post-init error: %s", e)
+        logger.warning("Post-init bootstrap error: %s", e)
 
 def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip()
@@ -1620,9 +1612,6 @@ def main() -> None:
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
     app.add_handler(CommandHandler("bootstrap", cmd_bootstrap))
-
-    # Schedule jobs
-    schedule_jobs(app)
 
     logger.info(
         "Bot starting... version=%s data_dir=%s files=%s,%s",
