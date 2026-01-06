@@ -19,8 +19,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 BOT_VERSION = os.getenv(
     "BOT_VERSION",
-    "v1.6.1-premium-yahoo-bootstrap-tradingdaykey-torpil-faz1-stable"
-).strip() or "v1.6.1-premium-yahoo-bootstrap-tradingdaykey-torpil-faz1-stable"
+    "v1.7.0-premium-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable"
+).strip() or "v1.7.0-premium-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -33,7 +33,7 @@ TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
 TV_TIMEOUT = 12
 TZ = ZoneInfo(os.getenv("TZ", "Europe/Istanbul"))
 
-# Alarm config (FAZ-1)
+# Alarm config
 ALARM_ENABLED = os.getenv("ALARM_ENABLED", "1").strip() == "1"           # 1/0
 ALARM_CHAT_ID = os.getenv("ALARM_CHAT_ID", "").strip()                   # group chat id ex: -100...
 ALARM_INTERVAL_MIN = int(os.getenv("ALARM_INTERVAL_MIN", "30"))          # 30 dk
@@ -83,35 +83,26 @@ YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
 YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))  # rate-limit için mini sleep
 
 # -----------------------------
-# ✅ FAZ-2: Level Alarm Config
+# 🐋 Faz 2: Balina Devam Alarmı
 # -----------------------------
-ALARM_LEVEL_ENABLED = os.getenv("ALARM_LEVEL_ENABLED", "1").strip() == "1"
-ALARM_LEVEL_INTERVAL_MIN = int(os.getenv("ALARM_LEVEL_INTERVAL_MIN", "5"))  # default 5 dk
-ALARM_LEVELS = os.getenv("ALARM_LEVELS", "2,2.5,3").strip()  # yüzde seviyeleri
-# parse: "2,2.5,3" -> [0.02,0.025,0.03]
-try:
-    _lv = []
-    for p in ALARM_LEVELS.split(","):
-        p = p.strip()
-        if not p:
-            continue
-        _lv.append(float(p) / 100.0)
-    LEVEL_PCTS: List[float] = sorted(list(set(_lv)))
-    if not LEVEL_PCTS:
-        LEVEL_PCTS = [0.02, 0.025, 0.03]
-except Exception:
-    LEVEL_PCTS = [0.02, 0.025, 0.03]
+WHALE_ENABLED = os.getenv("WHALE_ENABLED", "1").strip() == "1"
+WHALE_INTERVAL_MIN = int(os.getenv("WHALE_INTERVAL_MIN", "30"))
+
+WHALE_START_HOUR = int(os.getenv("WHALE_START_HOUR", "10"))
+WHALE_START_MIN = int(os.getenv("WHALE_START_MIN", "5"))
+WHALE_END_HOUR = int(os.getenv("WHALE_END_HOUR", "11"))
+WHALE_END_MIN = int(os.getenv("WHALE_END_MIN", "30"))
+
+# Dün ALTIN listeye girmiş hisse için bugün koşullar:
+WHALE_MIN_VOL_RATIO = float(os.getenv("WHALE_MIN_VOL_RATIO", "1.10"))   # bugün hacim / 30g ort >= 1.10x
+WHALE_MAX_DRAWDOWN_PCT = float(os.getenv("WHALE_MAX_DRAWDOWN_PCT", "-0.70"))  # bugün close, dün ref close'a göre -0.70% altına inmesin
+WHALE_INDEX_BONUS = os.getenv("WHALE_INDEX_BONUS", "1").strip() == "1"
+WHALE_MIN_POSITIVE_WHEN_INDEX_BAD = float(os.getenv("WHALE_MIN_POSITIVE_WHEN_INDEX_BAD", "0.30"))  # XU100 <=0 iken hisse +0.30%+ ise 🐋🐋
 
 # In-memory cooldown store (persisted to disk): { "TICKER": last_sent_unix }
 LAST_ALARM_TS: Dict[str, float] = {}
-
-# ✅ FAZ-2 Level state:
-# {
-#   "DAY_KEY": "YYYY-MM-DD",
-#   "TICKER": {"base": 123.4, "hit_levels": [2.0], "last_price": 125.0, "updated_at": 1700000000.0}
-# }
-ALARM_LEVEL_STATE: Dict[str, Dict[str, Any]] = {}
-ALARM_LEVEL_DAY_KEY: str = ""
+# Whale daily once store: { "YYYY-MM-DD": 1 }
+WHALE_SENT_DAY: Dict[str, int] = {}
 
 # -----------------------------
 # Helpers
@@ -186,6 +177,12 @@ def within_alarm_window(dt: datetime) -> bool:
     t = dt.timetz().replace(tzinfo=None)
     return start <= t <= end
 
+def within_whale_window(dt: datetime) -> bool:
+    start = dtime(WHALE_START_HOUR, WHALE_START_MIN)
+    end = dtime(WHALE_END_HOUR, WHALE_END_MIN)
+    t = dt.timetz().replace(tzinfo=None)
+    return start <= t <= end
+
 def st_short(sig_text: str) -> str:
     if sig_text == "TOPLAMA":
         return "TOP"
@@ -219,6 +216,11 @@ def trading_day_for_snapshot(dt: datetime) -> date:
 def today_key_tradingday() -> str:
     return trading_day_for_snapshot(now_tr()).strftime("%Y-%m-%d")
 
+def yesterday_key_tradingday() -> str:
+    td = trading_day_for_snapshot(now_tr())
+    y = prev_business_day(td)
+    return y.strftime("%Y-%m-%d")
+
 # -----------------------------
 # Disk storage
 # -----------------------------
@@ -239,7 +241,12 @@ EFFECTIVE_DATA_DIR = _ensure_data_dir()
 PRICE_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "price_history.json")
 VOLUME_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "volume_history.json")
 LAST_ALARM_FILE = os.path.join(EFFECTIVE_DATA_DIR, "last_alarm_ts.json")
-ALARM_LEVEL_FILE = os.path.join(EFFECTIVE_DATA_DIR, "alarm_level_state.json")
+
+# Tomorrow snapshot (ALTIN LISTE cache)
+TOMORROW_SNAPSHOT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "tomorrow_snapshot.json")
+
+# Whale "sent today" cache
+WHALE_SENT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "whale_sent_day.json")
 
 def _load_json(path: str) -> Dict[str, Any]:
     try:
@@ -290,6 +297,28 @@ def save_last_alarm_ts() -> None:
         _atomic_write_json(LAST_ALARM_FILE, data)
     except Exception as e:
         logger.warning("save_last_alarm_ts failed: %s", e)
+
+def load_whale_sent_day() -> None:
+    global WHALE_SENT_DAY
+    raw = _load_json(WHALE_SENT_FILE)
+    out: Dict[str, int] = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            kk = (k or "").strip()
+            if not kk:
+                continue
+            try:
+                out[kk] = int(v)
+            except Exception:
+                continue
+    WHALE_SENT_DAY = out
+    logger.info("Loaded WHALE_SENT_DAY: %d days", len(WHALE_SENT_DAY))
+
+def save_whale_sent_day() -> None:
+    try:
+        _atomic_write_json(WHALE_SENT_FILE, WHALE_SENT_DAY or {})
+    except Exception as e:
+        logger.warning("save_whale_sent_day failed: %s", e)
 
 def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     if not rows:
@@ -421,189 +450,6 @@ def format_30d_note(ticker: str, current_close: float) -> str:
     )
 
 # -----------------------------
-# ✅ FAZ-2: Level Alarm disk/state helpers
-# -----------------------------
-def load_alarm_level_state() -> None:
-    global ALARM_LEVEL_STATE, ALARM_LEVEL_DAY_KEY
-    raw = _load_json(ALARM_LEVEL_FILE)
-    if not isinstance(raw, dict):
-        ALARM_LEVEL_STATE = {}
-        ALARM_LEVEL_DAY_KEY = ""
-        return
-    day_key = (raw.get("DAY_KEY") or "").strip()
-    st = raw.get("STATE") or {}
-    if not isinstance(st, dict):
-        st = {}
-    cleaned: Dict[str, Dict[str, Any]] = {}
-    for k, v in st.items():
-        kk = (k or "").strip().upper()
-        if not kk or not isinstance(v, dict):
-            continue
-        base = safe_float(v.get("base"))
-        if base != base:
-            continue
-        hit = v.get("hit_levels") or []
-        if not isinstance(hit, list):
-            hit = []
-        cleaned[kk] = {
-            "base": float(base),
-            "hit_levels": hit,
-            "last_price": safe_float(v.get("last_price")),
-            "updated_at": safe_float(v.get("updated_at")),
-        }
-    ALARM_LEVEL_STATE = cleaned
-    ALARM_LEVEL_DAY_KEY = day_key
-    logger.info("Loaded ALARM_LEVEL_STATE: day=%s count=%d", ALARM_LEVEL_DAY_KEY, len(ALARM_LEVEL_STATE))
-
-def save_alarm_level_state(day_key: str) -> None:
-    try:
-        payload = {
-            "DAY_KEY": day_key,
-            "STATE": ALARM_LEVEL_STATE
-        }
-        _atomic_write_json(ALARM_LEVEL_FILE, payload)
-    except Exception as e:
-        logger.warning("save_alarm_level_state failed: %s", e)
-
-def reset_alarm_level_state_for_new_day(day_key: str) -> None:
-    global ALARM_LEVEL_DAY_KEY, ALARM_LEVEL_STATE
-    if ALARM_LEVEL_DAY_KEY != day_key:
-        ALARM_LEVEL_DAY_KEY = day_key
-        ALARM_LEVEL_STATE = {}
-
-def update_level_state_from_tomorrow_rows(tom_rows: List[Dict[str, Any]]) -> None:
-    """
-    Tomorrow altın listeyi üretince, base fiyatları bugünkü close olarak state’e bas.
-    """
-    day_key = today_key_tradingday()
-    reset_alarm_level_state_for_new_day(day_key)
-
-    changed = False
-    for r in (tom_rows or []):
-        t = (r.get("ticker") or "").strip().upper()
-        cl = safe_float(r.get("close"))
-        if not t or cl != cl:
-            continue
-        st = ALARM_LEVEL_STATE.get(t)
-        if not st:
-            ALARM_LEVEL_STATE[t] = {
-                "base": float(cl),
-                "hit_levels": [],
-                "last_price": float("nan"),
-                "updated_at": time.time(),
-            }
-            changed = True
-        else:
-            # base’i sadece yoksa güncelle (istenirse burada overwrite yapılabilir)
-            if safe_float(st.get("base")) != safe_float(st.get("base")):
-                st["base"] = float(cl)
-                changed = True
-
-    if changed:
-        save_alarm_level_state(day_key)
-
-async def evaluate_level_alarms_for_state() -> List[Dict[str, Any]]:
-    """
-    State içindeki hisseler için güncel fiyatı çekip base’e göre % seviyeleri kontrol eder.
-    Yeni bir seviye tetiklenirse döner ve state’i disk’e yazar.
-    """
-    day_key = today_key_tradingday()
-    reset_alarm_level_state_for_new_day(day_key)
-
-    if not ALARM_LEVEL_STATE:
-        return []
-
-    tickers = list(ALARM_LEVEL_STATE.keys())
-    # TradingView ile fiyat çek
-    tv_symbols = [normalize_is_ticker(t).split(":")[-1] for t in tickers]
-    tv_map = await tv_scan_symbols([f"BIST:{s}" for s in tv_symbols])
-
-    triggered: List[Dict[str, Any]] = []
-    now_ts = time.time()
-
-    for t in tickers:
-        st = ALARM_LEVEL_STATE.get(t) or {}
-        base = safe_float(st.get("base"))
-        if base != base or base <= 0:
-            continue
-
-        short = t.replace("BIST:", "").replace(".IS", "")
-        d = tv_map.get(short, {})
-        px = safe_float(d.get("close"))
-        if px != px or px <= 0:
-            continue
-
-        st["last_price"] = float(px)
-        st["updated_at"] = float(now_ts)
-
-        change_pct = (px - base) / base  # 0.02 => +%2
-        hit_levels: List[float] = st.get("hit_levels") or []
-        if not isinstance(hit_levels, list):
-            hit_levels = []
-            st["hit_levels"] = hit_levels
-
-        # hangi yeni level(lar) geçti?
-        new_hits: List[float] = []
-        for lv in LEVEL_PCTS:
-            lv_pct = round(lv * 100.0, 2)  # 2.0, 2.5, 3.0
-            if change_pct >= lv and (lv_pct not in hit_levels):
-                new_hits.append(lv_pct)
-
-        if new_hits:
-            # state’e yaz
-            for nh in new_hits:
-                hit_levels.append(nh)
-            hit_levels.sort()
-            st["hit_levels"] = hit_levels
-
-            triggered.append({
-                "ticker": t,
-                "base": float(base),
-                "price": float(px),
-                "change_pct": float(change_pct * 100.0),
-                "new_levels": new_hits,
-                "all_hit_levels": hit_levels,
-            })
-
-    if triggered:
-        save_alarm_level_state(day_key)
-
-    # çok kalabalık olmasın: en yüksek change üstte
-    triggered.sort(key=lambda x: x.get("change_pct", 0.0), reverse=True)
-    return triggered
-
-def build_level_alarm_message(triggered: List[Dict[str, Any]], xu_close: float, xu_change: float) -> str:
-    now_s = now_tr().strftime("%H:%M")
-    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
-    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
-
-    lines = [
-        f"📈🚨 <b>LEVEL ALARM</b> • <b>{now_s}</b> • <b>{BOT_VERSION}</b>",
-        f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}",
-        f"🎯 Seviyeler: <b>{', '.join([str(round(x*100,2)).replace('.0','') for x in LEVEL_PCTS])}%</b>",
-        "",
-        "<pre>",
-        f"{'HIS':<5} {'BASE':>8} {'NOW':>8} {'%':>6} {'NEW':>8} {'HIT':>10}",
-        "-" * 54,
-    ]
-    for it in triggered[:20]:
-        t = (it.get("ticker") or "")[:5]
-        base = safe_float(it.get("base"))
-        px = safe_float(it.get("price"))
-        ch = safe_float(it.get("change_pct"))
-        newl = it.get("new_levels") or []
-        hit = it.get("all_hit_levels") or []
-        base_s = "n/a" if base != base else f"{base:.2f}"
-        px_s = "n/a" if px != px else f"{px:.2f}"
-        ch_s = "n/a" if ch != ch else f"{ch:+.2f}"
-        new_s = ",".join([str(x).replace(".0","") for x in newl]) if newl else "-"
-        hit_s = ",".join([str(x).replace(".0","") for x in hit]) if hit else "-"
-        lines.append(f"{t:<5} {base_s:>8} {px_s:>8} {ch_s:>6} {new_s:>8} {hit_s:>10}")
-    lines.append("</pre>")
-    lines.append("⏱️ <i>Not: Aynı seviye aynı gün içinde 1 kez gönderilir (restart olsa da diskten devam).</i>")
-    return "\n".join(lines)
-
-# -----------------------------
 # TradingView Scanner
 # -----------------------------
 def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -728,26 +574,6 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
             lines.append(f"{t:<5} {sig:<1} {ch_s:>5} {cl_s:>7} {vol_s:>6}")
     lines.append("</pre>")
     return "\n".join(lines)
-
-def signal_summary_compact(rows: List[Dict[str, Any]]) -> str:
-    def join(lst: List[str]) -> str:
-        return ", ".join(lst) if lst else "—"
-    toplama = [r["ticker"] for r in rows if r.get("signal_text") == "TOPLAMA"]
-    dip = [r["ticker"] for r in rows if r.get("signal_text") == "DİP TOPLAMA"]
-    ayrisma = [r["ticker"] for r in rows if r.get("signal_text") == "AYRIŞMA"]
-    kar = [r["ticker"] for r in rows if r.get("signal_text") == "KÂR KORUMA"]
-    return (
-        f"🧠 <b>Sinyal Özeti ({BOT_VERSION})</b>\n"
-        f"• 🧠 TOPLAMA: {join(toplama)}\n"
-        f"• 🧲 DİP TOPLAMA: {join(dip)}\n"
-        f"• 🧠 AYRIŞMA: {join(ayrisma)}\n"
-        f"• ⚠️ KÂR KORUMA: {join(kar)}"
-    )
-
-def format_threshold(min_vol: float) -> str:
-    if not isinstance(min_vol, (int, float)) or math.isnan(min_vol) or min_vol == float("inf"):
-        return "n/a"
-    return format_volume(min_vol)
 
 def parse_watch_args(args: List[str]) -> List[str]:
     if not args:
@@ -935,6 +761,11 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out.sort(key=tomorrow_score, reverse=True)
     return out[:max(1, TOMORROW_MAX)]
 
+def format_threshold(min_vol: float) -> str:
+    if not isinstance(min_vol, (int, float)) or math.isnan(min_vol) or min_vol == float("inf"):
+        return "n/a"
+    return format_volume(min_vol)
+
 def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_change: float, thresh_s: str) -> str:
     now_s = now_tr().strftime("%H:%M")
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
@@ -976,8 +807,48 @@ def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_chang
     )
     return head + "\n" + table + "\n" + notes + foot
 
+def save_tomorrow_snapshot(rows: List[Dict[str, Any]], xu_change: float) -> None:
+    """
+    /tomorrow üretildiğinde diske snapshot kaydeder.
+    Balina Devam ertesi gün buna bakar.
+    """
+    try:
+        day_key = today_key_tradingday()
+        snap = _load_json(TOMORROW_SNAPSHOT_FILE)
+        if not isinstance(snap, dict):
+            snap = {}
+        items = []
+        for r in rows:
+            t = (r.get("ticker") or "").strip().upper()
+            cl = r.get("close", float("nan"))
+            ch = r.get("change", float("nan"))
+            vol = r.get("volume", float("nan"))
+            if not t or cl != cl:
+                continue
+            items.append({
+                "ticker": t,
+                "ref_close": float(cl),
+                "change": float(ch) if ch == ch else None,
+                "volume": float(vol) if vol == vol else None,
+                "kind": (r.get("signal_text") or ""),
+                "saved_at": now_tr().isoformat(),
+                "xu100_change": float(xu_change) if xu_change == xu_change else None,
+            })
+        snap[day_key] = items
+        _atomic_write_json(TOMORROW_SNAPSHOT_FILE, snap)
+    except Exception as e:
+        logger.warning("save_tomorrow_snapshot failed: %s", e)
+
+def load_yesterday_tomorrow_snapshot() -> List[Dict[str, Any]]:
+    snap = _load_json(TOMORROW_SNAPSHOT_FILE)
+    if not isinstance(snap, dict):
+        return []
+    yk = yesterday_key_tradingday()
+    items = snap.get(yk, [])
+    return items if isinstance(items, list) else []
+
 # -----------------------------
-# Alarm message (FAZ-1)
+# Alarm message
 # -----------------------------
 def build_alarm_message(
     alarm_rows: List[Dict[str, Any]],
@@ -1018,7 +889,7 @@ def build_alarm_message(
     return head + "\n" + alarm_table + "\n" + notes + foot
 
 # -----------------------------
-# Alarm logic (FAZ-1)
+# Alarm logic
 # -----------------------------
 def can_send_alarm_for(ticker: str, now_ts: float) -> bool:
     last = LAST_ALARM_TS.get(ticker)
@@ -1050,6 +921,52 @@ def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 # -----------------------------
+# 🐋 Whale logic
+# -----------------------------
+def whale_already_sent_today() -> bool:
+    k = today_key_tradingday()
+    return int(WHALE_SENT_DAY.get(k, 0)) == 1
+
+def mark_whale_sent_today() -> None:
+    k = today_key_tradingday()
+    WHALE_SENT_DAY[k] = 1
+    save_whale_sent_day()
+
+def pct_change(a: float, b: float) -> float:
+    # (a/b - 1) * 100
+    if b == 0 or a != a or b != b:
+        return float("nan")
+    return (a / b - 1.0) * 100.0
+
+def build_whale_message(items: List[Dict[str, Any]], xu_close: float, xu_change: float) -> str:
+    now_s = now_tr().strftime("%H:%M")
+    xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
+    xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
+    yk = yesterday_key_tradingday()
+    head = (
+        f"🐋 <b>BALİNA DEVAM ALARMI</b> • <b>{now_s}</b> • <b>{BOT_VERSION}</b>\n"
+        f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
+        f"🧾 Referans: Dün ALTIN LİSTE (<code>{yk}</code>)\n"
+        f"🎯 Filtre: Hacim ≥ <b>{WHALE_MIN_VOL_RATIO:.2f}x</b> • Düşüş ≥ <b>{WHALE_MAX_DRAWDOWN_PCT:.2f}%</b> (korunmalı)\n"
+    )
+    if not items:
+        return head + "\n❌ <b>Bugün “balina devam” kriterine uyan hisse çıkmadı.</b>"
+
+    lines = [head, "\n<b>✅ DEVAM EDENLER</b>"]
+    for it in items:
+        t = it["ticker"]
+        volr = it.get("vol_ratio", float("nan"))
+        ch = it.get("change", float("nan"))
+        dd = it.get("dd_pct", float("nan"))
+        mark = it.get("mark", "🐋")
+        volr_s = "n/a" if volr != volr else f"{volr:.2f}x"
+        ch_s = "n/a" if ch != ch else f"{ch:+.2f}%"
+        dd_s = "n/a" if dd != dd else f"{dd:+.2f}%"
+        lines.append(f"{mark} <b>{t}</b> → Hacim: <b>{volr_s}</b> | Günlük: <b>{ch_s}</b> | Dün Ref’e göre: <b>{dd_s}</b>")
+    lines.append("\n<i>Not: Bu alarm “dün seçilenlerin bugün de bırakılmadığını” yakalar. Spam yok → günde 1.</i>")
+    return "\n".join(lines)
+
+# -----------------------------
 # Telegram Handlers
 # -----------------------------
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1062,10 +979,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /radar → BIST200 radar parça (örn: /radar 1)\n"
         "• /eod → manuel EOD raporu\n"
         "• /tomorrow → ertesi güne kesin toplama listesi\n"
+        "• /whale → balina devam testi (dün altın listeye göre)\n"
         "• /alarm → alarm durumu/ayarlar\n"
         "• /stats → 30G istatistik (örn: /stats AKBNK)\n"
         "• /bootstrap → Yahoo’dan geçmiş doldurma (1 defa)\n"
-        "• /levels → FAZ-2 level-state kontrol\n"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -1092,11 +1009,12 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• DATA_DIR: <code>{EFFECTIVE_DATA_DIR}</code>\n"
         f"• FILES: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>\n"
         f"• LAST_ALARM loaded: <b>{len(LAST_ALARM_TS)}</b>\n\n"
-        f"📈 <b>Level Alarm (FAZ-2)</b>\n"
-        f"• Enabled: <b>{'ON' if (ALARM_LEVEL_ENABLED and ALARM_ENABLED) else 'OFF'}</b>\n"
-        f"• Interval: <b>{ALARM_LEVEL_INTERVAL_MIN} dk</b>\n"
-        f"• Levels: <b>{', '.join([str(round(x*100,2)).replace('.0','') for x in LEVEL_PCTS])}%</b>\n"
-        f"• Level state: <b>{len(ALARM_LEVEL_STATE)}</b> (day=<code>{ALARM_LEVEL_DAY_KEY or '-'}</code>)\n"
+        f"🐋 <b>Balina Devam</b>\n"
+        f"• Enabled: <b>{'ON' if WHALE_ENABLED else 'OFF'}</b>\n"
+        f"• Window: <b>{WHALE_START_HOUR:02d}:{WHALE_START_MIN:02d}–{WHALE_END_HOUR:02d}:{WHALE_END_MIN:02d}</b>\n"
+        f"• Interval: <b>{WHALE_INTERVAL_MIN} dk</b>\n"
+        f"• MinVolRatio: <b>{WHALE_MIN_VOL_RATIO:.2f}x</b>\n"
+        f"• MaxDrawdown: <b>{WHALE_MAX_DRAWDOWN_PCT:.2f}%</b>\n"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -1157,72 +1075,62 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
     tom_rows = build_tomorrow_rows(rows)
-
-    # ✅ FAZ-2: Tomorrow list -> Alarm Level State güncelle (base=bugünkü close)
-    update_level_state_from_tomorrow_rows(tom_rows)
+    # ✅ snapshot kaydet (faz2 balina bununla çalışıyor)
+    save_tomorrow_snapshot(tom_rows, xu_change)
 
     msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-# -----------------------------
-# Basit /watch /radar /eod (NameError yemesin diye)
-# İstersen kendi uzun versiyonlarınla değiştirirsin.
-# -----------------------------
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    args = parse_watch_args(context.args)
-    if not args:
-        # env’den watchlist oku
-        args = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
-    if not args:
-        await update.message.reply_text("Kullanım: <code>/watch AKBNK,CANTE</code>", parse_mode=ParseMode.HTML)
+    watch = parse_watch_args(context.args)
+    if not watch:
+        # env fallback
+        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
+    watch = (watch or [])[:WATCHLIST_MAX]
+    if not watch:
+        await update.message.reply_text("Kullanım: <code>/watch AKBNK,CANTE</code> (ya da WATCHLIST env)", parse_mode=ParseMode.HTML)
         return
-    args = args[:WATCHLIST_MAX]
+
     xu_close, xu_change = await get_xu100_summary()
-    rows = await build_rows_from_is_list(args)
-    # watch için sinyal hesabı: topN eşiği üretmek için BIST200 yoksa kendi listesiyle threshold kullanırız
-    min_vol = compute_volume_threshold(rows, min(len(rows), VOLUME_TOP_N))
-    _apply_signals_with_threshold(rows, xu_change, min_vol)
-    msg = (
-        f"👀 <b>WATCHLIST</b> • <b>{BOT_VERSION}</b>\n"
-        f"📊 XU100: <b>{'n/a' if xu_close!=xu_close else f'{xu_close:,.2f}'}</b> • "
-        f"<b>{'n/a' if xu_change!=xu_change else f'{xu_change:+.2f}%'}</b>\n\n"
-        + make_table(rows, "📌 <b>WATCHLIST TABLO</b>", include_kind=True)
-    )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    rows = await build_rows_from_is_list(watch)
+    # TopN eşiği watch için BIST200'e göre değil; watch'ın kendi top'u olur.
+    min_vol = compute_signal_rows(rows, xu_change, max(5, min(10, len(rows))))
+    table = make_table(rows, f"👀 <b>WATCHLIST RADAR</b> • TopEşik≈<b>{format_threshold(min_vol)}</b>", include_kind=True)
+    head = f"👀 <b>WATCHLIST</b> • <b>{BOT_VERSION}</b>\n📊 XU100: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+    await update.message.reply_text(head + "\n" + table, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş.")
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
-    # /radar 1 -> chunk index
-    idx = 1
+
+    page = 1
     if context.args:
         try:
-            idx = int(re.sub(r"\D+", "", context.args[0]) or "1")
+            page = int(re.sub(r"\D+", "", context.args[0]) or "1")
         except Exception:
-            idx = 1
-    parts = chunk_list(bist200_list, 50)
-    idx = max(1, min(len(parts), idx))
-    symbols = parts[idx - 1]
+            page = 1
+    page = max(1, page)
+
+    chunks = chunk_list(bist200_list, 25)
+    if page > len(chunks):
+        await update.message.reply_text(f"Sayfa yok. Toplam sayfa: {len(chunks)} (örn: /radar 1)")
+        return
 
     xu_close, xu_change = await get_xu100_summary()
-    rows = await build_rows_from_is_list(symbols)
+    rows = await build_rows_from_is_list(chunks[page - 1])
     update_history_from_rows(rows)
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
-    msg = (
-        f"🛰️ <b>RADAR</b> • Part <b>{idx}/{len(parts)}</b> • <b>{BOT_VERSION}</b>\n"
-        f"🧱 Top{VOLUME_TOP_N} Eşik: ≥ <b>{format_threshold(min_vol)}</b>\n\n"
-        + signal_summary_compact(rows) + "\n\n"
-        + make_table(rows, "📡 <b>RADAR TABLO</b>", include_kind=True)
-    )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    thresh_s = format_threshold(min_vol)
+    table = make_table(rows, f"📡 <b>BIST200 RADAR</b> • Sayfa {page}/{len(chunks)} • Top{VOLUME_TOP_N}≥<b>{thresh_s}</b>", include_kind=True)
+    head = f"📡 <b>RADAR</b> • <b>{BOT_VERSION}</b>\n📊 XU100: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+    await update.message.reply_text(head + "\n" + table, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Manuel EOD: bir radar snapshot + tomorrow basar
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş.")
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
     await update.message.reply_text("⏳ EOD raporu hazırlanıyor...")
     xu_close, xu_change = await get_xu100_summary()
@@ -1231,53 +1139,83 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
 
-    # EOD kısa özet
-    msg1 = (
-        f"🧾 <b>EOD SNAPSHOT</b> • <b>{BOT_VERSION}</b>\n"
-        f"📊 XU100: <b>{'n/a' if xu_close!=xu_close else f'{xu_close:,.2f}'}</b> • "
-        f"<b>{'n/a' if xu_change!=xu_change else f'{xu_change:+.2f}%'}</b>\n"
-        f"🧱 Top{VOLUME_TOP_N} Eşik: ≥ <b>{thresh_s}</b>\n\n"
-        + signal_summary_compact(rows)
+    toplama = [r for r in rows if r.get("signal_text") == "TOPLAMA"]
+    dip = [r for r in rows if r.get("signal_text") == "DİP TOPLAMA"]
+    ayr = [r for r in rows if r.get("signal_text") == "AYRIŞMA"]
+    kar = [r for r in rows if r.get("signal_text") == "KÂR KORUMA"]
+
+    def top_by_vol(lst: List[Dict[str, Any]], n: int = 10) -> List[Dict[str, Any]]:
+        return sorted(lst, key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0, reverse=True)[:n]
+
+    msg = (
+        f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
+        f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+        f"🧱 <b>Top{VOLUME_TOP_N} Eşik</b>: ≥ <b>{thresh_s}</b>\n\n"
+        f"🧠 TOPLAMA: <b>{len(toplama)}</b> | 🧲 DİP: <b>{len(dip)}</b> | 🧠 AYR: <b>{len(ayr)}</b> | ⚠️ KAR: <b>{len(kar)}</b>\n"
     )
-    await update.message.reply_text(msg1, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    msg += "\n" + make_table(top_by_vol(toplama, 8), "🧠 <b>TOPLAMA – Top 8</b>", include_kind=True)
+    msg += "\n\n" + make_table(top_by_vol(dip, 8), "🧲 <b>DİP TOPLAMA – Top 8</b>", include_kind=True)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-    tom_rows = build_tomorrow_rows(rows)
-
-    # ✅ FAZ-2: Tomorrow list -> Alarm Level State güncelle (base=bugünkü close)
-    update_level_state_from_tomorrow_rows(tom_rows)
-
-    msg2 = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
-    await update.message.reply_text(msg2, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-
-# -----------------------------
-# ✅ FAZ-2: /levels komutu
-# -----------------------------
-async def cmd_levels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    day_key = today_key_tradingday()
-    reset_alarm_level_state_for_new_day(day_key)
-
-    if not ALARM_LEVEL_STATE:
-        await update.message.reply_text("📭 Level State boş. (Önce /tomorrow çalışmalı)", parse_mode=ParseMode.HTML)
+async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not WHALE_ENABLED:
+        await update.message.reply_text("🐋 Whale kapalı (WHALE_ENABLED=0).")
+        return
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        return
+    y_items = load_yesterday_tomorrow_snapshot()
+    if not y_items:
+        await update.message.reply_text("🐋 Dün için ALTIN snapshot yok. Önce /tomorrow çalıştır (EOD’de otomatik de kaydeder).")
         return
 
-    items = list(ALARM_LEVEL_STATE.items())[:25]
-    lines = [f"📌 <b>LEVEL STATE</b> • key=<code>{day_key}</code> • count=<b>{len(ALARM_LEVEL_STATE)}</b>", "<pre>"]
-    lines.append(f"{'HIS':<5} {'BASE':>8} {'HIT':<12} {'LAST':>8}")
-    lines.append("-" * 42)
-    for t, st in items:
-        base = safe_float(st.get("base"))
-        lastp = safe_float(st.get("last_price"))
-        hit = st.get("hit_levels") or []
-        hit_s = ",".join([str(x).replace(".0","") for x in hit]) if isinstance(hit, list) and hit else "-"
-        base_s = "n/a" if base != base else f"{base:.2f}"
-        last_s = "n/a" if lastp != lastp else f"{lastp:.2f}"
-        lines.append(f"{t[:5]:<5} {base_s:>8} {hit_s:<12} {last_s:>8}")
-    lines.append("</pre>")
+    tickers = [it.get("ticker") for it in y_items if it.get("ticker")]
+    xu_close, xu_change = await get_xu100_summary()
+    rows = await build_rows_from_is_list(tickers)
+    update_history_from_rows(rows)
 
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    ref_map = {it["ticker"]: safe_float(it.get("ref_close")) for it in y_items if it.get("ticker")}
+    out = []
+    for r in rows:
+        t = r.get("ticker", "")
+        if not t or t not in ref_map:
+            continue
+        ref_close = ref_map[t]
+        st = compute_30d_stats(t)
+        if not st:
+            continue
+        avg_vol = st.get("avg_vol", float("nan"))
+        today_vol = r.get("volume", float("nan"))
+        today_close = r.get("close", float("nan"))
+        ch = r.get("change", float("nan"))
+
+        vol_ratio = (today_vol / avg_vol) if (avg_vol == avg_vol and avg_vol > 0 and today_vol == today_vol) else float("nan")
+        dd_pct = pct_change(today_close, ref_close)
+
+        if vol_ratio != vol_ratio or vol_ratio < WHALE_MIN_VOL_RATIO:
+            continue
+        if dd_pct != dd_pct or dd_pct < WHALE_MAX_DRAWDOWN_PCT:
+            continue
+
+        mark = "🐋"
+        if WHALE_INDEX_BONUS and (xu_change == xu_change) and (xu_change <= 0) and (ch == ch) and (ch >= WHALE_MIN_POSITIVE_WHEN_INDEX_BAD):
+            mark = "🐋🐋"
+
+        out.append({
+            "ticker": t,
+            "vol_ratio": float(vol_ratio),
+            "change": float(ch) if ch == ch else float("nan"),
+            "dd_pct": float(dd_pct),
+            "mark": mark,
+        })
+
+    out.sort(key=lambda x: (x.get("mark") == "🐋🐋", x.get("vol_ratio", 0)), reverse=True)
+    msg = build_whale_message(out[:12], xu_close, xu_change)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 # -----------------------------
-# Scheduled jobs (FAZ-1 + FAZ-2)
+# Scheduled jobs
 # -----------------------------
 async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
@@ -1300,11 +1238,13 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         for r in alarm_rows:
             mark_alarm_sent(r.get("ticker", ""), ts_now)
         save_last_alarm_ts()
+
         watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
         watch = (watch or [])[:WATCHLIST_MAX]
         w_rows = await build_rows_from_is_list(watch) if watch else []
         if w_rows:
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
+
         text = build_alarm_message(
             alarm_rows=alarm_rows,
             watch_rows=w_rows,
@@ -1329,6 +1269,10 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not bist200_list:
         return
     try:
+        # EOD sonrası gecikme
+        if TOMORROW_DELAY_MIN > 0:
+            await asyncio.sleep(max(0, int(TOMORROW_DELAY_MIN)) * 60)
+
         xu_close, xu_change = await get_xu100_summary()
         rows = await build_rows_from_is_list(bist200_list)
         update_history_from_rows(rows)
@@ -1336,8 +1280,8 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         thresh_s = format_threshold(min_vol)
         tom_rows = build_tomorrow_rows(rows)
 
-        # ✅ FAZ-2: Tomorrow list -> Alarm Level State güncelle (base=bugünkü close)
-        update_level_state_from_tomorrow_rows(tom_rows)
+        # ✅ snapshot kaydet
+        save_tomorrow_snapshot(tom_rows, xu_change)
 
         msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
         await context.bot.send_message(
@@ -1349,24 +1293,77 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("Tomorrow job error: %s", e)
 
-async def job_level_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    FAZ-2: Tomorrow ALTIN LİSTE içindeki hisseler için +%2/+%2.5/+%3 seviye alarmı.
+    Faz 2: Balina Devam
+    - 10:05–11:30 arası çalışır
+    - günde 1 kez mesaj
+    - dün ALTIN listeden devam edenleri yakalar
     """
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
+    if not WHALE_ENABLED or not ALARM_CHAT_ID:
         return
-    if not ALARM_LEVEL_ENABLED:
+    if not within_whale_window(now_tr()):
         return
-    if not within_alarm_window(now_tr()):
+    if whale_already_sent_today():
         return
 
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return
+
+    y_items = load_yesterday_tomorrow_snapshot()
+    if not y_items:
+        return  # dün snapshot yoksa sessiz geç
+
     try:
-        triggered = await evaluate_level_alarms_for_state()
-        if not triggered:
+        tickers = [it.get("ticker") for it in y_items if it.get("ticker")]
+        if not tickers:
             return
 
         xu_close, xu_change = await get_xu100_summary()
-        msg = build_level_alarm_message(triggered, xu_close, xu_change)
+        rows = await build_rows_from_is_list(tickers)
+        update_history_from_rows(rows)
+
+        ref_map = {it["ticker"]: safe_float(it.get("ref_close")) for it in y_items if it.get("ticker")}
+        out = []
+        for r in rows:
+            t = r.get("ticker", "")
+            if not t or t not in ref_map:
+                continue
+            ref_close = ref_map[t]
+            st = compute_30d_stats(t)
+            if not st:
+                continue
+            avg_vol = st.get("avg_vol", float("nan"))
+            today_vol = r.get("volume", float("nan"))
+            today_close = r.get("close", float("nan"))
+            ch = r.get("change", float("nan"))
+
+            vol_ratio = (today_vol / avg_vol) if (avg_vol == avg_vol and avg_vol > 0 and today_vol == today_vol) else float("nan")
+            dd_pct = pct_change(today_close, ref_close)
+
+            if vol_ratio != vol_ratio or vol_ratio < WHALE_MIN_VOL_RATIO:
+                continue
+            if dd_pct != dd_pct or dd_pct < WHALE_MAX_DRAWDOWN_PCT:
+                continue
+
+            mark = "🐋"
+            if WHALE_INDEX_BONUS and (xu_change == xu_change) and (xu_change <= 0) and (ch == ch) and (ch >= WHALE_MIN_POSITIVE_WHEN_INDEX_BAD):
+                mark = "🐋🐋"
+
+            out.append({
+                "ticker": t,
+                "vol_ratio": float(vol_ratio),
+                "change": float(ch) if ch == ch else float("nan"),
+                "dd_pct": float(dd_pct),
+                "mark": mark,
+            })
+
+        if not out:
+            return  # kriter yoksa sessiz (spam yok)
+
+        out.sort(key=lambda x: (x.get("mark") == "🐋🐋", x.get("vol_ratio", 0)), reverse=True)
+        msg = build_whale_message(out[:12], xu_close, xu_change)
 
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
@@ -1374,54 +1371,49 @@ async def job_level_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True
         )
-    except Exception as e:
-        logger.exception("Level alarm job error: %s", e)
+        mark_whale_sent_today()
 
-def _add_minutes_to_time(h: int, m: int, add: int) -> Tuple[int, int]:
-    total = h * 60 + m + add
-    total %= (24 * 60)
-    return total // 60, total % 60
+    except Exception as e:
+        logger.exception("Whale job error: %s", e)
 
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
     if jq is None:
-        logger.warning("JobQueue yok → otomatik alarm/eod/tomorrow ÇALIŞMAZ. Komutlar çalışır.")
-        return
-    if not ALARM_ENABLED:
-        logger.info("Alarm disabled by env.")
-        return
-    if not ALARM_CHAT_ID:
-        logger.info("ALARM_CHAT_ID yok → otomatik mesaj gönderilmeyecek.")
+        logger.warning("JobQueue yok → otomatik alarm/eod/tomorrow/whale ÇALIŞMAZ. Komutlar çalışır.")
         return
 
-    # FAZ-1 repeating scan
-    first = next_aligned_run(ALARM_INTERVAL_MIN)
-    jq.run_repeating(
-        job_alarm_scan,
-        interval=ALARM_INTERVAL_MIN * 60,
-        first=first,
-        name="alarm_scan_repeating"
-    )
-    logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
+    # Alarm scan
+    if ALARM_ENABLED and ALARM_CHAT_ID:
+        first = next_aligned_run(ALARM_INTERVAL_MIN)
+        jq.run_repeating(
+            job_alarm_scan,
+            interval=ALARM_INTERVAL_MIN * 60,
+            first=first,
+            name="alarm_scan_repeating"
+        )
+        logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
 
-    # Tomorrow at EOD + delay
-    th, tm = _add_minutes_to_time(EOD_HOUR, EOD_MINUTE, TOMORROW_DELAY_MIN)
-    jq.run_daily(
-        job_tomorrow_list,
-        time=datetime(2000, 1, 1, th, tm, tzinfo=TZ).timetz(),
-        name="tomorrow_daily"
-    )
-    logger.info("Tomorrow scheduled daily at %02d:%02d (EOD + %d min)", th, tm, TOMORROW_DELAY_MIN)
+        jq.run_daily(
+            job_tomorrow_list,
+            time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
+            name="tomorrow_daily_at_eod_time"
+        )
+        logger.info("Tomorrow scheduled daily at %02d:%02d (+%dmin delay)", EOD_HOUR, EOD_MINUTE, TOMORROW_DELAY_MIN)
+    else:
+        logger.info("ALARM kapalı veya ALARM_CHAT_ID yok → otomatik alarm/tomorrow gönderilmeyecek.")
 
-    # ✅ FAZ-2 Level Alarm Scan
-    first_lv = next_aligned_run(ALARM_LEVEL_INTERVAL_MIN)
-    jq.run_repeating(
-        job_level_alarm_scan,
-        interval=ALARM_LEVEL_INTERVAL_MIN * 60,
-        first=first_lv,
-        name="level_alarm_scan_repeating"
-    )
-    logger.info("Level alarm scheduled every %d min. First=%s", ALARM_LEVEL_INTERVAL_MIN, first_lv.isoformat())
+    # Whale follow (faz2)
+    if WHALE_ENABLED and ALARM_CHAT_ID:
+        first_w = next_aligned_run(WHALE_INTERVAL_MIN)
+        jq.run_repeating(
+            job_whale_follow,
+            interval=WHALE_INTERVAL_MIN * 60,
+            first=first_w,
+            name="whale_follow_repeating"
+        )
+        logger.info("Whale follow scheduled every %d min. First=%s", WHALE_INTERVAL_MIN, first_w.isoformat())
+    else:
+        logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
 
 # -----------------------------
 # Global error handler (çok kritik)
@@ -1438,8 +1430,7 @@ def main() -> None:
         raise RuntimeError("BOT_TOKEN env missing")
 
     load_last_alarm_ts()
-    # ✅ FAZ-2: load level alarm state
-    load_alarm_level_state()
+    load_whale_sent_day()
 
     app = Application.builder().token(token).build()
 
@@ -1451,11 +1442,11 @@ def main() -> None:
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
+    app.add_handler(CommandHandler("whale", cmd_whale))
     app.add_handler(CommandHandler("bootstrap", cmd_bootstrap))
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
-    app.add_handler(CommandHandler("levels", cmd_levels))
 
     # Global error log
     app.add_error_handler(on_error)
