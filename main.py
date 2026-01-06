@@ -63,11 +63,19 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "30"))
 ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))  # alarm mesajında kaç hisse için 30G not üretelim
 
-# Tomorrow list filtreleri (PRO)
+# Tomorrow list filtreleri (PRO) - ALTIN LISTE
 TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))  # “altın liste” default 12
 TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))  # bugün/ort hacim >= 1.20x
 TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))  # Band % <= 65 (tepeye yakınları ele)
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
+
+# -----------------------------
+# Candidate list (ADAY) filtreleri
+# -----------------------------
+CANDIDATE_MAX = int(os.getenv("CANDIDATE_MAX", "20"))  # aday liste kaç hisse (default 20)
+CANDIDATE_MIN_VOL_RATIO = float(os.getenv("CANDIDATE_MIN_VOL_RATIO", "1.10"))  # daha yumuşak
+CANDIDATE_MAX_BAND = float(os.getenv("CANDIDATE_MAX_BAND", "75"))              # daha geniş
+CANDIDATE_INCLUDE_AYRISMA = os.getenv("CANDIDATE_INCLUDE_AYRISMA", "0").strip() == "1"
 
 # ✅ Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
 TORPIL_ENABLED = os.getenv("TORPIL_ENABLED", "1").strip() == "1"
@@ -709,7 +717,7 @@ async def yahoo_bootstrap_if_needed() -> str:
         return f"BOOTSTRAP hata: {e}"
 
 # -----------------------------
-# Tomorrow List (Kesin Liste)
+# Tomorrow List (Kesin Liste) + Aday Liste
 # -----------------------------
 def tomorrow_score(row: Dict[str, Any]) -> float:
     t = row.get("ticker", "")
@@ -761,19 +769,59 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out.sort(key=tomorrow_score, reverse=True)
     return out[:max(1, TOMORROW_MAX)]
 
+def build_candidate_rows(all_rows: List[Dict[str, Any]], gold_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    ADAY liste: ALTIN listeye giremeyen ama radar için güçlü duranlar.
+    Daha yumuşak filtreler kullanır.
+    """
+    gold_set = set((r.get("ticker") or "").strip().upper() for r in (gold_rows or []))
+
+    out: List[Dict[str, Any]] = []
+    for r in all_rows:
+        kind = r.get("signal_text", "")
+        if kind not in ("TOPLAMA", "DİP TOPLAMA") and not (CANDIDATE_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
+            continue
+
+        t = (r.get("ticker") or "").strip().upper()
+        if not t or t in gold_set:
+            continue
+
+        st = compute_30d_stats(t)
+        if not st:
+            continue
+
+        ratio = st.get("ratio", float("nan"))
+        band = st.get("band_pct", 50.0)
+
+        if ratio != ratio or ratio < CANDIDATE_MIN_VOL_RATIO:
+            continue
+        if band > CANDIDATE_MAX_BAND:
+            continue
+
+        out.append(r)
+
+    out.sort(key=tomorrow_score, reverse=True)
+    return out[:max(1, CANDIDATE_MAX)]
+
 def format_threshold(min_vol: float) -> str:
     if not isinstance(min_vol, (int, float)) or math.isnan(min_vol) or min_vol == float("inf"):
         return "n/a"
     return format_volume(min_vol)
 
-def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_change: float, thresh_s: str) -> str:
+def build_tomorrow_message(
+    gold_rows: List[Dict[str, Any]],
+    cand_rows: List[Dict[str, Any]],
+    xu_close: float,
+    xu_change: float,
+    thresh_s: str
+) -> str:
     now_s = now_tr().strftime("%H:%M")
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
     xu_change_s = "n/a" if (xu_change != xu_change) else f"{xu_change:+.2f}%"
     tomorrow = (now_tr().date() + timedelta(days=1)).strftime("%Y-%m-%d")
 
     torpil_used_any = False
-    for r in rows:
+    for r in (gold_rows or []):
         st = compute_30d_stats(r.get("ticker", ""))
         if st:
             _, _, used = _tomorrow_thresholds_for(st)
@@ -782,30 +830,52 @@ def build_tomorrow_message(rows: List[Dict[str, Any]], xu_close: float, xu_chang
                 break
 
     head = (
-        f"🌙 <b>ERTESİ GÜNE TOPLAMA – KESİN LİSTE</b> • <b>{tomorrow}</b>\n"
+        f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b> • <b>{tomorrow}</b>\n"
         f"🕒 Hazırlandı: <b>{now_s}</b> • <b>{BOT_VERSION}</b>\n"
         f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
         f"🧱 <b>Top{VOLUME_TOP_N} Eşik</b>: ≥ <b>{thresh_s}</b>\n"
-        f"🎯 Filtre (PRO): Band ≤ <b>%{TOMORROW_MAX_BAND:.0f}</b> • Hacim ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b>\n"
+        f"🥇 <b>ALTIN</b>: Band ≤ <b>%{TOMORROW_MAX_BAND:.0f}</b> • Hacim ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b> • Max <b>{TOMORROW_MAX}</b>\n"
+        f"🥈 <b>ADAY</b>: Band ≤ <b>%{CANDIDATE_MAX_BAND:.0f}</b> • Hacim ≥ <b>{CANDIDATE_MIN_VOL_RATIO:.2f}x</b> • Max <b>{CANDIDATE_MAX}</b>\n"
     )
     if torpil_used_any:
         head += "🧩 <i>Torpil Modu: veri az olan hisselerde geçici yumuşatma aktif.</i>\n"
-    if not rows:
-        return head + "\n❌ <b>Bugün kriterlere uyan “kesin liste” çıkmadı.</b>\n<i>Disk doldukça sistem keskinleşir.</i>"
-    table = make_table(rows, "✅ <b>ALTIN LİSTE (Tomorrow Candidates)</b>", include_kind=True)
-    notes_lines = ["\n📌 <b>30G Notlar</b>"]
-    for r in rows[:min(len(rows), ALARM_NOTE_MAX)]:
-        t = r.get("ticker", "")
-        cl = r.get("close", float("nan"))
-        notes_lines.append(format_30d_note(t, cl))
+
+    # ALTIN tablo
+    if gold_rows:
+        gold_table = make_table(gold_rows, "✅ <b>ALTIN LİSTE (Kesin)</b>", include_kind=True)
+    else:
+        gold_table = "❌ <b>ALTIN LİSTE çıkmadı.</b>"
+
+    # ADAY tablo
+    if cand_rows:
+        cand_table = make_table(cand_rows, "🟦 <b>ADAY LİSTE (Radar)</b>", include_kind=True)
+    else:
+        cand_table = "— <b>ADAY LİSTE yok.</b>"
+
+    # Notlar: ALTIN öncelik (ALTIN yoksa ADAY’dan)
+    notes_lines = ["\n📌 <b>30G Notlar (ALTIN öncelikli)</b>"]
+    if gold_rows:
+        for r in gold_rows[:min(len(gold_rows), ALARM_NOTE_MAX)]:
+            t = r.get("ticker", "")
+            cl = r.get("close", float("nan"))
+            notes_lines.append(format_30d_note(t, cl))
+    elif cand_rows:
+        for r in cand_rows[:min(len(cand_rows), ALARM_NOTE_MAX)]:
+            t = r.get("ticker", "")
+            cl = r.get("close", float("nan"))
+            notes_lines.append(format_30d_note(t, cl))
+    else:
+        notes_lines.append("<i>Not yok (liste boş).</i>")
     notes = "\n".join(notes_lines)
+
     foot = (
         "\n\n🟢 <b>Sabah Planı (Pratik)</b>\n"
-        "• Açılışta ilk 5–15 dk “sakin+yeşil” teyidi\n"
+        "• Açılışta ilk 5–15 dk “sakin + yeşil” teyidi\n"
         "• +%2–%4 kademeli çıkış\n"
         "• Ters mum gelirse: disiplin (zarar büyütme yok)"
     )
-    return head + "\n" + table + "\n" + notes + foot
+
+    return head + "\n" + gold_table + "\n\n" + cand_table + "\n" + notes + foot
 
 def save_tomorrow_snapshot(rows: List[Dict[str, Any]], xu_change: float) -> None:
     """
@@ -978,7 +1048,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /watch → watchlist radar (örn: /watch AKBNK,CANTE)\n"
         "• /radar → BIST200 radar parça (örn: /radar 1)\n"
         "• /eod → manuel EOD raporu\n"
-        "• /tomorrow → ertesi güne kesin toplama listesi\n"
+        "• /tomorrow → ertesi güne altın + aday liste\n"
         "• /whale → balina devam testi (dün altın listeye göre)\n"
         "• /alarm → alarm durumu/ayarlar\n"
         "• /stats → 30G istatistik (örn: /stats AKBNK)\n"
@@ -1009,6 +1079,9 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• DATA_DIR: <code>{EFFECTIVE_DATA_DIR}</code>\n"
         f"• FILES: <code>{os.path.basename(PRICE_HISTORY_FILE)}</code>, <code>{os.path.basename(VOLUME_HISTORY_FILE)}</code>\n"
         f"• LAST_ALARM loaded: <b>{len(LAST_ALARM_TS)}</b>\n\n"
+        f"🌙 <b>Tomorrow</b>\n"
+        f"• ALTIN: Band≤<b>%{TOMORROW_MAX_BAND:.0f}</b> • VolRatio≥<b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b> • Max <b>{TOMORROW_MAX}</b>\n"
+        f"• ADAY: Band≤<b>%{CANDIDATE_MAX_BAND:.0f}</b> • VolRatio≥<b>{CANDIDATE_MIN_VOL_RATIO:.2f}x</b> • Max <b>{CANDIDATE_MAX}</b>\n\n"
         f"🐋 <b>Balina Devam</b>\n"
         f"• Enabled: <b>{'ON' if WHALE_ENABLED else 'OFF'}</b>\n"
         f"• Window: <b>{WHALE_START_HOUR:02d}:{WHALE_START_MIN:02d}–{WHALE_END_HOUR:02d}:{WHALE_END_MIN:02d}</b>\n"
@@ -1074,11 +1147,14 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     update_history_from_rows(rows)
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
+
     tom_rows = build_tomorrow_rows(rows)
-    # ✅ snapshot kaydet (faz2 balina bununla çalışıyor)
+    cand_rows = build_candidate_rows(rows, tom_rows)
+
+    # ✅ snapshot kaydet (faz2 balina bununla çalışıyor) -> ALTIN üzerinden
     save_tomorrow_snapshot(tom_rows, xu_change)
 
-    msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
+    msg = build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1278,12 +1354,14 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         update_history_from_rows(rows)
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
-        tom_rows = build_tomorrow_rows(rows)
 
-        # ✅ snapshot kaydet
+        tom_rows = build_tomorrow_rows(rows)
+        cand_rows = build_candidate_rows(rows, tom_rows)
+
+        # ✅ snapshot kaydet (ALTIN üzerinden)
         save_tomorrow_snapshot(tom_rows, xu_change)
 
-        msg = build_tomorrow_message(tom_rows, xu_close, xu_change, thresh_s)
+        msg = build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s)
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
             text=msg,
