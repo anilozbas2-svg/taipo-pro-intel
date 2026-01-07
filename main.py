@@ -5,7 +5,6 @@ import time
 import json
 import logging
 import asyncio
-import statistics
 from datetime import datetime, timedelta, time as dtime, date
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Any, Tuple, Optional
@@ -15,13 +14,14 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+
 # -----------------------------
 # Config
 # -----------------------------
 BOT_VERSION = os.getenv(
     "BOT_VERSION",
-    "v1.8.0-premium-regime-gated-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable"
-).strip() or "v1.8.0-premium-regime-gated-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable"
+    "v1.7.0-premium-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable-rejim"
+).strip() or "v1.7.0-premium-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable-rejim"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -61,81 +61,71 @@ VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))
 
 # Disk / arşiv
 DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
-HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "400"))  # 400 trading-day hedefi
+HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "400"))
 ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))  # alarm mesajında kaç hisse için not üretelim
 
 # Tomorrow list filtreleri (PRO) - ALTIN LISTE
-TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))  # “altın liste” default 12
-TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))  # bugün/ort hacim >= 1.20x
-TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))  # Band % <= 65 (tepeye yakınları ele)
+TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))
+TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))
+TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
 
-# -----------------------------
 # Candidate list (ADAY) filtreleri
-# -----------------------------
-CANDIDATE_MAX = int(os.getenv("CANDIDATE_MAX", "20"))  # aday liste kaç hisse (default 20)
-CANDIDATE_MIN_VOL_RATIO = float(os.getenv("CANDIDATE_MIN_VOL_RATIO", "1.10"))  # daha yumuşak
-CANDIDATE_MAX_BAND = float(os.getenv("CANDIDATE_MAX_BAND", "75"))              # daha geniş
+CANDIDATE_MAX = int(os.getenv("CANDIDATE_MAX", "20"))
+CANDIDATE_MIN_VOL_RATIO = float(os.getenv("CANDIDATE_MIN_VOL_RATIO", "1.10"))
+CANDIDATE_MAX_BAND = float(os.getenv("CANDIDATE_MAX_BAND", "75"))
 CANDIDATE_INCLUDE_AYRISMA = os.getenv("CANDIDATE_INCLUDE_AYRISMA", "0").strip() == "1"
 
-# ✅ Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
+# Torpil Modu (yalnızca disk veri azken, otomatik kapanır)
 TORPIL_ENABLED = os.getenv("TORPIL_ENABLED", "1").strip() == "1"
-TORPIL_MIN_SAMPLES = int(os.getenv("TORPIL_MIN_SAMPLES", "10"))  # sample <10 ise torpil devreye girer
-TORPIL_MIN_VOL_RATIO = float(os.getenv("TORPIL_MIN_VOL_RATIO", "1.05"))  # torpil: 1.05x
-TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))  # torpil: %75
+TORPIL_MIN_SAMPLES = int(os.getenv("TORPIL_MIN_SAMPLES", "10"))
+TORPIL_MIN_VOL_RATIO = float(os.getenv("TORPIL_MIN_VOL_RATIO", "1.05"))
+TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))
 
-# ✅ Yahoo bootstrap (1 defalık geçmiş doldurma)
+# Yahoo bootstrap (1 defalık geçmiş doldurma)
 BOOTSTRAP_ON_START = os.getenv("BOOTSTRAP_ON_START", "1").strip() == "1"
 BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "400"))
 BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"
 YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
 YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))  # rate-limit için mini sleep
 
-# -----------------------------
 # 🐋 Faz 2: Balina Devam Alarmı
-# -----------------------------
 WHALE_ENABLED = os.getenv("WHALE_ENABLED", "1").strip() == "1"
 WHALE_INTERVAL_MIN = int(os.getenv("WHALE_INTERVAL_MIN", "30"))
-
 WHALE_START_HOUR = int(os.getenv("WHALE_START_HOUR", "10"))
 WHALE_START_MIN = int(os.getenv("WHALE_START_MIN", "5"))
 WHALE_END_HOUR = int(os.getenv("WHALE_END_HOUR", "11"))
-WHALE_END_MIN = int(os.getenv("WHALE_END_HOUR", "30"))
+WHALE_END_MIN = int(os.getenv("WHALE_END_MIN", "30"))
 
-# Dün ALTIN listeye girmiş hisse için bugün koşullar:
-WHALE_MIN_VOL_RATIO = float(os.getenv("WHALE_MIN_VOL_RATIO", "1.10"))   # bugün hacim / 30g ort >= 1.10x
+WHALE_MIN_VOL_RATIO = float(os.getenv("WHALE_MIN_VOL_RATIO", "1.10"))   # bugün hacim / arşiv ort >= 1.10x
 WHALE_MAX_DRAWDOWN_PCT = float(os.getenv("WHALE_MAX_DRAWDOWN_PCT", "-0.70"))  # bugün close, dün ref close'a göre -0.70% altına inmesin
 WHALE_INDEX_BONUS = os.getenv("WHALE_INDEX_BONUS", "1").strip() == "1"
-WHALE_MIN_POSITIVE_WHEN_INDEX_BAD = float(os.getenv("WHALE_MIN_POSITIVE_WHEN_INDEX_BAD", "0.30"))  # XU100 <=0 iken hisse +0.30%+ ise 🐋🐋
+WHALE_MIN_POSITIVE_WHEN_INDEX_BAD = float(os.getenv("WHALE_MIN_POSITIVE_WHEN_INDEX_BAD", "0.30"))
 
 # -----------------------------
-# ✅ REJIM MODU (Regime-based Trading)
+# ✅ REJİM MODU (Endeks + Hacim + Volatilite + Gap)
 # -----------------------------
 REJIM_ENABLED = os.getenv("REJIM_ENABLED", "1").strip() == "1"
-REJIM_LOOKBACK = int(os.getenv("REJIM_LOOKBACK", "50"))  # vol/trend lookback
-REJIM_VOL_HIGH = float(os.getenv("REJIM_VOL_HIGH", "1.60"))  # günlük std*100 ölçeği
+REJIM_LOOKBACK = int(os.getenv("REJIM_LOOKBACK", "50"))  # XU100 geçmiş gün sayısı
+REJIM_VOL_HIGH = float(os.getenv("REJIM_VOL_HIGH", "1.80"))  # günlük % değişim std eşiği (yaklaşık)
 REJIM_TREND_SMA_FAST = int(os.getenv("REJIM_TREND_SMA_FAST", "20"))
 REJIM_TREND_SMA_SLOW = int(os.getenv("REJIM_TREND_SMA_SLOW", "50"))
+REJIM_GAP_PCT = float(os.getenv("REJIM_GAP_PCT", "1.20"))  # XU100 gap eşiği (%)
+REJIM_PREV_DAY_BAD = float(os.getenv("REJIM_PREV_DAY_BAD", "-1.00"))  # bir önceki gün <= -1.00 ise risk artar
+REJIM_BLOCK_ON = [x.strip().upper() for x in os.getenv("REJIM_BLOCK_ON", "RISK_OFF").split(",") if x.strip()]
 
-# REJIM_BLOCK_ON = RISK_OFF,CHOP gibi
-REJIM_BLOCK_ON_RAW = os.getenv("REJIM_BLOCK_ON", "RISK_OFF").strip()
-REJIM_BLOCK_ON = [x.strip().upper() for x in REJIM_BLOCK_ON_RAW.split(",") if x.strip()]
+# Gate davranışları:
+REJIM_GATE_ALARM = os.getenv("REJIM_GATE_ALARM", "1").strip() == "1"
+REJIM_GATE_TOMORROW = os.getenv("REJIM_GATE_TOMORROW", "1").strip() == "1"
+REJIM_GATE_RADAR = os.getenv("REJIM_GATE_RADAR", "1").strip() == "1"
+REJIM_GATE_EOD = os.getenv("REJIM_GATE_EOD", "0").strip() == "1"  # EOD genelde rapor, kapatma isteğe bağlı
 
-# Gap eşik (yüzde)
-REJIM_GAP_PCT = float(os.getenv("REJIM_GAP_PCT", "1.00"))
-# Endeks kötü gün eşiği (dün sert eksi) - isteğe bağlı
-REJIM_PREV_DAY_BAD = float(os.getenv("REJIM_PREV_DAY_BAD", "-1.20"))  # -1.2% altı "sert eksi" say
-
-# Rejim gate davranışı:
-#  - BLOCKED ise /alarm job sinyal göndermez
-#  - /tomorrow listesi boş basılır (sadece rejim yazılır)
-#  - /radar tabloda sinyaller temizlenir (şeffaflık için rejim satırı yazılır)
-#  - /eod rapor yine çıkar ama rejim BLOCK ise "bilgilendirme" modunda kalır
-
-# In-memory cooldown store (persisted to disk): { "TICKER": last_sent_unix }
+# -----------------------------
+# In-memory stores
+# -----------------------------
 LAST_ALARM_TS: Dict[str, float] = {}
-# Whale daily once store: { "YYYY-MM-DD": 1 }
 WHALE_SENT_DAY: Dict[str, int] = {}
+
 
 # -----------------------------
 # Helpers
@@ -149,11 +139,13 @@ def env_csv(name: str, default: str = "") -> List[str]:
         return []
     return [p.strip().upper() for p in raw.split(",") if p.strip()]
 
+
 def env_csv_fallback(primary: str, fallback: str, default: str = "") -> List[str]:
     lst = env_csv(primary, default)
     if lst:
         return lst
     return env_csv(fallback, default)
+
 
 def normalize_is_ticker(t: str) -> str:
     t = t.strip().upper()
@@ -167,11 +159,13 @@ def normalize_is_ticker(t: str) -> str:
         base = base[:-3]
     return f"BIST:{base}"
 
+
 def safe_float(x: Any) -> float:
     try:
         return float(x)
     except Exception:
         return float("nan")
+
 
 def format_volume(v: Any) -> str:
     try:
@@ -188,11 +182,14 @@ def format_volume(v: Any) -> str:
         return f"{n/1_000:.0f}K"
     return f"{n:.0f}"
 
+
 def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
     return [lst[i:i + size] for i in range(0, len(lst), size)]
 
+
 def now_tr() -> datetime:
     return datetime.now(tz=TZ)
+
 
 def next_aligned_run(minutes: int) -> datetime:
     n = now_tr()
@@ -204,17 +201,20 @@ def next_aligned_run(minutes: int) -> datetime:
         return nn
     return n.replace(second=0, microsecond=0, minute=next_m)
 
+
 def within_alarm_window(dt: datetime) -> bool:
     start = dtime(ALARM_START_HOUR, ALARM_START_MIN)
     end = dtime(ALARM_END_HOUR, ALARM_END_MIN)
     t = dt.timetz().replace(tzinfo=None)
     return start <= t <= end
 
+
 def within_whale_window(dt: datetime) -> bool:
     start = dtime(WHALE_START_HOUR, WHALE_START_MIN)
     end = dtime(WHALE_END_HOUR, WHALE_END_MIN)
     t = dt.timetz().replace(tzinfo=None)
     return start <= t <= end
+
 
 def st_short(sig_text: str) -> str:
     if sig_text == "TOPLAMA":
@@ -225,24 +225,10 @@ def st_short(sig_text: str) -> str:
         return "AYR"
     if sig_text == "KÂR KORUMA":
         return "KAR"
+    if sig_text == "REJIM BLOK":
+        return "BLK"
     return ""
 
-def sma(values: List[float], window: int) -> Optional[float]:
-    if window <= 1 or len(values) < window:
-        return None
-    x = values[-window:]
-    if not x:
-        return None
-    return float(sum(x) / len(x))
-
-def std_pct(values: List[float]) -> float:
-    # günlük getiri std * 100 (annualize değil)
-    if len(values) < 5:
-        return float("nan")
-    try:
-        return float(statistics.pstdev(values) * 100.0)
-    except Exception:
-        return float("nan")
 
 # -----------------------------
 # ✅ Trading-day key
@@ -254,6 +240,7 @@ def prev_business_day(d: date) -> date:
         if dd.weekday() < 5:
             return dd
 
+
 def trading_day_for_snapshot(dt: datetime) -> date:
     if dt.weekday() == 5:  # Sat
         return (dt.date() - timedelta(days=1))
@@ -263,13 +250,16 @@ def trading_day_for_snapshot(dt: datetime) -> date:
         return prev_business_day(dt.date())
     return dt.date()
 
+
 def today_key_tradingday() -> str:
     return trading_day_for_snapshot(now_tr()).strftime("%Y-%m-%d")
+
 
 def yesterday_key_tradingday() -> str:
     td = trading_day_for_snapshot(now_tr())
     y = prev_business_day(td)
     return y.strftime("%Y-%m-%d")
+
 
 # -----------------------------
 # Disk storage
@@ -287,19 +277,15 @@ def _ensure_data_dir() -> str:
         os.makedirs(fallback, exist_ok=True)
         return fallback
 
+
 EFFECTIVE_DATA_DIR = _ensure_data_dir()
 PRICE_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "price_history.json")
 VOLUME_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "volume_history.json")
+INDEX_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "index_history.json")  # ✅ XU100 daily
 LAST_ALARM_FILE = os.path.join(EFFECTIVE_DATA_DIR, "last_alarm_ts.json")
-
-# Index (XU100) history for regime
-INDEX_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "index_history.json")
-
-# Tomorrow snapshot (ALTIN LISTE cache)
 TOMORROW_SNAPSHOT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "tomorrow_snapshot.json")
-
-# Whale "sent today" cache
 WHALE_SENT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "whale_sent_day.json")
+
 
 def _load_json(path: str) -> Dict[str, Any]:
     try:
@@ -311,6 +297,7 @@ def _load_json(path: str) -> Dict[str, Any]:
         logger.warning("History load failed (%s): %s", path, e)
         return {}
 
+
 def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
     try:
         tmp = path + ".tmp"
@@ -319,6 +306,7 @@ def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
         os.replace(tmp, path)
     except Exception as e:
         logger.warning("History write failed (%s): %s", path, e)
+
 
 def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
     if not isinstance(d, dict):
@@ -330,6 +318,7 @@ def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
     for k in cut:
         d.pop(k, None)
     return d
+
 
 def load_last_alarm_ts() -> None:
     global LAST_ALARM_TS
@@ -344,12 +333,14 @@ def load_last_alarm_ts() -> None:
     LAST_ALARM_TS = out
     logger.info("Loaded LAST_ALARM_TS: %d tickers", len(LAST_ALARM_TS))
 
+
 def save_last_alarm_ts() -> None:
     try:
         data = {k: float(v) for k, v in (LAST_ALARM_TS or {}).items()}
         _atomic_write_json(LAST_ALARM_FILE, data)
     except Exception as e:
         logger.warning("save_last_alarm_ts failed: %s", e)
+
 
 def load_whale_sent_day() -> None:
     global WHALE_SENT_DAY
@@ -367,55 +358,13 @@ def load_whale_sent_day() -> None:
     WHALE_SENT_DAY = out
     logger.info("Loaded WHALE_SENT_DAY: %d days", len(WHALE_SENT_DAY))
 
+
 def save_whale_sent_day() -> None:
     try:
         _atomic_write_json(WHALE_SENT_FILE, WHALE_SENT_DAY or {})
     except Exception as e:
         logger.warning("save_whale_sent_day failed: %s", e)
 
-def update_index_history(day_key: str, xu_close: float, xu_change: float, xu_vol: float, xu_open: float) -> None:
-    try:
-        hist = _load_json(INDEX_HISTORY_FILE)
-        if not isinstance(hist, dict):
-            hist = {}
-        hist.setdefault(day_key, {})
-        # tek kayıt
-        hist[day_key] = {
-            "close": float(xu_close) if xu_close == xu_close else None,
-            "change": float(xu_change) if xu_change == xu_change else None,
-            "volume": float(xu_vol) if xu_vol == xu_vol else None,
-            "open": float(xu_open) if xu_open == xu_open else None,
-            "saved_at": now_tr().isoformat(),
-        }
-        _prune_days(hist, max(HISTORY_DAYS, 420))
-        _atomic_write_json(INDEX_HISTORY_FILE, hist)
-    except Exception as e:
-        logger.warning("update_index_history failed: %s", e)
-
-def get_index_series(lookback: int) -> Dict[str, Any]:
-    hist = _load_json(INDEX_HISTORY_FILE)
-    if not isinstance(hist, dict) or not hist:
-        return {"days": [], "closes": [], "changes": [], "volumes": [], "opens": []}
-    days = sorted(hist.keys())
-    days = days[-max(5, lookback):]
-    closes: List[float] = []
-    changes: List[float] = []
-    vols: List[float] = []
-    opens: List[float] = []
-    out_days: List[str] = []
-    for d in days:
-        rec = hist.get(d, {}) if isinstance(hist.get(d, {}), dict) else {}
-        c = safe_float(rec.get("close"))
-        ch = safe_float(rec.get("change"))
-        v = safe_float(rec.get("volume"))
-        op = safe_float(rec.get("open"))
-        if c == c:
-            closes.append(c)
-            out_days.append(d)
-            changes.append(ch if ch == ch else float("nan"))
-            vols.append(v if v == v else float("nan"))
-            opens.append(op if op == op else float("nan"))
-    return {"days": out_days, "closes": closes, "changes": changes, "volumes": vols, "opens": opens}
 
 def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     if not rows:
@@ -444,8 +393,160 @@ def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     _atomic_write_json(PRICE_HISTORY_FILE, price_hist)
     _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
 
+
+# -----------------------------
+# ✅ Index (XU100) history + regime
+# -----------------------------
+def update_index_history(day_key: str, close: float, change: float, volume: float, open_: float) -> None:
+    try:
+        d = _load_json(INDEX_HISTORY_FILE)
+        if not isinstance(d, dict):
+            d = {}
+        d.setdefault(day_key, {})
+        d[day_key] = {
+            "close": float(close) if close == close else None,
+            "change": float(change) if change == change else None,
+            "volume": float(volume) if volume == volume else None,
+            "open": float(open_) if open_ == open_ else None,
+            "saved_at": now_tr().isoformat(),
+        }
+        _prune_days(d, max(HISTORY_DAYS, REJIM_LOOKBACK + 10))
+        _atomic_write_json(INDEX_HISTORY_FILE, d)
+    except Exception as e:
+        logger.warning("update_index_history failed: %s", e)
+
+
+def _sma(vals: List[float], n: int) -> float:
+    if n <= 0 or len(vals) < n:
+        return float("nan")
+    s = sum(vals[-n:])
+    return s / float(n)
+
+
+def _std(vals: List[float]) -> float:
+    if len(vals) < 5:
+        return float("nan")
+    m = sum(vals) / len(vals)
+    v = sum((x - m) ** 2 for x in vals) / (len(vals) - 1)
+    return math.sqrt(v)
+
+
+def compute_regime(xu_close: float, xu_change: float, xu_vol: float, xu_open: float) -> Dict[str, Any]:
+    """
+    Rejim: Endeks yön + volatilite + gap + (opsiyonel) “kötü önceki gün” filtresi
+    """
+    reg = {
+        "enabled": REJIM_ENABLED,
+        "name": "UNKNOWN",
+        "block": False,
+        "reason": "",
+        "volatility": float("nan"),
+        "gap_pct": float("nan"),
+        "trend": "n/a",
+    }
+    if not REJIM_ENABLED:
+        reg["name"] = "OFF"
+        return reg
+
+    # Gap: (open / prev_close - 1)*100
+    idx_hist = _load_json(INDEX_HISTORY_FILE)
+    keys = sorted(idx_hist.keys()) if isinstance(idx_hist, dict) else []
+    closes: List[float] = []
+    changes: List[float] = []
+    prev_close = float("nan")
+    prev_change = float("nan")
+
+    # collect last lookback closes/changes
+    for k in keys[-max(10, REJIM_LOOKBACK + 3):]:
+        item = idx_hist.get(k, {})
+        c = safe_float(item.get("close"))
+        ch = safe_float(item.get("change"))
+        if c == c:
+            closes.append(float(c))
+        if ch == ch:
+            changes.append(float(ch))
+
+    if len(closes) >= 2:
+        prev_close = closes[-2]
+    if len(changes) >= 2:
+        prev_change = changes[-2]
+
+    if (xu_open == xu_open) and (prev_close == prev_close) and prev_close > 0:
+        reg["gap_pct"] = (xu_open / prev_close - 1.0) * 100.0
+
+    # Volatility proxy: std of last N daily % changes
+    look_changes = changes[-REJIM_LOOKBACK:] if len(changes) >= 5 else []
+    reg["volatility"] = _std(look_changes) if look_changes else float("nan")
+
+    # Trend: SMA fast/slow on closes
+    fast = _sma(closes, REJIM_TREND_SMA_FAST)
+    slow = _sma(closes, REJIM_TREND_SMA_SLOW)
+    trend = "n/a"
+    if fast == fast and slow == slow:
+        if fast > slow and xu_close > slow:
+            trend = "UP"
+        elif fast < slow and xu_close < slow:
+            trend = "DOWN"
+        else:
+            trend = "SIDE"
+    reg["trend"] = trend
+
+    vol_hi = (reg["volatility"] == reg["volatility"]) and (reg["volatility"] >= REJIM_VOL_HIGH)
+    gap_down_risk = (reg["gap_pct"] == reg["gap_pct"]) and (reg["gap_pct"] <= -abs(REJIM_GAP_PCT))
+    prev_day_bad = (prev_change == prev_change) and (prev_change <= REJIM_PREV_DAY_BAD)
+
+    # Regime naming
+    if gap_down_risk and prev_day_bad:
+        reg["name"] = "RISK_OFF"
+        reg["reason"] = f"GAP_DOWN({reg['gap_pct']:+.2f}%) + PREV_BAD({prev_change:+.2f}%)"
+    elif trend == "DOWN" and (xu_change == xu_change and xu_change < 0) and (vol_hi or (xu_change <= -1.50)):
+        reg["name"] = "RISK_OFF"
+        reg["reason"] = f"DOWN + VOL({reg['volatility']:.2f})"
+    elif trend == "UP" and (xu_change == xu_change and xu_change > 0.0) and not vol_hi:
+        reg["name"] = "TREND_UP"
+        reg["reason"] = "UP + normal vol"
+    elif vol_hi or (xu_change == xu_change and abs(xu_change) >= 2.20):
+        reg["name"] = "VOLATILE"
+        reg["reason"] = "High vol"
+    else:
+        reg["name"] = "CHOP"
+        reg["reason"] = "Side / mixed"
+
+    reg["block"] = (reg["name"].upper() in (REJIM_BLOCK_ON or []))
+    return reg
+
+
+def format_regime_line(reg: Dict[str, Any]) -> str:
+    if not reg or not reg.get("enabled", False):
+        return "🧭 <b>Rejim</b>: <b>OFF</b>"
+    nm = reg.get("name", "n/a")
+    tr = reg.get("trend", "n/a")
+    vol = reg.get("volatility", float("nan"))
+    gap = reg.get("gap_pct", float("nan"))
+    vol_s = "n/a" if vol != vol else f"{vol:.2f}"
+    gap_s = "n/a" if gap != gap else f"{gap:+.2f}%"
+    blk = "⛔️ BLOK" if reg.get("block") else "✅ OK"
+    rsn = reg.get("reason", "")
+    rsn_s = f" • <i>{rsn}</i>" if rsn else ""
+    return f"🧭 <b>Rejim</b>: <b>{nm}</b> (trend={tr}, vol={vol_s}, gap={gap_s}) • <b>{blk}</b>{rsn_s}"
+
+
+def apply_regime_gate_to_rows(rows: List[Dict[str, Any]], reg: Dict[str, Any]) -> None:
+    """
+    Gate açık ve bloklu rejimde: sinyalleri kapatır, tetiklemeyi engeller.
+    """
+    if not REJIM_ENABLED or not reg or not reg.get("block"):
+        return
+    for r in rows:
+        # sinyal kapat
+        r["signal"] = "⛔"
+        r["signal_text"] = "REJIM BLOK"
+
+
+# -----------------------------
+# Stats (ticker) over HISTORY_DAYS
+# -----------------------------
 def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
-    # NOTE: adı 30d kaldı ama HISTORY_DAYS kadar veri üzerinde çalışır.
     t = (ticker or "").strip().upper()
     if not t:
         return None
@@ -507,6 +608,7 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
         "samples_vol": len(vols),
     }
 
+
 def soft_plan_line(stats: Dict[str, Any], current_close: float) -> str:
     if not stats:
         return "Plan: Veri yetersiz (arşiv dolsun)."
@@ -532,6 +634,7 @@ def soft_plan_line(stats: Dict[str, Any], current_close: float) -> str:
         vol_tag = "Hacim n/a"
     return f"{band_tag} | {vol_tag} | {base_plan}"
 
+
 def format_30d_note(ticker: str, current_close: float) -> str:
     st = compute_30d_stats(ticker)
     if not st:
@@ -547,17 +650,15 @@ def format_30d_note(ticker: str, current_close: float) -> str:
         f"  ↳ <i>{plan}</i>"
     )
 
+
 # -----------------------------
 # TradingView Scanner
 # -----------------------------
 def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
-    # ✅ open'ı da çekmeyi deniyoruz (gap için)
-    payload = {
-        "symbols": {"tickers": symbols},
-        "columns": ["open", "close", "change", "volume"]
-    }
+    # close, change, volume, open
+    payload = {"symbols": {"tickers": symbols}, "columns": ["close", "change", "volume", "open"]}
     for attempt in range(3):
         try:
             r = requests.post(TV_SCAN_URL, json=payload, timeout=TV_TIMEOUT)
@@ -574,10 +675,10 @@ def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     continue
                 short = sym.split(":")[-1].strip().upper()
                 out[short] = {
-                    "open": safe_float(d[0]),
-                    "close": safe_float(d[1]),
-                    "change": safe_float(d[2]),
-                    "volume": safe_float(d[3]),
+                    "close": safe_float(d[0]),
+                    "change": safe_float(d[1]),
+                    "volume": safe_float(d[2]),
+                    "open": safe_float(d[3]),
                 }
             return out
         except Exception as e:
@@ -585,8 +686,10 @@ def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             time.sleep(1.0 * (attempt + 1))
     return {}
 
+
 async def tv_scan_symbols(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     return await asyncio.to_thread(tv_scan_symbols_sync, symbols)
+
 
 async def get_xu100_summary() -> Tuple[float, float, float, float]:
     m = await tv_scan_symbols(["BIST:XU100"])
@@ -598,6 +701,7 @@ async def get_xu100_summary() -> Tuple[float, float, float, float]:
         d.get("open", float("nan")),
     )
 
+
 async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
     tv_symbols = [normalize_is_ticker(t) for t in is_list if t.strip()]
     tv_map = await tv_scan_symbols(tv_symbols)
@@ -606,198 +710,11 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
         short = normalize_is_ticker(original).split(":")[-1]
         d = tv_map.get(short, {})
         if not d:
-            rows.append({"ticker": short, "open": float("nan"), "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-", "signal_text": ""})
+            rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-", "signal_text": ""})
         else:
-            rows.append({"ticker": short, "open": d.get("open", float("nan")), "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-", "signal_text": ""})
+            rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-", "signal_text": ""})
     return rows
 
-# -----------------------------
-# ✅ REJIM Hesaplama (Index/Volume/Gap/Volatility/Trend)
-# -----------------------------
-def pct_change(a: float, b: float) -> float:
-    if b == 0 or a != a or b != b:
-        return float("nan")
-    return (a / b - 1.0) * 100.0
-
-def compute_gap_pct(today_open: float, prev_close: float) -> float:
-    if today_open != today_open or prev_close != prev_close or prev_close == 0:
-        return float("nan")
-    return ((today_open / prev_close) - 1.0) * 100.0
-
-def compute_regime(xu_close: float, xu_change: float, xu_vol: float, xu_open: float) -> Dict[str, Any]:
-    """
-    R1 = TREND (güçlü gün)
-    R2 = CHOP (kararsız)
-    R3 = RISK_OFF (gap/vol spike/sert eksi vb)
-    """
-    # varsayılan
-    out = {
-        "enabled": REJIM_ENABLED,
-        "regime": "UNKNOWN",
-        "label": "UNKNOWN",
-        "blocked": False,
-        "reasons": [],
-        "metrics": {
-            "trend": None,
-            "vol_ratio": None,
-            "gap_pct": None,
-            "volatility": None,
-            "prev_day_change": None,
-        }
-    }
-    if not REJIM_ENABLED:
-        out["regime"] = "OFF"
-        out["label"] = "OFF"
-        out["blocked"] = False
-        return out
-
-    series = get_index_series(REJIM_LOOKBACK)
-    closes = series.get("closes", [])
-    changes = series.get("changes", [])
-    vols = series.get("volumes", [])
-    opens = series.get("opens", [])
-    days = series.get("days", [])
-
-    # bugünün kaydı hist'e düşmemişse (ilk çağrı), closes listesinde olmayabilir.
-    # ama compute_regime genelde "get_xu100_summary + update_index_history" sonrası çağrılır.
-    # yine de korumalı çalışır.
-
-    # Trend SMA
-    sma_fast = sma(closes, REJIM_TREND_SMA_FAST) if closes else None
-    sma_slow = sma(closes, REJIM_TREND_SMA_SLOW) if closes else None
-    trend_up = None
-    if sma_fast is not None and sma_slow is not None:
-        trend_up = bool(sma_fast > sma_slow)
-
-    # Volume ratio (today vs avg lookback)
-    vol_ratio = float("nan")
-    if xu_vol == xu_vol and vols and len(vols) >= 5:
-        clean = [v for v in vols if v == v and v > 0]
-        if len(clean) >= 5:
-            avg_v = sum(clean) / len(clean)
-            if avg_v > 0:
-                vol_ratio = xu_vol / avg_v
-
-    # Volatility: std of daily returns
-    rets: List[float] = []
-    if closes and len(closes) >= 6:
-        for i in range(1, len(closes)):
-            prev = closes[i - 1]
-            cur = closes[i]
-            if prev == 0:
-                continue
-            r = (cur / prev) - 1.0
-            if r == r:
-                rets.append(r)
-    vol_std = std_pct(rets) if rets else float("nan")
-
-    # Prev day change (yesterday)
-    prev_day_change = float("nan")
-    if changes and len(changes) >= 2:
-        prev_day_change = changes[-2] if changes[-2] == changes[-2] else float("nan")
-
-    # Gap (today open vs prev close)
-    gap_pct = float("nan")
-    prev_close = float("nan")
-    if closes and len(closes) >= 2:
-        prev_close = closes[-2]
-    # open yoksa hist'ten de almayı dene
-    today_open = xu_open
-    if today_open != today_open and opens and len(opens) >= 1:
-        today_open = opens[-1]
-    if prev_close == prev_close and today_open == today_open:
-        gap_pct = compute_gap_pct(today_open, prev_close)
-
-    out["metrics"]["trend"] = "UP" if trend_up else ("DOWN" if trend_up is False else None)
-    out["metrics"]["vol_ratio"] = float(vol_ratio) if vol_ratio == vol_ratio else None
-    out["metrics"]["gap_pct"] = float(gap_pct) if gap_pct == gap_pct else None
-    out["metrics"]["volatility"] = float(vol_std) if vol_std == vol_std else None
-    out["metrics"]["prev_day_change"] = float(prev_day_change) if prev_day_change == prev_day_change else None
-
-    # ---- Rejim kararı (A,B,C,D = Endeks/Trend, Hacim, Gap, Volatilite) ----
-    risk_triggers = []
-
-    # C: Gap
-    if gap_pct == gap_pct and abs(gap_pct) >= REJIM_GAP_PCT:
-        risk_triggers.append(f"Gap {gap_pct:+.2f}% ≥ {REJIM_GAP_PCT:.2f}%")
-
-    # D: Volatilite
-    if vol_std == vol_std and vol_std >= REJIM_VOL_HIGH:
-        risk_triggers.append(f"Vol {vol_std:.2f} ≥ {REJIM_VOL_HIGH:.2f}")
-
-    # Önceki gün sert eksi
-    if prev_day_change == prev_day_change and prev_day_change <= REJIM_PREV_DAY_BAD:
-        risk_triggers.append(f"Dün {prev_day_change:+.2f}% ≤ {REJIM_PREV_DAY_BAD:.2f}%")
-
-    # A: Endeks/Trend
-    # Trend gün: fast>slow ve bugün endeks + ise
-    trend_day = (trend_up is True) and (xu_change == xu_change) and (xu_change > 0)
-
-    # B: Hacim
-    vol_ok = (vol_ratio == vol_ratio) and (vol_ratio >= 1.0)  # çok agresif yapmadık, gate için yeter
-
-    if risk_triggers:
-        out["regime"] = "RISK_OFF"
-        out["label"] = "R3 – Riskli Gün"
-        out["reasons"] = risk_triggers
-    else:
-        if trend_day and vol_ok:
-            out["regime"] = "TREND"
-            out["label"] = "R1 – Trend/Güçlü Gün"
-            out["reasons"] = ["Endeks+Trend OK", f"Hacim ratio≈{vol_ratio:.2f}x" if vol_ratio == vol_ratio else "Hacim OK?"]
-        else:
-            out["regime"] = "CHOP"
-            out["label"] = "R2 – Kararsız/Chop"
-            rr = []
-            if trend_up is False:
-                rr.append("Trend zayıf (SMA fast <= slow)")
-            if xu_change == xu_change and abs(xu_change) < 0.25:
-                rr.append("Endeks yatay")
-            if vol_ratio == vol_ratio and vol_ratio < 1.0:
-                rr.append(f"Hacim zayıf ({vol_ratio:.2f}x)")
-            out["reasons"] = rr or ["Kararsız koşullar"]
-
-    out["blocked"] = out["regime"].upper() in REJIM_BLOCK_ON
-    return out
-
-def format_regime_line(reg: Dict[str, Any]) -> str:
-    if not reg:
-        return "🧭 <b>Rejim</b>: n/a"
-    if not reg.get("enabled", False):
-        return "🧭 <b>Rejim</b>: OFF"
-    label = reg.get("label", "UNKNOWN")
-    blocked = reg.get("blocked", False)
-    gate = "🚫 <b>GATE: BLOCK</b>" if blocked else "✅ <b>GATE: OPEN</b>"
-    m = reg.get("metrics", {}) or {}
-    gap = m.get("gap_pct", None)
-    vol = m.get("volatility", None)
-    vr = m.get("vol_ratio", None)
-    tr = m.get("trend", None)
-    pd = m.get("prev_day_change", None)
-    gap_s = "n/a" if gap is None else f"{gap:+.2f}%"
-    vol_s = "n/a" if vol is None else f"{vol:.2f}"
-    vr_s = "n/a" if vr is None else f"{vr:.2f}x"
-    tr_s = "n/a" if tr is None else tr
-    pd_s = "n/a" if pd is None else f"{pd:+.2f}%"
-    rs = reg.get("reasons", []) or []
-    why = " • ".join(rs[:3]) if rs else "-"
-    return (
-        f"🧭 <b>Rejim</b>: <b>{label}</b> | {gate}\n"
-        f"   ↳ Trend:{tr_s} • VolRatio:{vr_s} • Gap:{gap_s} • Volatilite:{vol_s} • Dün:{pd_s}\n"
-        f"   ↳ <i>{why}</i>"
-    )
-
-def apply_regime_gate_to_rows(rows: List[Dict[str, Any]], reg: Dict[str, Any]) -> None:
-    if not rows:
-        return
-    if not reg or not reg.get("enabled", False):
-        return
-    if not reg.get("blocked", False):
-        return
-    # Gate BLOCK → sinyalleri kapat
-    for r in rows:
-        r["signal"] = "-"
-        r["signal_text"] = ""
 
 # -----------------------------
 # Signal logic (TopN threshold)
@@ -811,10 +728,12 @@ def compute_volume_threshold(rows: List[Dict[str, Any]], top_n: int) -> float:
     top = ranked[:n]
     return float(top[-1]["volume"]) if top else float("inf")
 
+
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float, top_n: int) -> float:
     threshold = compute_volume_threshold(rows, top_n)
     _apply_signals_with_threshold(rows, xu100_change, threshold)
     return threshold
+
 
 def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: float, min_vol_threshold: float) -> None:
     for r in rows:
@@ -829,10 +748,14 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
             r["signal_text"] = "KÂR KORUMA"
             continue
         in_topN = (vol == vol) and (vol >= min_vol_threshold)
+
+        # Endeks kötü iken ayrışma
         if in_topN and (xu100_change == xu100_change) and (xu100_change <= -0.80) and (ch >= 0.40):
             r["signal"] = "🧠"
             r["signal_text"] = "AYRIŞMA"
             continue
+
+        # Toplama / Dip Toplama
         if in_topN and (0.00 <= ch <= 0.60):
             r["signal"] = "🧠"
             r["signal_text"] = "TOPLAMA"
@@ -841,17 +764,19 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
             r["signal"] = "🧲"
             r["signal_text"] = "DİP TOPLAMA"
             continue
+
         r["signal"] = "-"
         r["signal_text"] = ""
+
 
 # -----------------------------
 # Table view
 # -----------------------------
 def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = False) -> str:
     if include_kind:
-        header = f"{'HIS':<5} {'S':<1} {'K':<3} {'%':>5} {'FYT':>7} {'HCM':>6}"
+        header = f"{'HIS':<5} {'S':<1} {'K':<3} {'%':>6} {'FYT':>8} {'HCM':>6}"
     else:
-        header = f"{'HIS':<5} {'S':<1} {'%':>5} {'FYT':>7} {'HCM':>6}"
+        header = f"{'HIS':<5} {'S':<1} {'%':>6} {'FYT':>8} {'HCM':>6}"
     sep = "-" * len(header)
     lines = [title, "<pre>", header, sep]
     for r in rows:
@@ -865,11 +790,12 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
         vol_s = format_volume(vol)[:6]
         if include_kind:
             k = st_short(r.get("signal_text", ""))
-            lines.append(f"{t:<5} {sig:<1} {k:<3} {ch_s:>5} {cl_s:>7} {vol_s:>6}")
+            lines.append(f"{t:<5} {sig:<1} {k:<3} {ch_s:>6} {cl_s:>8} {vol_s:>6}")
         else:
-            lines.append(f"{t:<5} {sig:<1} {ch_s:>5} {cl_s:>7} {vol_s:>6}")
+            lines.append(f"{t:<5} {sig:<1} {ch_s:>6} {cl_s:>8} {vol_s:>6}")
     lines.append("</pre>")
     return "\n".join(lines)
+
 
 def parse_watch_args(args: List[str]) -> List[str]:
     if not args:
@@ -894,6 +820,7 @@ def parse_watch_args(args: List[str]) -> List[str]:
             uniq.append(t)
     return uniq
 
+
 # -----------------------------
 # ✅ Yahoo Bootstrap
 # -----------------------------
@@ -905,11 +832,11 @@ def _to_yahoo_symbol_bist(ticker: str) -> str:
         return t
     return f"{t}.IS"
 
+
 def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, float]]:
     sym = (symbol or "").strip()
     if not sym:
         return []
-    # ✅ 400 gün için 2y aralığı lazım
     if days > 365:
         rng = "2y"
     elif days > 180:
@@ -959,6 +886,7 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
             time.sleep(0.6 * (attempt + 1))
     return []
 
+
 def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, int]:
     if not tickers:
         return (0, 0)
@@ -993,6 +921,7 @@ def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, in
     _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
     return (filled, total_points)
 
+
 async def yahoo_bootstrap_if_needed() -> str:
     try:
         ph = _load_json(PRICE_HISTORY_FILE)
@@ -1014,6 +943,7 @@ async def yahoo_bootstrap_if_needed() -> str:
     except Exception as e:
         logger.exception("Bootstrap error: %s", e)
         return f"BOOTSTRAP hata: {e}"
+
 
 # -----------------------------
 # Tomorrow List (Kesin Liste) + Aday Liste
@@ -1037,6 +967,7 @@ def tomorrow_score(row: Dict[str, Any]) -> float:
     band_term = max(0.0, (70.0 - float(band)))
     return vol_term + band_term + kind_bonus
 
+
 def _tomorrow_thresholds_for(st: Dict[str, Any]) -> Tuple[float, float, bool]:
     if not TORPIL_ENABLED or not st:
         return (TOMORROW_MIN_VOL_RATIO, TOMORROW_MAX_BAND, False)
@@ -1044,6 +975,7 @@ def _tomorrow_thresholds_for(st: Dict[str, Any]) -> Tuple[float, float, bool]:
     if samples < TORPIL_MIN_SAMPLES:
         return (TORPIL_MIN_VOL_RATIO, TORPIL_MAX_BAND, True)
     return (TOMORROW_MIN_VOL_RATIO, TOMORROW_MAX_BAND, False)
+
 
 def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -1068,6 +1000,7 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out.sort(key=tomorrow_score, reverse=True)
     return out[:max(1, TOMORROW_MAX)]
 
+
 def build_candidate_rows(all_rows: List[Dict[str, Any]], gold_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     gold_set = set((r.get("ticker") or "").strip().upper() for r in (gold_rows or []))
     out: List[Dict[str, Any]] = []
@@ -1091,20 +1024,20 @@ def build_candidate_rows(all_rows: List[Dict[str, Any]], gold_rows: List[Dict[st
     out.sort(key=tomorrow_score, reverse=True)
     return out[:max(1, CANDIDATE_MAX)]
 
+
 def format_threshold(min_vol: float) -> str:
     if not isinstance(min_vol, (int, float)) or math.isnan(min_vol) or min_vol == float("inf"):
         return "n/a"
     return format_volume(min_vol)
+
 
 def build_tomorrow_message(
     gold_rows: List[Dict[str, Any]],
     cand_rows: List[Dict[str, Any]],
     xu_close: float,
     xu_change: float,
-    xu_vol: float,
-    xu_open: float,
     thresh_s: str,
-    reg: Dict[str, Any]
+    reg: Dict[str, Any],
 ) -> str:
     now_s = now_tr().strftime("%H:%M")
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
@@ -1132,10 +1065,6 @@ def build_tomorrow_message(
     if torpil_used_any:
         head += "🧩 <i>Torpil Modu: veri az olan hisselerde geçici yumuşatma aktif.</i>\n"
 
-    if reg.get("enabled", False) and reg.get("blocked", False):
-        # Gate BLOCK: Tomorrow listesi “sinyal yok” modunda
-        return head + "\n🚫 <b>REJİM GATE BLOCK</b> → Bugün liste üretmiyorum. (Yarın sabah tekrar değerlendir.)"
-
     gold_table = make_table(gold_rows, "✅ <b>ALTIN LİSTE (Kesin)</b>", include_kind=True) if gold_rows else "❌ <b>ALTIN LİSTE çıkmadı.</b>"
     cand_table = make_table(cand_rows, "🟦 <b>ADAY LİSTE (Radar)</b>", include_kind=True) if cand_rows else "— <b>ADAY LİSTE yok.</b>"
 
@@ -1160,8 +1089,8 @@ def build_tomorrow_message(
         "• +%2–%4 kademeli çıkış\n"
         "• Ters mum gelirse: disiplin (zarar büyütme yok)"
     )
-
     return head + "\n" + gold_table + "\n\n" + cand_table + "\n" + notes + foot
+
 
 def save_tomorrow_snapshot(rows: List[Dict[str, Any]], xu_change: float) -> None:
     try:
@@ -1191,6 +1120,7 @@ def save_tomorrow_snapshot(rows: List[Dict[str, Any]], xu_change: float) -> None
     except Exception as e:
         logger.warning("save_tomorrow_snapshot failed: %s", e)
 
+
 def load_yesterday_tomorrow_snapshot() -> List[Dict[str, Any]]:
     snap = _load_json(TOMORROW_SNAPSHOT_FILE)
     if not isinstance(snap, dict):
@@ -1198,6 +1128,7 @@ def load_yesterday_tomorrow_snapshot() -> List[Dict[str, Any]]:
     yk = yesterday_key_tradingday()
     items = snap.get(yk, [])
     return items if isinstance(items, list) else []
+
 
 # -----------------------------
 # Alarm message
@@ -1209,7 +1140,7 @@ def build_alarm_message(
     xu_change: float,
     thresh_s: str,
     top_n: int,
-    reg: Dict[str, Any]
+    reg: Dict[str, Any],
 ) -> str:
     now_s = now_tr().strftime("%H:%M")
     xu_close_s = "n/a" if (xu_close != xu_close) else f"{xu_close:,.2f}"
@@ -1228,7 +1159,7 @@ def build_alarm_message(
         f"🧱 <b>Top{top_n} Eşik</b>: ≥ <b>{thresh_s}</b>\n"
         f"🎯 <b>Tetiklenen</b>: {trig_s}\n"
     )
-    alarm_table = make_table(alarm_rows, "🔥 <b>ALARM RADAR (TOP/DIP)</b>", include_kind=True)
+    alarm_table = make_table(alarm_rows, "🔥 <b>ALARM RADAR</b>", include_kind=True)
     notes_lines = ["\n📌 <b>Arşiv Notlar (Disk)</b>"]
     for r in alarm_rows[:max(1, ALARM_NOTE_MAX)]:
         t = r.get("ticker", "")
@@ -1242,6 +1173,7 @@ def build_alarm_message(
         return head + "\n" + alarm_table + "\n" + notes + "\n\n" + watch_table + foot
     return head + "\n" + alarm_table + "\n" + notes + foot
 
+
 # -----------------------------
 # Alarm logic
 # -----------------------------
@@ -1251,9 +1183,11 @@ def can_send_alarm_for(ticker: str, now_ts: float) -> bool:
         return True
     return (now_ts - last) >= (ALARM_COOLDOWN_MIN * 60)
 
+
 def mark_alarm_sent(ticker: str, now_ts: float) -> None:
     if ticker:
         LAST_ALARM_TS[ticker] = now_ts
+
 
 def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     now_ts = time.time()
@@ -1274,6 +1208,7 @@ def filter_new_alarms(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     )
     return out
 
+
 # -----------------------------
 # 🐋 Whale logic
 # -----------------------------
@@ -1281,10 +1216,18 @@ def whale_already_sent_today() -> bool:
     k = today_key_tradingday()
     return int(WHALE_SENT_DAY.get(k, 0)) == 1
 
+
 def mark_whale_sent_today() -> None:
     k = today_key_tradingday()
     WHALE_SENT_DAY[k] = 1
     save_whale_sent_day()
+
+
+def pct_change(a: float, b: float) -> float:
+    if b == 0 or a != a or b != b:
+        return float("nan")
+    return (a / b - 1.0) * 100.0
+
 
 def build_whale_message(items: List[Dict[str, Any]], xu_close: float, xu_change: float, reg: Dict[str, Any]) -> str:
     now_s = now_tr().strftime("%H:%M")
@@ -1296,7 +1239,7 @@ def build_whale_message(items: List[Dict[str, Any]], xu_close: float, xu_change:
         f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
         f"{format_regime_line(reg)}\n"
         f"🧾 Referans: Dün ALTIN LİSTE (<code>{yk}</code>)\n"
-        f"🎯 Filtre: Hacim ≥ <b>{WHALE_MIN_VOL_RATIO:.2f}x</b> • Düşüş ≥ <b>{WHALE_MAX_DRAWDOWN_PCT:.2f}%</b> (korunmalı)\n"
+        f"🎯 Filtre: Hacim ≥ <b>{WHALE_MIN_VOL_RATIO:.2f}x</b> • Düşüş ≥ <b>{WHALE_MAX_DRAWDOWN_PCT:.2f}%</b>\n"
     )
     if not items:
         return head + "\n❌ <b>Bugün “balina devam” kriterine uyan hisse çıkmadı.</b>"
@@ -1314,6 +1257,7 @@ def build_whale_message(items: List[Dict[str, Any]], xu_close: float, xu_change:
         lines.append(f"{mark} <b>{t}</b> → Hacim: <b>{volr_s}</b> | Günlük: <b>{ch_s}</b> | Dün Ref’e göre: <b>{dd_s}</b>")
     lines.append("\n<i>Not: Bu alarm “dün seçilenlerin bugün de bırakılmadığını” yakalar. Spam yok → günde 1.</i>")
     return "\n".join(lines)
+
 
 # -----------------------------
 # Telegram Handlers
@@ -1335,15 +1279,19 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_help(update, context)
+
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"🏓 Pong! ({BOT_VERSION})")
 
+
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cid = update.effective_chat.id
     await update.message.reply_text(f"🧾 Chat ID: <code>{cid}</code>", parse_mode=ParseMode.HTML)
+
 
 async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (
@@ -1376,8 +1324,10 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"• GAP_PCT: <b>{REJIM_GAP_PCT:.2f}%</b>\n"
         f"• PREV_DAY_BAD: <b>{REJIM_PREV_DAY_BAD:.2f}%</b>\n"
         f"• BLOCK_ON: <code>{','.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>\n"
+        f"• Gate: alarm={int(REJIM_GATE_ALARM)} tomorrow={int(REJIM_GATE_TOMORROW)} radar={int(REJIM_GATE_RADAR)} eod={int(REJIM_GATE_EOD)}\n"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
@@ -1404,6 +1354,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
+
 async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     days = BOOTSTRAP_DAYS
     if context.args:
@@ -1424,6 +1375,7 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=ParseMode.HTML
     )
 
+
 async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
@@ -1431,8 +1383,6 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-
-    # ✅ index history kaydı → rejim bu veriye dayanır
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
@@ -1441,14 +1391,25 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
 
-    # Rejim gate: /tomorrow output’u içeride handle ediyor (blocked ise liste üretmiyor)
+    # ✅ Rejim gate
+    if REJIM_GATE_TOMORROW and reg.get("block"):
+        msg = (
+            f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b>\n"
+            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+            f"{format_regime_line(reg)}\n\n"
+            f"⛔️ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
+            f"• REJIM_BLOCK_ON: <code>{','.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        return
+
     tom_rows = build_tomorrow_rows(rows)
     cand_rows = build_candidate_rows(rows, tom_rows)
-
     save_tomorrow_snapshot(tom_rows, xu_change)
 
-    msg = build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, xu_vol, xu_open, thresh_s, reg)
+    msg = build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
@@ -1465,9 +1426,8 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     rows = await build_rows_from_is_list(watch)
     min_vol = compute_signal_rows(rows, xu_change, max(5, min(10, len(rows))))
-
-    # gate uygulanırsa watch sinyalleri de kapanır
-    apply_regime_gate_to_rows(rows, reg)
+    if REJIM_GATE_RADAR and reg.get("block"):
+        apply_regime_gate_to_rows(rows, reg)
 
     table = make_table(rows, f"👀 <b>WATCHLIST RADAR</b> • TopEşik≈<b>{format_threshold(min_vol)}</b>", include_kind=True)
     head = (
@@ -1476,6 +1436,7 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"{format_regime_line(reg)}\n"
     )
     await update.message.reply_text(head + "\n" + table, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
@@ -1506,7 +1467,8 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     thresh_s = format_threshold(min_vol)
 
     # ✅ Rejim gate: RADAR içindeki sinyalleri kapatır (bloklu gün)
-    apply_regime_gate_to_rows(rows, reg)
+    if REJIM_GATE_RADAR and reg.get("block"):
+        apply_regime_gate_to_rows(rows, reg)
 
     table = make_table(rows, f"📡 <b>BIST200 RADAR</b> • Sayfa {page}/{len(chunks)} • Top{VOLUME_TOP_N}≥<b>{thresh_s}</b>", include_kind=True)
     head = (
@@ -1516,23 +1478,32 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(head + "\n" + table, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
+
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
     await update.message.reply_text("⏳ EOD raporu hazırlanıyor...")
+
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+
+    if REJIM_GATE_EOD and reg.get("block"):
+        msg = (
+            f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
+            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+            f"{format_regime_line(reg)}\n\n"
+            f"⛔️ <b>Rejim BLOK (EOD gate açık).</b>"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        return
 
     rows = await build_rows_from_is_list(bist200_list)
     update_history_from_rows(rows)
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
-
-    # Gate: EOD bilgilendirme moduna düşer (sinyalleri kapatır)
-    apply_regime_gate_to_rows(rows, reg)
 
     toplama = [r for r in rows if r.get("signal_text") == "TOPLAMA"]
     dip = [r for r in rows if r.get("signal_text") == "DİP TOPLAMA"]
@@ -1552,6 +1523,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg += "\n" + make_table(top_by_vol(toplama, 8), "🧠 <b>TOPLAMA – Top 8</b>", include_kind=True)
     msg += "\n\n" + make_table(top_by_vol(dip, 8), "🧲 <b>DİP TOPLAMA – Top 8</b>", include_kind=True)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
 
 async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WHALE_ENABLED:
@@ -1609,6 +1581,7 @@ async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = build_whale_message(out[:12], xu_close, xu_change, reg)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
+
 # -----------------------------
 # Scheduled jobs
 # -----------------------------
@@ -1625,8 +1598,8 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
-        # ✅ REJIM GATE: BLOCK ise alarm job hiç mesaj atmaz
-        if reg.get("enabled", False) and reg.get("blocked", False):
+        # ✅ Rejim gate: Alarmı tamamen sustur
+        if REJIM_GATE_ALARM and reg.get("block"):
             return
 
         all_rows = await build_rows_from_is_list(bist200_list)
@@ -1636,6 +1609,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         alarm_rows = filter_new_alarms(all_rows)
         if not alarm_rows:
             return
+
         ts_now = time.time()
         for r in alarm_rows:
             mark_alarm_sent(r.get("ticker", ""), ts_now)
@@ -1646,7 +1620,6 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         w_rows = await build_rows_from_is_list(watch) if watch else []
         if w_rows:
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
-            # gate açık olduğu için burada kapatmıyoruz (zaten reg blocked olsaydı return edecektik)
 
         text = build_alarm_message(
             alarm_rows=alarm_rows,
@@ -1666,6 +1639,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("Alarm job error: %s", e)
 
+
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
@@ -1680,6 +1654,21 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
+        if REJIM_GATE_TOMORROW and reg.get("block"):
+            msg = (
+                f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b>\n"
+                f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+                f"{format_regime_line(reg)}\n\n"
+                f"⛔️ <b>Rejim BLOK olduğu için Tomorrow listesi gönderilmedi.</b>"
+            )
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+            return
+
         rows = await build_rows_from_is_list(bist200_list)
         update_history_from_rows(rows)
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -1687,10 +1676,9 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         tom_rows = build_tomorrow_rows(rows)
         cand_rows = build_candidate_rows(rows, tom_rows)
-
         save_tomorrow_snapshot(tom_rows, xu_change)
 
-        msg = build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, xu_vol, xu_open, thresh_s, reg)
+        msg = build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
             text=msg,
@@ -1699,6 +1687,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     except Exception as e:
         logger.exception("Tomorrow job error: %s", e)
+
 
 async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WHALE_ENABLED or not ALARM_CHAT_ID:
@@ -1775,6 +1764,7 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("Whale job error: %s", e)
 
+
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
     if jq is None:
@@ -1812,11 +1802,13 @@ def schedule_jobs(app: Application) -> None:
     else:
         logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
 
+
 # -----------------------------
 # Global error handler
 # -----------------------------
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled error: %s", context.error)
+
 
 # -----------------------------
 # Main
@@ -1849,8 +1841,8 @@ def main() -> None:
     schedule_jobs(app)
 
     logger.info(
-        "Bot starting... version=%s tz=%s data_dir=%s history_days=%s rejim_enabled=%s block_on=%s",
-        BOT_VERSION, TZ.key, EFFECTIVE_DATA_DIR, HISTORY_DAYS, REJIM_ENABLED, ",".join(REJIM_BLOCK_ON)
+        "Bot starting... version=%s tz=%s data_dir=%s history_days=%s rejim=%s",
+        BOT_VERSION, TZ.key, EFFECTIVE_DATA_DIR, HISTORY_DAYS, int(REJIM_ENABLED)
     )
 
     async def post_start_bootstrap(ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1863,6 +1855,7 @@ def main() -> None:
         logger.warning("JobQueue yok → post-start bootstrap çalışmaz. Gerekirse /bootstrap kullan.")
 
     app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
