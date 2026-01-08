@@ -1224,6 +1224,53 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     cid = update.effective_chat.id
     await update.message.reply_text(f"🧾 Chat ID: <code>{cid}</code>", parse_mode=ParseMode.HTML)
 
+*** a/main.py
+--- b/main.py
+***************
+*** 1190,1250 ****
+--- 1190,1305 ----
++ async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
++     """
++     Rejim modunun gerçekten aktif olup olmadığını ve hesaplanan rejim sonucunu gösterir.
++     """
++     try:
++         r = compute_regime()
++         msg = (
++             "🧭 *REJİM DURUMU*\n"
++             f"• REJIM_ENABLED: `{int(REJIM_ENABLED)}`\n"
++             f"• REJIM_GATE_EOD: `{int(REJIM_GATE_EOD)}`\n"
++             f"• REJIM_GATE_WHALE: `{int(REJIM_GATE_WHALE)}`\n"
++             f"• REJIM_VOL_LOOKBACK: `{REJIM_VOL_LOOKBACK}`\n"
++             f"• REJIM_GAP_PCT: `{REJIM_GAP_PCT}`\n"
++             f"• REJIM_MIN_BARS: `{REJIM_MIN_BARS}`\n"
++             "\n"
++             f"• regime: `{r.get('regime')}`\n"
++             f"• vol_ok: `{r.get('vol_ok')}`\n"
++             f"• gap_ok: `{r.get('gap_ok')}`\n"
++             f"• allow_trade: `{r.get('allow_trade')}`\n"
++             f"• reason: `{r.get('reason')}`\n"
++         )
++         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
++     except Exception as e:
++         await update.message.reply_text(f"❌ Rejim kontrol hatası: {e}")
+ 
+***************
+*** 1738,1755 ****
+--- 1743,1761 ----
+      app = Application.builder().token(token).build()
+ 
+      app.add_handler(CommandHandler("start", cmd_start))
+      app.add_handler(CommandHandler("help", cmd_help))
+      app.add_handler(CommandHandler("ping", cmd_ping))
+      app.add_handler(CommandHandler("chatid", cmd_chatid))
+      app.add_handler(CommandHandler("alarm", cmd_alarm_status))
++     app.add_handler(CommandHandler("rejim", cmd_rejim))
+      app.add_handler(CommandHandler("stats", cmd_stats))
+      app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
+      app.add_handler(CommandHandler("whale", cmd_whale))
+      app.add_handler(CommandHandler("bootstrap", cmd_bootstrap))
+      app.add_handler(CommandHandler("watch", cmd_watch))
+
 async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (
         f"🚨 <b>Alarm Durumu</b>\n"
