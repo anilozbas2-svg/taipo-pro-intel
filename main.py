@@ -1248,21 +1248,29 @@ async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         await update.message.reply_text(f"❌ Rejim kontrol hatası: {e}")
- 
-      app = Application.builder().token(token).build()
- 
-      app.add_handler(CommandHandler("start", cmd_start))
-      app.add_handler(CommandHandler("help", cmd_help))
-      app.add_handler(CommandHandler("ping", cmd_ping))
-      app.add_handler(CommandHandler("chatid", cmd_chatid))
-      app.add_handler(CommandHandler("alarm", cmd_alarm_status))
-+     app.add_handler(CommandHandler("rejim", cmd_rejim))
-      app.add_handler(CommandHandler("stats", cmd_stats))
-      app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
-      app.add_handler(CommandHandler("whale", cmd_whale))
-      app.add_handler(CommandHandler("bootstrap", cmd_bootstrap))
-      app.add_handler(CommandHandler("watch", cmd_watch))
+        
+def main():
+    token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        raise RuntimeError("BOT_TOKEN / TELEGRAM_TOKEN env yok!")
 
+    app = Application.builder().token(token).build()
+
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("ping", cmd_ping))
+    app.add_handler(CommandHandler("chatid", cmd_chatid))
+    app.add_handler(CommandHandler("alarm", cmd_alarm_status))
+    app.add_handler(CommandHandler("rejim", cmd_rejim))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
+    app.add_handler(CommandHandler("whale", cmd_whale))
+    app.add_handler(CommandHandler("bootstrap", cmd_bootstrap))
+    app.add_handler(CommandHandler("watch", cmd_watch))
+    
+    app.run_polling() 
+if __name__ == "__main__":
+    main()
 async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (
         f"🚨 <b>Alarm Durumu</b>\n"
