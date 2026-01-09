@@ -1792,6 +1792,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
+    app.add_handler(CommandHandler("rejim", cmd_rejim))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
     app.add_handler(CommandHandler("whale", cmd_whale))
