@@ -1223,7 +1223,11 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cid = update.effective_chat.id
-    await update.message.reply_text(f"🧾 Chat ID: <code>{cid}</code>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(
+        f"🆔 Chat ID: <code>{cid}</code>",
+        parse_mode=ParseMode.HTML
+    )
+
 
 async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -1235,45 +1239,48 @@ async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         r = None
 
-    # 1) Önce cache varsa onu kullan
-    if LAST_REGIME:
-        r = LAST_REGIME
-    else:
-        # 2) Cache yoksa canlı hesapla (önce history güncelle!)
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        # 1) Önce cache varsa onu kullan
+        if LAST_REGIME:
+            r = LAST_REGIME
+        else:
+            # 2) Cache yoksa canlı hesapla (önce history güncelle!)
+            xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
 
-        update_index_history(
-            today_key_tradingday(),
-            xu_close, xu_change, xu_vol, xu_open
+            update_index_history(
+                today_key_tradingday(),
+                xu_close, xu_change, xu_vol, xu_open
+            )
+
+            r = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+
+            # None'ları bitir: garanti alanlar
+            r = r or {}
+            r.setdefault("regime", "unknown")
+            r.setdefault("vol_ok", False)
+            r.setdefault("gap_ok", False)
+            r.setdefault("block", False)
+            r.setdefault("allow_trade", not bool(r.get("block")))
+            r.setdefault("reason", "n/a")
+
+            LAST_REGIME = r  # bir sonraki /rejim için sakla
+
+        msg = (
+            "⏱ <b>REJİM DURUMU</b>\n\n"
+            f"• regime: <code>{r.get('regime')}</code>\n"
+            f"• vol_ok: <code>{r.get('vol_ok')}</code>\n"
+            f"• gap_ok: <code>{r.get('gap_ok')}</code>\n"
+            f"• allow_trade: <code>{r.get('allow_trade')}</code>\n"
+            f"• block: <code>{r.get('block')}</code>\n"
+            f"• reason: <code>{r.get('reason')}</code>\n"
         )
 
-        r = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # None'ları bitir: garanti alanlar
-        r = r or {}
-        r.setdefault("regime", "unknown")
-        r.setdefault("vol_ok", False)
-        r.setdefault("gap_ok", False)
-        r.setdefault("block", False)
-        r.setdefault("allow_trade", not bool(r.get("block")))
-        r.setdefault("reason", "n/a")
-
-        LAST_REGIME = r  # bir sonraki /rejim için sakla
-
-    msg = (
-        "🧭 <b>REJİM DURUMU</b>\n\n"
-        f"• regime: <code>{r.get('regime')}</code>\n"
-        f"• vol_ok: <code>{r.get('vol_ok')}</code>\n"
-        f"• gap_ok: <code>{r.get('gap_ok')}</code>\n"
-        f"• allow_trade: <code>{r.get('allow_trade')}</code>\n"
-        f"• block: <code>{r.get('block')}</code>\n"
-        f"• reason: <code>{r.get('reason')}</code>\n"
-    )
-
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-
-except Exception as e:
-    await update.message.reply_text(f"❌ Rejim kontrol hatası: {e}", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Rejim kontrol hatası: {e}",
+            parse_mode=ParseMode.HTML
+        )
         
 def main():
     token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
