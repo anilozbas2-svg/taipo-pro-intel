@@ -1227,8 +1227,7 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"🆔 Chat ID: <code>{cid}</code>",
         parse_mode=ParseMode.HTML
     )
-
-
+    
 async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Rejim modunun aktif olup olmadığını ve son hesaplanan rejimi gösterir.
@@ -1255,17 +1254,42 @@ async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             # None'ları bitir: garanti alanlar
             r = r or {}
-            r.setdefault("regime", "unknown")
             r.setdefault("vol_ok", False)
             r.setdefault("gap_ok", False)
             r.setdefault("block", False)
             r.setdefault("allow_trade", not bool(r.get("block")))
             r.setdefault("reason", "n/a")
 
+            # --- R1 / R2 / R3 etiketi ---
+            # R3: block True
+            # R1: allow_trade True + vol_ok True
+            # R2: diğerleri
+            if r.get("block"):
+                r["regime"] = "R3"
+            elif r.get("allow_trade") and r.get("vol_ok"):
+                r["regime"] = "R1"
+            else:
+                r["regime"] = "R2"
+
             LAST_REGIME = r  # bir sonraki /rejim için sakla
 
+        # Cache'ten geldiyse de garanti olsun diye etiket üret
+        r = r or {}
+        r.setdefault("vol_ok", False)
+        r.setdefault("gap_ok", False)
+        r.setdefault("block", False)
+        r.setdefault("allow_trade", not bool(r.get("block")))
+        r.setdefault("reason", "n/a")
+
+        if r.get("block"):
+            r["regime"] = "R3"
+        elif r.get("allow_trade") and r.get("vol_ok"):
+            r["regime"] = "R1"
+        else:
+            r["regime"] = "R2"
+
         msg = (
-            "⏱ <b>REJİM DURUMU</b>\n\n"
+            "🧭 <b>REJİM DURUMU</b>\n\n"
             f"• regime: <code>{r.get('regime')}</code>\n"
             f"• vol_ok: <code>{r.get('vol_ok')}</code>\n"
             f"• gap_ok: <code>{r.get('gap_ok')}</code>\n"
@@ -1280,7 +1304,7 @@ async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             f"❌ Rejim kontrol hatası: {e}",
             parse_mode=ParseMode.HTML
-        )
+            )
         
 def main():
     token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
