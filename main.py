@@ -17,6 +17,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # -----------------------------
 # Config
 # -----------------------------
+LAST_REGIME = None
 BOT_VERSION = os.getenv(
     "BOT_VERSION",
     "v1.7.0-premium-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable-rejim"
