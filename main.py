@@ -1232,8 +1232,8 @@ async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     global LAST_REGIME
 
-try:
-    r = None
+    try:
+        r = None
 
     # 1) Önce cache varsa onu kullan
     if LAST_REGIME:
