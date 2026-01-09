@@ -1269,8 +1269,7 @@ def main():
     app.add_handler(CommandHandler("watch", cmd_watch))
     
     app.run_polling() 
-if __name__ == "__main__":
-    main()
+    
 async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (
         f"🚨 <b>Alarm Durumu</b>\n"
