@@ -1232,33 +1232,48 @@ async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     global LAST_REGIME
 
-    try:
-        r = None
+try:
+    r = None
 
-        # 1) Önce cache varsa onu kullan
-        if LAST_REGIME:
-            r = LAST_REGIME
-        else:
-            # 2) Cache yoksa canlı hesapla
-            xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-            r = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-            LAST_REGIME = r  # bir sonraki /rejim için sakla
+    # 1) Önce cache varsa onu kullan
+    if LAST_REGIME:
+        r = LAST_REGIME
+    else:
+        # 2) Cache yoksa canlı hesapla (önce history güncelle!)
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
 
-        msg = (
-            "🧭 <b>REJİM DURUMU</b>\n\n"
-            f"• regime: <code>{r.get('regime')}</code>\n"
-            f"• vol_ok: <code>{r.get('vol_ok')}</code>\n"
-            f"• gap_ok: <code>{r.get('gap_ok')}</code>\n"
-            f"• allow_trade: <code>{r.get('allow_trade')}</code>\n"
-            f"• block: <code>{r.get('block')}</code>\n"
-            f"• reason: <code>{r.get('reason')}</code>\n"
+        update_index_history(
+            today_key_tradingday(),
+            xu_close, xu_change, xu_vol, xu_open
         )
 
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        r = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
-    except Exception as e:
-        await update.message.reply_text(f"❌ Rejim kontrol hatası: {e}",
-        parse_mode=ParseMode.HTML)
+        # None'ları bitir: garanti alanlar
+        r = r or {}
+        r.setdefault("regime", "unknown")
+        r.setdefault("vol_ok", False)
+        r.setdefault("gap_ok", False)
+        r.setdefault("block", False)
+        r.setdefault("allow_trade", not bool(r.get("block")))
+        r.setdefault("reason", "n/a")
+
+        LAST_REGIME = r  # bir sonraki /rejim için sakla
+
+    msg = (
+        "🧭 <b>REJİM DURUMU</b>\n\n"
+        f"• regime: <code>{r.get('regime')}</code>\n"
+        f"• vol_ok: <code>{r.get('vol_ok')}</code>\n"
+        f"• gap_ok: <code>{r.get('gap_ok')}</code>\n"
+        f"• allow_trade: <code>{r.get('allow_trade')}</code>\n"
+        f"• block: <code>{r.get('block')}</code>\n"
+        f"• reason: <code>{r.get('reason')}</code>\n"
+    )
+
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+except Exception as e:
+    await update.message.reply_text(f"❌ Rejim kontrol hatası: {e}", parse_mode=ParseMode.HTML)
         
 def main():
     token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
