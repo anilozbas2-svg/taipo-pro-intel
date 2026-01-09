@@ -1228,19 +1228,21 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Rejim modunun aktif olup olmadığını ve son hesaplanan rejimi gösterir.
+    Eğer cache (LAST_REGIME) yoksa canlı hesap yapar.
     """
     global LAST_REGIME
 
     try:
-        if not LAST_REGIME:
-            await update.message.reply_text(
-                "⚠️ Henüz rejim hesaplanmadı.\n"
-                "/tomorrow, /radar veya /eod çalıştırdıktan sonra tekrar dene.",
-                parse_mode=ParseMode.HTML
-            )
-            return
+        r = None
 
-        r = LAST_REGIME
+        # 1) Önce cache varsa onu kullan
+        if LAST_REGIME:
+            r = LAST_REGIME
+        else:
+            # 2) Cache yoksa canlı hesapla
+            xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+            r = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+            LAST_REGIME = r  # bir sonraki /rejim için sakla
 
         msg = (
             "🧭 <b>REJİM DURUMU</b>\n\n"
@@ -1255,7 +1257,8 @@ async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Rejim kontrol hatası: {e}")
+        await update.message.reply_text(f"❌ Rejim kontrol hatası: {e}",
+        parse_mode=ParseMode.HTML)
         
 def main():
     token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
