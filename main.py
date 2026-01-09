@@ -1366,24 +1366,39 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
 
-    # ✅ Rejim gate
+   # ✅ Rejim gate
+    global LAST_REGIME
+    LAST_REGIME = reg  # /rejim komutu için son rejimi kaydet
+
     if REJIM_GATE_TOMORROW and reg.get("block"):
         msg = (
-            f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b>\n"
-            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
+            f"📊 <b>XU100</b>: {xu_close:.2f} • {xu_change:+.2f}%\n\n"
             f"{format_regime_line(reg)}\n\n"
-            f"⛔️ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
-            f"• REJIM_BLOCK_ON: <code>{','.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
+            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
+            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
         )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True)
         return
 
     tom_rows = build_tomorrow_rows(rows)
     cand_rows = build_candidate_rows(rows, tom_rows)
     save_tomorrow_snapshot(tom_rows, xu_change)
 
-    msg = build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    msg = build_tomorrow_message(
+        tom_rows,
+        cand_rows,
+        xu_close,
+        xu_change,
+        thresh_s,
+        reg)
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True)
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
