@@ -1227,26 +1227,33 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def cmd_rejim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Rejim modunun gerçekten aktif olup olmadığını ve hesaplanan rejim sonucunu gösterir.
+    Rejim modunun aktif olup olmadığını ve son hesaplanan rejimi gösterir.
     """
+    global LAST_REGIME
+
     try:
-        r = compute_regime()
+        if not LAST_REGIME:
+            await update.message.reply_text(
+                "⚠️ Henüz rejim hesaplanmadı.\n"
+                "/tomorrow, /radar veya /eod çalıştırdıktan sonra tekrar dene.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        r = LAST_REGIME
+
         msg = (
-            "🧭 *REJİM DURUMU*\n"
-            f"• REJIM_ENABLED: `{int(REJIM_ENABLED)}`\n"
-            f"• REJIM_GATE_EOD: `{int(REJIM_GATE_EOD)}`\n"
-            f"• REJIM_GATE_WHALE: `{int(REJIM_GATE_WHALE)}`\n"
-            f"• REJIM_VOL_LOOKBACK: `{REJIM_VOL_LOOKBACK}`\n"
-            f"• REJIM_GAP_PCT: `{REJIM_GAP_PCT}`\n"
-            f"• REJIM_MIN_BARS: `{REJIM_MIN_BARS}`\n"
-            "\n"
-            f"• regime: `{r.get('regime')}`\n"
-            f"• vol_ok: `{r.get('vol_ok')}`\n"
-            f"• gap_ok: `{r.get('gap_ok')}`\n"
-            f"• allow_trade: `{r.get('allow_trade')}`\n"
-            f"• reason: `{r.get('reason')}`\n"
+            "🧭 <b>REJİM DURUMU</b>\n\n"
+            f"• regime: <code>{r.get('regime')}</code>\n"
+            f"• vol_ok: <code>{r.get('vol_ok')}</code>\n"
+            f"• gap_ok: <code>{r.get('gap_ok')}</code>\n"
+            f"• allow_trade: <code>{r.get('allow_trade')}</code>\n"
+            f"• block: <code>{r.get('block')}</code>\n"
+            f"• reason: <code>{r.get('reason')}</code>\n"
         )
-        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
     except Exception as e:
         await update.message.reply_text(f"❌ Rejim kontrol hatası: {e}")
         
