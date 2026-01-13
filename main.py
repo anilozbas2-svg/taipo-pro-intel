@@ -18,6 +18,22 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # Config
 # -----------------------------
 LAST_REGIME = None
+# -----------------------------
+# ✅ REJİM / GAP Config (ENV)
+# -----------------------------
+REJIM_ENABLED = os.getenv("REJIM_ENABLED", "1").strip() == "1"
+
+# Rejim gating: hangi modüller rejim allow_trade=False iken kapansın?
+REJIM_GATE_ALARM = os.getenv("REJIM_GATE_ALARM", "1").strip() == "1"
+REJIM_GATE_TOMORROW = os.getenv("REJIM_GATE_TOMORROW", "0").strip() == "1"
+REJIM_GATE_RADAR = os.getenv("REJIM_GATE_RADAR", "0").strip() == "1"
+REJIM_GATE_WHALE = os.getenv("REJIM_GATE_WHALE", "1").strip() == "1"
+REJIM_GATE_EOD = os.getenv("REJIM_GATE_EOD", "0").strip() == "1"
+
+# Volatilite / Gap ayarları
+REJIM_VOL_LOOKBACK = int(os.getenv("REJIM_VOL_LOOKBACK", "20"))
+REJIM_GAP_PCT = float(os.getenv("REJIM_GAP_PCT", "1.50"))
+REJIM_MIN_BARS = int(os.getenv("REJIM_MIN_BARS", "40"))
 BOT_VERSION = os.getenv(
     "BOT_VERSION",
     "v1.7.0-premium-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable-rejim"
@@ -125,6 +141,7 @@ REJIM_GATE_EOD = os.getenv("REJIM_GATE_EOD", "0").strip() == "1"  # EOD genelde 
 # -----------------------------
 LAST_ALARM_TS: Dict[str, float] = {}
 WHALE_SENT_DAY: Dict[str, int] = {}
+LAST_REGIME: Optional[Dict[str, Any]] = None
 
 # -----------------------------
 # Helpers
@@ -155,6 +172,190 @@ def normalize_is_ticker(t: str) -> str:
     if base.endswith(".IS"):
         base = base[:-3]
     return f"BIST:{base}"
+    # =========================
+# GAP + REJIM (R1/R2/R3)
+# =========================
+
+import math
+from typing import Any, Dict, List, Optional
+
+def _safe_float(x, default=0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return float(default)
+
+def calc_gap_pct(open_px: float, prev_close_px: float) -> float:
+    """
+    GAP% = (Open - PrevClose) / PrevClose * 100
+    """
+    open_px = _safe_float(open_px, 0.0)
+    prev_close_px = _safe_float(prev_close_px, 0.0)
+    if prev_close_px == 0:
+        return 0.0
+    return ((open_px - prev_close_px) / prev_close_px) * 100.0
+
+def sma(values: List[float], window: int) -> Optional[float]:
+    if window <= 0 or len(values) < window:
+        return None
+    v = values[-window:]
+    return sum(v) / float(window)
+
+def stdev(values: List[float]) -> float:
+    """
+    Basit stddev. (n<2 ise 0)
+    """
+    n = len(values)
+    if n < 2:
+        return 0.0
+    m = sum(values) / n
+    var = sum((x - m) ** 2 for x in values) / (n - 1)
+    return math.sqrt(var)
+
+def _trend_label(close_series: List[float]) -> str:
+    """
+    REJIM_TREND_SMA_FAST / SLOW kullanır.
+    """
+    fast = int(REJIM_TREND_SMA_FAST)
+    slow = int(REJIM_TREND_SMA_SLOW)
+
+    sma_fast = sma(close_series, fast)
+    sma_slow = sma(close_series, slow)
+    if sma_fast is None or sma_slow is None:
+        return "UNKNOWN"
+
+    # Çok küçük farklarda SIDE sayalım
+    eps = 0.001  # %0.1
+    if sma_fast > sma_slow * (1 + eps):
+        return "UP"
+    if sma_fast < sma_slow * (1 - eps):
+        return "DOWN"
+    return "SIDE"
+
+def compute_regime(
+    xu_close: float,
+    xu_change: float,
+    xu_vol: float,
+    xu_open: float
+) -> Dict[str, Any]:
+    """
+    Rejim çıktısı:
+    - regime: R1 / R2 / R3
+    - vol_ok, gap_ok, allow_trade, block, reason
+    - trend_label, vol_std, gap_pct gibi debug alanları
+    """
+
+    # Eğer rejim kapalıysa: her şey serbest (ama bilgi döndür)
+    if not REJIM_ENABLED:
+        return {
+            "regime": "R1",
+            "vol_ok": True,
+            "gap_ok": True,
+            "block": False,
+            "allow_trade": True,
+            "reason": "Rejim disabled (ENV)",
+        }
+
+    # Index history varsa onu kullanarak trend/vol/gap hesaplayacağız
+    # Bu projede genelde index history state içine yazılıyor.
+    # Aşağıdaki fonksiyonlar sende mevcut değilse: sadece gün verisiyle “kısıtlı” çalışır.
+    hist: List[Dict[str, Any]] = []
+    try:
+        # Eğer sende farklı isim varsa söyle, buna göre uyarlayalım.
+        # Beklenen format: [{"k": "...", "close":..., "change":..., "vol":..., "open":...}, ...]
+        hist = load_index_history()  # <-- sende varsa otomatik kullanır
+    except Exception:
+        hist = []
+
+    # Fallback: en azından bugünü ekle (history yoksa bile hesap dönebilelim)
+    if not hist:
+        hist = [{
+            "close": _safe_float(xu_close),
+            "change": _safe_float(xu_change),
+            "vol": _safe_float(xu_vol),
+            "open": _safe_float(xu_open),
+        }]
+
+    # lookback kırp
+    lookback = int(REJIM_LOOKBACK)
+    hist = hist[-max(lookback, 5):]
+
+    close_series = [_safe_float(x.get("close")) for x in hist if x.get("close") is not None]
+    change_series = [_safe_float(x.get("change")) for x in hist if x.get("change") is not None]
+    open_last = _safe_float(hist[-1].get("open", xu_open))
+    close_last = _safe_float(hist[-1].get("close", xu_close))
+    change_last = _safe_float(hist[-1].get("change", xu_change))
+
+    prev_close = close_series[-2] if len(close_series) >= 2 else close_last
+    gap_pct = calc_gap_pct(open_last, prev_close)
+    gap_ok = abs(gap_pct) <= float(REJIM_GAP_PCT)
+
+    # Volatilite: günlük change% stddev
+    vol_std = stdev(change_series[-min(len(change_series), lookback):])
+    vol_ok = vol_std <= float(REJIM_VOL_HIGH)
+
+    # Trend etiketi
+    trend = _trend_label(close_series)
+
+    # Önceki gün kötü mü? (sert eksi gün sonrası “risk artar”)
+    prev_day_bad = False
+    if len(change_series) >= 2:
+        prev_day_bad = (change_series[-2] <= float(REJIM_PREV_DAY_BAD))
+
+    # Rejim karar mantığı:
+    # - R3: CHOP veya vol kötü veya gap aşırı veya prev_day_bad (risk modu)
+    # - R2: SIDE/mixed ama aşırı risk yok
+    # - R1: Trend net (UP/DOWN) + vol_ok + gap_ok + prev_day_bad değil
+    reason_parts = []
+    if not gap_ok:
+        reason_parts.append(f"gap>{REJIM_GAP_PCT}%")
+    if not vol_ok:
+        reason_parts.append(f"vol_std>{REJIM_VOL_HIGH}")
+    if prev_day_bad:
+        reason_parts.append(f"prev_day_bad<={REJIM_PREV_DAY_BAD}")
+    if trend in ("UNKNOWN",):
+        reason_parts.append("trend=n/a")
+
+    # CHOP tanımı: trend SIDE ve vol yüksek veya trend UNKNOWN
+    choppy = (trend == "SIDE" and not vol_ok) or (trend == "UNKNOWN" and (not vol_ok or not gap_ok))
+
+    if choppy or (not vol_ok) or (not gap_ok) or prev_day_bad:
+        regime = "R3"
+        reason = "CHOP / risk" if not reason_parts else " / ".join(reason_parts)
+    else:
+        if trend in ("UP", "DOWN"):
+            regime = "R1"
+            reason = f"Trend {trend} + sakin"
+        else:
+            regime = "R2"
+            reason = "Side / mixed"
+
+    # block/allow_trade:
+    # REJIM_BLOCK_ON içinde tanımlanan rejimler bloklansın (örn: RISK_OFF = R3 gibi)
+    block = False
+    try:
+        block = (regime in REJIM_BLOCK_ON) or ("R3" in REJIM_BLOCK_ON and regime == "R3")
+    except Exception:
+        block = (regime == "R3")
+
+    allow_trade = not block
+
+    return {
+        "regime": regime,
+        "trend": trend,
+        "vol_ok": bool(vol_ok),
+        "gap_ok": bool(gap_ok),
+        "block": bool(block),
+        "allow_trade": bool(allow_trade),
+        "reason": reason,
+
+        # debug alanları (istersen /rejim’de gösteririz)
+        "gap_pct": round(gap_pct, 3),
+        "vol_std": round(vol_std, 3),
+        "change_last": round(change_last, 3),
+        "close_last": round(close_last, 2),
+        "open_last": round(open_last, 2),
+        }
 
 def safe_float(x: Any) -> float:
     try:
