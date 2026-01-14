@@ -117,7 +117,29 @@ REJIM_GATE_WHALE = os.getenv("REJIM_GATE_WHALE", "1").strip() == "1"
 # “Uçanlar” için bilgi etiketi (blok DEĞİL)
 REJIM_MOMO_UP_CHG = float(os.getenv("REJIM_MOMO_UP_CHG", "2.20"))   # endeks günlük +%2.2 üstü
 REJIM_MOMO_UP_GAP = float(os.getenv("REJIM_MOMO_UP_GAP", "0.80"))   # gap +%0.8 üstü
+# ================================
+# R0 – EARLY BREAKOUT (Uçanları erken yakalama)
+# ================================
 
+R0_ENABLED = int(os.getenv("R0_ENABLED", "1")) == 1
+
+# Gün içi erken hareket eşiği (henüz uçmamışken)
+R0_MIN_CHG = float(os.getenv("R0_MIN_CHG", "0.80"))     # %0.8+
+R0_MAX_CHG = float(os.getenv("R0_MAX_CHG", "3.50"))     # %3.5 altı (uçmuş sayılmasın)
+
+# Gap filtresi (çok gapliyse alma)
+R0_MAX_GAP = float(os.getenv("R0_MAX_GAP", "1.50"))     # %1.5 üstü istemiyoruz
+
+# Hacim patlaması
+R0_MIN_VOL_RATIO = float(os.getenv("R0_MIN_VOL_RATIO", "1.25"))  # 1.25x hacim
+
+# Volatilite sıkışması → patlama
+R0_VOL_STD_MAX = float(os.getenv("R0_VOL_STD_MAX", "1.10"))      # düşük vol = sıkışma
+
+# R0 hangi rejimlerde aktif olsun
+R0_ALLOW_REGIMES = [r.strip().upper() for r in os.getenv(
+    "R0_ALLOW_REGIMES", "R1,R2"
+).split(",") if r.strip()]
 # =========================================================
 # In-memory stores
 # =========================================================
@@ -216,7 +238,65 @@ def st_short(sig_text: str) -> str:
     if sig_text == "REJIM BLOK":
         return "BLK"
     return ""
+# =========================
+# R0 – EARLY BREAKOUT (Uçanları erken yakalama)
+# =========================
+def detect_r0_early_breakout(
+    rows: List[Dict[str, Any]],
+    reg: Dict[str, Any],
+    xu_change: float
+) -> None:
+    """
+    R0: Gün içi erken momentum + hacim + düşük gap + sıkışma
+    Ana sinyali bozmaz, sadece ETİKET basar.
+    """
 
+    if not R0_ENABLED:
+        return
+
+    regime_tag = reg.get("regime")
+    if regime_tag not in R0_ALLOW_REGIMES:
+        return
+
+    for r in rows:
+        try:
+            chg = safe_float(r.get("change"))
+            vol = safe_float(r.get("volume"))
+            gap = safe_float(r.get("gap_pct", 0.0))
+            vol_ratio = safe_float(r.get("vol_ratio", 1.0))
+            vol_std = safe_float(r.get("vol_std", 0.0))
+
+            # Temel güvenlik
+            if chg != chg or vol != vol:
+                continue
+
+            # 1️⃣ Henüz uçmamış ama hareket var
+            if not (R0_MIN_CHG <= chg <= R0_MAX_CHG):
+                continue
+
+            # 2️⃣ Gap çok büyükse alma
+            if abs(gap) > R0_MAX_GAP:
+                continue
+
+            # 3️⃣ Hacim patlaması
+            if vol_ratio < R0_MIN_VOL_RATIO:
+                continue
+
+            # 4️⃣ Volatilite sıkışması (patlama öncesi)
+            if vol_std > R0_VOL_STD_MAX:
+                continue
+
+            # 5️⃣ Endeks çöküyorken alma
+            if xu_change <= -1.2:
+                continue
+
+            # ✅ R0 YAKALANDI
+            r["signal"] = "🚀"
+            r["signal_text"] = "UÇAN (R0)"
+
+        except Exception:
+            continue
+            
 # =========================================================
 # Trading-day key
 # =========================================================
@@ -699,6 +779,7 @@ async def build_rows_from_is_list(is_list: List[str]) -> List[Dict[str, Any]]:
             rows.append({"ticker": short, "close": float("nan"), "change": float("nan"), "volume": float("nan"), "signal": "-", "signal_text": ""})
         else:
             rows.append({"ticker": short, "close": d["close"], "change": d["change"], "volume": d["volume"], "signal": "-", "signal_text": ""})
+    detect_r0_early_breakout(rows, LAST_REGIME or {}, xu_change)
     return rows
 
 # =========================================================
