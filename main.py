@@ -2104,30 +2104,4 @@ def main() -> None:
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    write_trade_log({
-        "date": datetime.now(tz=TZ).date().isoformat(),
-        "symbol": "THYAO",
-        "regime": "R1",
-        "setup": "A++",
-        "direction": "LONG",
-        "entry_price": 285.40,
-        "exit_price": 292.10,
-        "risk_pct": 0.75,
-        "r_multiple": 1.9,
-        "mae_r": -0.25,
-        "mfe_r": 3.10,
-        "entry_reason": "A++ setup, hacim %105, trend yukarı, RR uygun",
-        "exit_reason": "TP alındı, gün hedefi tamamlandı",
-        "entry_tag": "A+_VOL_HEALTHY_TREND_OK",
-        "exit_tag": "TP_STANDARD",
-        "first_trade_day": True,
-        "emotion_state": "calm",
-        "context_flags": {
-            "gap_pct": 0.4,
-            "volume_ratio_30m": 1.05,
-            "index_trend": "up",
-            "index_atr_pct": 108
-        },
-        "notes": "TEST kaydı"
-        })
     main()
