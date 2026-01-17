@@ -2177,7 +2177,21 @@ def schedule_jobs(app: Application) -> None:
     else:
         logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
 
-
+    # ✅ Tomorrow follow (chain tracking)
+    if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID and getattr(app, "job_queue", None) is not None:
+        first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
+        app.job_queue.run_repeating(
+            job_tomorrow_follow,
+            interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
+            first=first_tf,
+            name="tomorrow_follow_repeating",
+        )
+        logger.info(
+            "Tomorrow follow scheduled every %d min. First=%s",
+            TOMORROW_FOLLOW_INTERVAL_MIN,
+            first_tf.isoformat(),
+        )
+        
 # =========================================================
 # Global error handler
 # =========================================================
@@ -2195,6 +2209,7 @@ def main() -> None:
 
     load_last_alarm_ts()
     load_whale_sent_day()
+    load_tomorrow_chains()
 
     app = Application.builder().token(token).build()
 
