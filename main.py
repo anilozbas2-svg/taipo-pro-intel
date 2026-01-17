@@ -63,6 +63,20 @@ EOD_HOUR = int(os.getenv("EOD_HOUR", "17"))
 EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
 TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))
 
+# =========================================================
+# Tomorrow Follow (2-day chain tracking)
+# =========================================================
+TOMORROW_FOLLOW_ENABLED = int(os.getenv("TOMORROW_FOLLOW_ENABLED", "1")) == 1
+TOMORROW_FOLLOW_INTERVAL_MIN = int(os.getenv("TOMORROW_FOLLOW_INTERVAL_MIN", "60"))
+
+TOMORROW_FOLLOW_START_HOUR = int(os.getenv("TOMORROW_FOLLOW_START_HOUR", "10"))
+TOMORROW_FOLLOW_START_MIN = int(os.getenv("TOMORROW_FOLLOW_START_MIN", "30"))
+TOMORROW_FOLLOW_END_HOUR = int(os.getenv("TOMORROW_FOLLOW_END_HOUR", "17"))
+TOMORROW_FOLLOW_END_MIN = int(os.getenv("TOMORROW_FOLLOW_END_MIN", "30"))
+
+# 2 gün kuralı (T+1 ve T+2) -> sonra kapanır
+TOMORROW_CHAIN_MAX_AGE = int(os.getenv("TOMORROW_CHAIN_MAX_AGE", "2"))
+
 WATCHLIST_MAX = int(os.getenv("WATCHLIST_MAX", "12"))
 VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))
 
@@ -159,6 +173,7 @@ R0_ALLOW_REGIMES = [r.strip().upper() for r in os.getenv(
 LAST_ALARM_TS: Dict[str, float] = {}
 WHALE_SENT_DAY: Dict[str, int] = {}
 LAST_REGIME: Optional[Dict[str, Any]] = None
+TOMORROW_CHAINS: Dict[str, Any] = {}
 
 # =========================================================
 # Helpers
@@ -363,6 +378,7 @@ INDEX_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "index_history.json")
 LAST_ALARM_FILE = os.path.join(EFFECTIVE_DATA_DIR, "last_alarm_ts.json")
 TOMORROW_SNAPSHOT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "tomorrow_snapshot.json")
 WHALE_SENT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "whale_sent_day.json")
+TOMORROW_CHAIN_FILE = os.path.join(EFFECTIVE_DATA_DIR, "tomorrow_chains.json")
 
 def _load_json(path: str) -> Dict[str, Any]:
     try:
@@ -436,6 +452,29 @@ def save_whale_sent_day() -> None:
     except Exception as e:
         logger.warning("save_whale_sent_day failed: %s", e)
 
+def load_tomorrow_chains() -> None:
+    global TOMORROW_CHAINS
+    try:
+        data = _load_json(TOMORROW_CHAIN_FILE)
+        TOMORROW_CHAINS = data if isinstance(data, dict) else {}
+        logger.info("Loaded TOMORROW_CHAINS: %d chain", len(TOMORROW_CHAINS))
+    except Exception as e:
+        logger.warning("load_tomorrow_chains failed: %s", e)
+        TOMORROW_CHAINS = {}
+
+def save_tomorrow_chains() -> None:
+    try:
+        _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS or {})
+    except Exception as e:
+        logger.warning("save_tomorrow_chains failed: %s", e)
+
+def within_tomorrow_follow_window(dt: datetime) -> bool:
+    h, m = dt.hour, dt.minute
+    start = (TOMORROW_FOLLOW_START_HOUR, TOMORROW_FOLLOW_START_MIN)
+    end = (TOMORROW_FOLLOW_END_HOUR, TOMORROW_FOLLOW_END_MIN)
+    cur = (h, m)
+    return start <= cur <= end
+    
 def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     if not rows:
         return
@@ -1603,10 +1642,16 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     tom_rows = build_tomorrow_rows(rows)
     cand_rows = build_candidate_rows(rows, tom_rows)
     save_tomorrow_snapshot(tom_rows, xu_change)
-
+    
+# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
+try:
+    ref_day_key = today_key_tradingday()
+    open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+except Exception as e:
+    logger.warning("open_or_update_tomorrow_chain failed: %s", e)
+    
     msg = r0_block + build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
