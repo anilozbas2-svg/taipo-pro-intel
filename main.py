@@ -1973,7 +1973,91 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("Tomorrow job error: %s", e)
 
+async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not TOMORROW_FOLLOW_ENABLED:
+        return
 
+    now = now_tr()
+    if not within_tomorrow_follow_window(now):
+        return
+
+    chat_id = ALARM_CHAT_ID
+    if not chat_id:
+        return
+
+    # XU100 bilgisi
+    xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+
+    reg = LAST_REGIME or {}
+
+    changed = False
+
+    for ref_day_key, chain in list(TOMORROW_CHAINS.items()):
+        if not isinstance(chain, dict):
+            continue
+        if chain.get("closed"):
+            continue
+
+        # kaçıncı gün?
+        try:
+            age = (date.fromisoformat(today_key_tradingday()) - date.fromisoformat(ref_day_key)).days
+        except Exception:
+            age = 0
+
+        # ✅ 2 gün kuralı (T+1 ve T+2)
+        if age >= TOMORROW_CHAIN_MAX_AGE:
+            chain["closed"] = True
+            changed = True
+            continue
+
+        tickers = list((chain.get("ref_close") or {}).keys())
+        if not tickers:
+            continue
+
+        rows = await build_rows_from_is_list(tickers, xu_change)
+
+        now_prices = {
+            (r.get("ticker") or "").strip(): safe_float(r.get("close"))
+            for r in rows
+            if (r.get("ticker") and r.get("close") is not None)
+        }
+
+        prev_prices = None
+        checkpoints = chain.get("checkpoints", [])
+        if checkpoints:
+            prev_prices = checkpoints[-1].get("prices")
+
+        msg = build_tomorrow_follow_message(
+            day_key=today_key_tradingday(),
+            ref_day=ref_day_key,
+            age=age,
+            reg=reg,
+            xu_close=xu_close,
+            xu_change=xu_change,
+            now_prices=now_prices,
+            prev_prices=prev_prices,
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+        # checkpoint ekle
+        checkpoints = chain.get("checkpoints", []) or []
+        checkpoints.append({
+            "t": now.isoformat(),
+            "day_key": today_key_tradingday(),
+            "prices": now_prices,
+        })
+        chain["checkpoints"] = checkpoints
+        changed = True
+
+    if changed:
+        save_tomorrow_chains()
+        
 async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WHALE_ENABLED or not ALARM_CHAT_ID:
         return
