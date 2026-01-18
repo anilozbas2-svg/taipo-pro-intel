@@ -1643,15 +1643,27 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     cand_rows = build_candidate_rows(rows, tom_rows)
     save_tomorrow_snapshot(tom_rows, xu_change)
 
+
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
-try:
-    ref_day_key = today_key_tradingday()
-    open_or_update_tomorrow_chain(ref_day_key, tom_rows)
-except Exception as e:
-    logger.warning("open_or_update_tomorrow_chain failed: %s", e)
-    
-    msg = r0_block + build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    try:
+        ref_day_key = today_key_tradingday()
+        open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+    except Exception as e:
+        logger.warning("open_or_update_tomorrow_chain failed: %s", e)
+
+    msg = r0_block + build_tomorrow_message(
+        tom_rows,
+        cand_rows,
+        xu_close,
+        xu_change,
+        thresh_s,
+        reg,
+    )
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
@@ -1659,29 +1671,48 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
     watch = (watch or [])[:WATCHLIST_MAX]
     if not watch:
-        await update.message.reply_text("Kullanım: <code>/watch AKBNK,CANTE</code> (ya da WATCHLIST env)", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(
+            "Kullanım: <code>/watch AKBNK,CANTE</code> (ya da WATCHLIST env)",
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-    update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+    update_index_history(
+        today_key_tradingday(),
+        xu_close,
+        xu_change,
+        xu_vol,
+        xu_open,
+    )
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
     global LAST_REGIME
     LAST_REGIME = reg
 
     rows = await build_rows_from_is_list(watch, xu_change)
-    min_vol = compute_signal_rows(rows, xu_change, max(5, min(10, len(rows))))
+    min_vol = compute_signal_rows(
+        rows, xu_change, max(5, min(10, len(rows)))
+    )
     if REJIM_GATE_RADAR and reg.get("block"):
         apply_regime_gate_to_rows(rows, reg)
 
-    table = make_table(rows, f"👀 <b>WATCHLIST RADAR</b> • TopEşik≈<b>{format_threshold(min_vol)}</b>", include_kind=True)
+    table = make_table(
+        rows,
+        f"👁️ <b>WATCHLIST RADAR</b> · TopEşik=<b>{format_threshold(min_vol)}</b>",
+        include_kind=True,
+    )
     head = (
-        f"👀 <b>WATCHLIST</b> • <b>{BOT_VERSION}</b>\n"
-        f"📊 XU100: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+        f"👁️ <b>WATCHLIST</b> · <b>{BOT_VERSION}</b>\n"
+        f"📊 XU100: {xu_close:,.2f} · {xu_change:+.2f}%\n"
         f"{format_regime_line(reg)}\n"
     )
-    await update.message.reply_text(head + "\n" + table, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
+    await update.message.reply_text(
+        head + "\n" + table,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
