@@ -1647,7 +1647,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         ref_day_key = today_key_tradingday()
         open_or_update_tomorrow_chain(ref_day_key, tom_rows)
-except Exception as e:
+    except Exception as e:
     logger.warning("open_or_update_tomorrow_chain failed: %s", e)
     
     msg = r0_block + build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
