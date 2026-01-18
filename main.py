@@ -1645,8 +1645,8 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
     try:
-    ref_day_key = today_key_tradingday()
-    open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+        ref_day_key = today_key_tradingday()
+        open_or_update_tomorrow_chain(ref_day_key, tom_rows)
 except Exception as e:
     logger.warning("open_or_update_tomorrow_chain failed: %s", e)
     
