@@ -1644,7 +1644,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     save_tomorrow_snapshot(tom_rows, xu_change)
     
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
-try:
+    try:
     ref_day_key = today_key_tradingday()
     open_or_update_tomorrow_chain(ref_day_key, tom_rows)
 except Exception as e:
