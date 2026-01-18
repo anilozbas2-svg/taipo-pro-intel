@@ -1651,7 +1651,7 @@ except Exception as e:
     logger.warning("open_or_update_tomorrow_chain failed: %s", e)
     
     msg = r0_block + build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
