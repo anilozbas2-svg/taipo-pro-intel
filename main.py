@@ -1434,8 +1434,9 @@ def build_alarm_message(
         if t:
             notes_lines.append(format_30d_note(t, cl))
     notes = "\n".join(notes_lines)
-        tomorrow_section = ""
-        try:
+    
+    tomorrow_section = ""
+    try:
         if TOMORROW_CHAINS:
             latest_key = max(
                 TOMORROW_CHAINS.keys(),
