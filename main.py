@@ -238,6 +238,76 @@ def normalize_is_ticker(t: str) -> str:
         base = base[:-3]
     return f"BIST:{base}"
 
+# =========================================================
+# Tomorrow (Altın Liste) - Message section
+# =========================================================
+
+def _pct_price(ref_close: float, pct: float) -> float:
+    try:
+        if ref_close != ref_close:
+            return float("nan")
+        return float(ref_close) * (1.0 + pct / 100.0)
+    except Exception:
+        return float("nan")
+
+def make_chain_id(base_key: str) -> str:
+    dt = now_tr()
+    hhmm = f"{dt.hour:02d}{dt.minute:02d}"
+    return f"{base_key}_{hhmm}"
+
+def format_tomorrow_section(
+    tomorrow_rows,
+    chain_id: str,
+    ref_day_key: str,
+    follow_day: int = 0,
+    max_items: int = 12,
+) -> str:
+
+    if not tomorrow_rows:
+        return ""
+
+    if follow_day == 1:
+        day_tag = "GÜN 1 TAKİP"
+    elif follow_day == 2:
+        day_tag = "GÜN 2 TAKİP (KAPANIŞ)"
+    else:
+        day_tag = "TOMORROW (İLK ÜRETİM)"
+
+    lines = []
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"✅ <b>ALTIN LİSTE – TOMORROW</b>  <code>#{chain_id}</code>")
+    lines.append(f"📌 <b>Ref</b>: <code>{ref_day_key} 17:50</code> • <b>{day_tag}</b>")
+    lines.append("")
+
+    for i, r in enumerate(tomorrow_rows[:max_items], start=1):
+        t = (r.get("ticker") or "n/a").upper()
+        ref_close = safe_float(r.get("ref_close", r.get("close")))
+        cur_close = safe_float(r.get("close"))
+
+        p1 = _pct_price(ref_close, 1.0)
+        p2 = _pct_price(ref_close, 2.0)
+
+        ref_s = "n/a" if ref_close != ref_close else f"{ref_close:.2f}"
+        cur_s = "n/a" if cur_close != cur_close else f"{cur_close:.2f}"
+        p1_s = "n/a" if p1 != p1 else f"{p1:.2f}"
+        p2_s = "n/a" if p2 != p2 else f"{p2:.2f}"
+
+        ch = safe_float(r.get("change", float("nan")))
+        ch_s = "" if ch != ch else f" • %{ch:+.2f}"
+
+        lines.append(
+            f"{i}) <b>{t}</b>  Ref:<b>{ref_s}</b>  "
+            f"Hedef:<b>{p1_s}</b>/<b>{p2_s}</b>  "
+            f"Şimdi:<b>{cur_s}</b>{ch_s}"
+        )
+
+    lines.append("")
+    lines.append("🧩 <b>2 Gün Kuralı:</b> Gün1 ve Gün2 takip edilir; Gün2 sonunda chain kapanır.")
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+    return "\n".join(lines)
+
 def chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
     return [lst[i:i + size] for i in range(0, len(lst), size)]
 
