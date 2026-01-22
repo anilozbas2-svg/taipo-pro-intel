@@ -1434,11 +1434,35 @@ def build_alarm_message(
         if t:
             notes_lines.append(format_30d_note(t, cl))
     notes = "\n".join(notes_lines)
+        tomorrow_section = ""
+        try:
+        if TOMORROW_CHAINS:
+            latest_key = max(
+                TOMORROW_CHAINS.keys(),
+                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+            )
+            blob = TOMORROW_CHAINS.get(latest_key, {}) or {}
+            t_rows = blob.get("rows", []) or []
+            t_chain_id = blob.get("chain_id", make_chain_id("TOMORROW"))
+            t_ref_day_key = blob.get("ref_day_key", latest_key)
+
+            tomorrow_section = format_tomorrow_section(
+                tomorrow_rows=t_rows,
+                chain_id=t_chain_id,
+                ref_day_key=t_ref_day_key,
+                follow_day=0,
+                max_items=12,
+            )
+            if tomorrow_section:
+                tomorrow_section = "\n\n" + tomorrow_section
+    except Exception as e:
+        logger.exception("ALARM -> Tomorrow (Altın Liste) ekleme hatası: %s", e)
+        tomorrow_section = ""
     foot = f"\n⏳ <i>Aynı hisse için {ALARM_COOLDOWN_MIN} dk cooldown aktif.</i>"
     if watch_rows:
         watch_table = make_table(watch_rows, "👀 <b>WATCHLIST (Alarm Eki)</b>", include_kind=True)
-        return head + "\n" + alarm_table + "\n" + notes + "\n\n" + watch_table + foot
-    return head + "\n" + alarm_table + "\n" + notes + foot
+        return head + "\n" + alarm_table + "\n" + notes + "\n\n" + watch_table + foot + tomorrow_section
+    return head + "\n" + alarm_table + "\n" + notes + foot + tomorrow_section
 
 
 def can_send_alarm_for(ticker: str, now_ts: float) -> bool:
