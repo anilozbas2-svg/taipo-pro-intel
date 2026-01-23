@@ -1990,6 +1990,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     try:
+        # XU100
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
@@ -2006,7 +2007,6 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
 
-        # --- Alarm satırları ---
         alarm_rows = filter_new_alarms(all_rows)
         if not alarm_rows:
             return
@@ -2022,9 +2022,9 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
         if w_rows:
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
-            
+
         # =========================================================
-        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
+        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek) + EMOJI
         # =========================================================
         tomorrow_perf_section = ""
         try:
@@ -2042,13 +2042,14 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 chain = TOMORROW_CHAINS.get(latest_key, {}) or {}
 
+                # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
                 altin_tickers = []
                 t_rows = chain.get("rows", []) or []
                 for rr in t_rows:
                     t = (rr.get("ticker") or "").strip()
                     if not t:
                         continue
-                    kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").upper()
+                    kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
                     if "ALTIN" in kind:
                         altin_tickers.append(t)
 
@@ -2056,31 +2057,41 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
                 if not altin_tickers:
                     altin_tickers = list(ref_close_map.keys())[:6]
 
+                # 2) ref_close ile güncel close kıyasla
                 perf_lines = []
                 for t in altin_tickers[:6]:
                     ref_close = safe_float(ref_close_map.get(t))
-                    now_row = all_map.get(t)
-                    now_close = safe_float((now_row or {}).get("close"))
+                    now_row = all_map.get(t) or {}
+                    now_close = safe_float(now_row.get("close"))
 
-                    if not (ref_close == ref_close and now_close == now_close and ref_close > 0):
-                        continue
-
+                    # pct_change NaN olabilir
                     dd = pct_change(now_close, ref_close)
-                    dd_s = f"{dd:+.2f}%" if dd == dd else "n/a"
-                    now_s = f"{now_close:.2f}"
-                    ref_s = f"{ref_close:.2f}"
+
+                    # sade emoji
+                    if dd == dd:
+                        if dd > 0:
+                            mark = "🟢"
+                        elif dd < 0:
+                            mark = "🔴"
+                        else:
+                            mark = "⚪"
+                        dd_s = f"{mark} {dd:+.2f}%"
+                    else:
+                        dd_s = "⚪ n/a"
+
+                    now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
+                    ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
 
                     perf_lines.append((t, dd_s, now_s, ref_s))
 
                 if perf_lines:
                     header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
-                    lines = [
-                        "HIS   Δ%       NOW     REF",
-                        "----------------------------"
-                    ]
-                    for t, dd_s, now_s, ref_s in perf_lines:
-                        lines.append(f"{t:<5} {dd_s:>7}  {now_s:>7}  {ref_s:>7}")
-
+                    lines = []
+                    lines.append("HIS   Δ%          NOW      REF")
+                    lines.append("-------------------------------")
+                    for (t, dd_s, now_s, ref_s) in perf_lines:
+                        # dd_s emoji + yüzde olduğu için genişlik biraz daha fazla
+                        lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
                     tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
 
         except Exception as e:
@@ -2107,7 +2118,10 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
             text=text,
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True
-                )
+        )
+
+    except Exception as e:
+        logger.exception("Alarm job error: %s", e)
 
 
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
