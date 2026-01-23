@@ -1819,7 +1819,7 @@ except Exception:
 
 if perf_section:
     msg = msg + "\n\n" + perf_section
-    await update.message.reply_text(
+await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
