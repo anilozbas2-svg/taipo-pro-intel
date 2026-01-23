@@ -195,6 +195,63 @@ def safe_float(x: Any) -> float:
         return float(x)
     except Exception:
         return float("nan")
+def build_tomorrow_altin_perf_section(all_rows, TOMORROW_CHAINS) -> str:
+    """
+    Tomorrow zincirindeki ALTIN listesini alır ve ref_close -> now_close % farkını basar.
+    /tomorrow ve alarm mesajlarında kullanılabilir.
+    """
+    try:
+        all_map = {
+            (r.get("ticker") or "").strip(): r
+            for r in (all_rows or [])
+            if (r.get("ticker") or "").strip()
+        }
+
+        if not TOMORROW_CHAINS:
+            return ""
+
+        latest_key = max(
+            TOMORROW_CHAINS.keys(),
+            key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+        )
+        chain = TOMORROW_CHAINS.get(latest_key, {}) or {}
+
+        # ALTIN tickers
+        altin_tickers = []
+        t_rows = chain.get("rows", []) or []
+        for rr in t_rows:
+            t = (rr.get("ticker") or "").strip()
+            if not t:
+                continue
+            kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
+            if "ALTIN" in kind:
+                altin_tickers.append(t)
+
+        ref_close_map = chain.get("ref_close", {}) or {}
+        if not altin_tickers:
+            altin_tickers = list(ref_close_map.keys())[:6]
+
+        perf_lines = []
+        for t in altin_tickers[:6]:
+            ref_close = safe_float(ref_close_map.get(t))
+            now_row = all_map.get(t) or {}
+            now_close = safe_float(now_row.get("close"))
+
+            dd = pct_change(now_close, ref_close)
+            dd_s = f"{dd:+.2f}%" if dd == dd else "n/a"
+
+            perf_lines.append((t, dd_s))
+
+        if not perf_lines:
+            return ""
+
+        header = "\n\n<b>ALTIN • Canlı Performans</b>\n"
+        body = "\n".join([f"• {t}: {dd_s}" for (t, dd_s) in perf_lines])
+        return header + body
+
+    except Exception as e:
+        logger.exception("Tomorrow ALTIN perf section error: %s", e)
+        return ""
 
 def format_volume(v: Any) -> str:
     try:
