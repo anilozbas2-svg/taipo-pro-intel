@@ -1821,6 +1821,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if perf_section:
         msg = msg + "\n\n" + perf_section
 
+
     await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
