@@ -2022,7 +2022,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
         if w_rows:
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
-
+            
         # =========================================================
         # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
         # =========================================================
@@ -2042,49 +2042,45 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 chain = TOMORROW_CHAINS.get(latest_key, {}) or {}
 
-                # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
                 altin_tickers = []
                 t_rows = chain.get("rows", []) or []
                 for rr in t_rows:
                     t = (rr.get("ticker") or "").strip()
                     if not t:
                         continue
-                    kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
-                    # farklı isimlendirmelere tolerans
+                    kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").upper()
                     if "ALTIN" in kind:
                         altin_tickers.append(t)
 
-                # rows'ta ALTIN yakalayamadıysa: ref_close'tan ilk N taneyi al (fallback)
                 ref_close_map = chain.get("ref_close", {}) or {}
                 if not altin_tickers:
                     altin_tickers = list(ref_close_map.keys())[:6]
 
-                # 2) ref_close ile güncel close kıyasla
                 perf_lines = []
                 for t in altin_tickers[:6]:
                     ref_close = safe_float(ref_close_map.get(t))
-                    now_row = all_map.get(t) or {}
-                    now_close = safe_float(now_row.get("close"))
+                    now_row = all_map.get(t)
+                    now_close = safe_float((now_row or {}).get("close"))
 
-                    # güvenlik: NaN / 0 / eksik veri varsa satırı geç
                     if not (ref_close == ref_close and now_close == now_close and ref_close > 0):
                         continue
 
-                    dd = pct_change(now_close, ref_close)  # şimdi vs ref
+                    dd = pct_change(now_close, ref_close)
                     dd_s = f"{dd:+.2f}%" if dd == dd else "n/a"
-                    now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
-                    ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
+                    now_s = f"{now_close:.2f}"
+                    ref_s = f"{ref_close:.2f}"
 
                     perf_lines.append((t, dd_s, now_s, ref_s))
 
                 if perf_lines:
-                    # Telegram HTML <pre> bloğu: hizalı tablo
                     header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
-                    lines = []
-                    lines.append("HIS   Δ%       NOW     REF")
-                    lines.append("----------------------------")
-                    for (t, dd_s, now_s, ref_s) in perf_lines:
+                    lines = [
+                        "HIS   Δ%       NOW     REF",
+                        "----------------------------"
+                    ]
+                    for t, dd_s, now_s, ref_s in perf_lines:
                         lines.append(f"{t:<5} {dd_s:>7}  {now_s:>7}  {ref_s:>7}")
+
                     tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
 
         except Exception as e:
