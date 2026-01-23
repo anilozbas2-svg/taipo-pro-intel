@@ -2213,7 +2213,13 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("Alarm job error: %s", e)
 
-
+async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        await update.message.reply_text("⏳ Alarm manuel tetikleniyor…")
+        await job_alarm(context)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Alarm çalıştırılamadı:\n<code>{e}</code>", parse_mode=ParseMode.HTML)
+        
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
@@ -2529,7 +2535,8 @@ def main() -> None:
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
-
+    app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
+    
     app.add_error_handler(on_error)
 
     schedule_jobs(app)
