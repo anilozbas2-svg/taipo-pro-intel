@@ -2073,7 +2073,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
     if not force and not within_alarm_window(now_tr()):
-    return
+        return
 
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
