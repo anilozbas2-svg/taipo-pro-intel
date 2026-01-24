@@ -2130,14 +2130,19 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
 
-        # Tomorrow zincirinden ALTIN tickers + ref_close al
+      # Tomorrow zinciri yoksa otomatik üret
+        if not TOMORROW_CHAINS:
+            logger.info("ALTIN follow: Tomorrow zinciri yok, otomatik üretiliyor.")
+            await job_tomorrow_list(context)
+
+        # HÂLÂ yoksa gerçekten hata ver
         if not TOMORROW_CHAINS:
             await context.bot.send_message(
                 chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ Tomorrow zinciri yok. Önce /tomorrow ile listeyi üret.",
+                text="⚠️ Tomorrow zinciri üretilemedi. /tomorrow komutunu manuel dene.",
                 parse_mode=ParseMode.HTML
             )
-            return
+            return 
 
         latest_key = max(
             TOMORROW_CHAINS.keys(),
