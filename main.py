@@ -2332,10 +2332,13 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await update.message.reply_text("⏳ Alarm manuel tetikleniyor…")
-        await job_alarm_scan(context, force=True)
+        await update.message.reply_text("⏳ ALTIN takip manuel tetikleniyor...")
+        await job_altin_follow(context, force=True)
     except Exception as e:
-        await update.message.reply_text(f"❌ Alarm çalıştırılamadı:\n<code>{e}</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(
+            f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
+            parse_mode=ParseMode.HTML
+        )
         
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
@@ -2607,7 +2610,7 @@ def schedule_jobs(app: Application) -> None:
     if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID and getattr(app, "job_queue", None) is not None:
         first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
         app.job_queue.run_repeating(
-            job_tomorrow_follow,
+            job_altin_follow,
             interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
             first=first_tf,
             name="tomorrow_follow_repeating",
