@@ -2112,6 +2112,9 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
         if w_rows:
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
+    except Exception as e:
+        logger.exception("Alarm job error: %s", e)
+        return
 
 async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
     """Tomorrow ALTIN listesini canlı takip eder ve periyodik mesaj yollar."""
