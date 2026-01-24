@@ -2216,7 +2216,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await update.message.reply_text("⏳ Alarm manuel tetikleniyor…")
-        await job_alarm(context)
+        await job_alarm_scan(context, force=True)
     except Exception as e:
         await update.message.reply_text(f"❌ Alarm çalıştırılamadı:\n<code>{e}</code>", parse_mode=ParseMode.HTML)
         
