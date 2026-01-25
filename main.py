@@ -213,14 +213,14 @@ def build_tomorrow_altin_perf_section(all_rows, TOMORROW_CHAINS) -> str:
         }
 
         if not TOMORROW_CHAINS:
-                return ""
+            return ""
 
-            active_key = today_key_tradingday()
-            if active_key not in TOMORROW_CHAINS:
-                active_key = max(
-                    TOMORROW_CHAINS.keys(),
-                    key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-    )
+        active_key = today_key_tradingday()
+        if active_key not in TOMORROW_CHAINS:
+            active_key = max(
+                TOMORROW_CHAINS.keys(),
+                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+            )
 
         chain = TOMORROW_CHAINS.get(active_key, {}) or {}
 
