@@ -2263,31 +2263,31 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
                 if (r.get("ticker") or "").strip()
             }
 
-            if TOMORROW_CHAINS:
-                active_key = today_key_tradingday()
-                if active_key not in TOMORROW_CHAINS:
-                    active_key = max(
-                        TOMORROW_CHAINS.keys(),
-                        key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-            )
+    if TOMORROW_CHAINS:
+            active_key = today_key_tradingday()
+            if active_key not in TOMORROW_CHAINS:
+                active_key = max(
+                    TOMORROW_CHAINS.keys(),
+                    key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+                )
 
             chain = TOMORROW_CHAINS.get(active_key, {}) or {}
 
-                # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
-                altin_tickers = []
-                t_rows = chain.get("rows", []) or []
-                for rr in t_rows:
-                    t = (rr.get("ticker") or "").strip()
-                    if not t:
-                        continue
-                    kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
-                    if "ALTIN" in kind:
-                        altin_tickers.append(t)
+            # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
+            altin_tickers = []
+            t_rows = chain.get("rows", []) or []
+            for rr in t_rows:
+                t = (rr.get("ticker") or "").strip()
+                if not t:
+                    continue
+                kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
+                if "ALTIN" in kind:
+                    altin_tickers.append(t)
 
-                ref_close_map = chain.get("ref_close", {}) or {}
-                if not altin_tickers:
-                    altin_tickers = list(ref_close_map.keys())[:6]
-
+            ref_close_map = chain.get("ref_close", {}) or {}
+            if not altin_tickers:
+                altin_tickers = list(ref_close_map.keys())[:6]
+                
                 # 2) ref_close ile güncel close kıyasla
                 perf_lines = []
                 for t in altin_tickers[:6]:
