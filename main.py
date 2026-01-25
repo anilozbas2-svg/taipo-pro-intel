@@ -594,7 +594,9 @@ def load_tomorrow_chains() -> None:
         logger.warning("load_tomorrow_chains failed: %s", e)
         TOMORROW_CHAINS = {}
 
+
 def save_tomorrow_chains() -> None:
+    global TOMORROW_CHAINS
     try:
         _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS or {})
     except Exception as e:
