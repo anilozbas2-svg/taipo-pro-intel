@@ -1502,14 +1502,18 @@ def build_alarm_message(
     tomorrow_section = ""
     try:
         if TOMORROW_CHAINS:
-            latest_key = max(
-                TOMORROW_CHAINS.keys(),
-                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-            )
-            blob = TOMORROW_CHAINS.get(latest_key, {}) or {}
+            key = today_key_tradingday()
+
+            if key not in TOMORROW_CHAINS:
+                key = max(
+                    TOMORROW_CHAINS.keys(),
+                    key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0)
+        )
+
+            blob = TOMORROW_CHAINS.get(key, {}) or {}
             t_rows = blob.get("rows", []) or []
             t_chain_id = blob.get("chain_id", make_chain_id("TOMORROW"))
-            t_ref_day_key = blob.get("ref_day_key", latest_key)
+            t_ref_day_key = blob.get("ref_day_key", key)
 
             tomorrow_section = format_tomorrow_section(
                 tomorrow_rows=t_rows,
@@ -2151,16 +2155,14 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
             )
             return 
 
-        latest_key = max(
-            TOMORROW_CHAINS.keys(),
-            key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0)
-        )
-        chain = TOMORROW_CHAINS.get(latest_key, {}) or {}
+        key = today_key_tradingday()
 
-        rows = chain.get("rows", []) or []
-        ref_close_map = chain.get("ref_close", {}) or {}
-        # ✅ zinciri RAM'e kaydet (ALTIN follow buradan okuyacak)
-        key = latest_key
+TOMORROW_CHAINS[key] = {
+    "ts": time.time(),
+    "rows": rows,
+    "ref_close": ref_close_map,
+}
+logger.info("Tomorrow zinciri RAM'e yazildi | key=%s | rows=%d", key, len(rows))
 
         TOMORROW_CHAINS[key] = {
         "ts": time.time(),
