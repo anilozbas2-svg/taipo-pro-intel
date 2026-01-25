@@ -2250,106 +2250,109 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
             text=f"❌ ALTIN takip hata:\n<code>{e}</code>",
             parse_mode=ParseMode.HTML
         )
-        
-        # =========================================================
-        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek) + EMOJI
-        # =========================================================
-        tomorrow_perf_section = ""
-        try:
-            # all_rows -> hızlı lookup (ticker -> row)
-            all_map = {
-                (r.get("ticker") or "").strip(): r
-                for r in (all_rows or [])
-                if (r.get("ticker") or "").strip()
-            }
 
-            if TOMORROW_CHAINS:
-            active_key = today_key_tradingday()
-            if active_key not in TOMORROW_CHAINS:
-                active_key = max(
-                    TOMORROW_CHAINS.keys(),
-                    key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-                )
+# =========================================================
+# ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek) + EMOJI
+# =========================================================
+tomorrow_perf_section = ""
+try:
+    # all_rows -> hızlı lookup (ticker -> row)
+    all_map = {
+        (r.get("ticker") or "").strip(): r
+        for r in (all_rows or [])
+        if (r.get("ticker") or "").strip()
+    }
 
-            chain = TOMORROW_CHAINS.get(active_key, {}) or {}
+    # active chain seç (bugün yoksa en güncel ts'li olanı al)
+    if TOMORROW_CHAINS:
+        active_key = today_key_tradingday()
+        if active_key not in TOMORROW_CHAINS:
+            active_key = max(
+                TOMORROW_CHAINS.keys(),
+                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+            )
+        chain = TOMORROW_CHAINS.get(active_key, {}) or {}
+    else:
+        chain = {}
 
-            # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
-            altin_tickers = []
-            t_rows = chain.get("rows", []) or []
-            for rr in t_rows:
-                t = (rr.get("ticker") or "").strip()
-                if not t:
-                    continue
-                kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
-                if "ALTIN" in kind:
-                    altin_tickers.append(t)
+    # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
+    altin_tickers = []
+    t_rows = chain.get("rows", []) or []
+    for rr in t_rows:
+        t = (rr.get("ticker") or "").strip()
+        if not t:
+            continue
+        kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
+        if "ALTIN" in kind:
+            altin_tickers.append(t)
 
-            ref_close_map = chain.get("ref_close", {}) or {}
-            if not altin_tickers:
-                altin_tickers = list(ref_close_map.keys())[:6]
-                
-                # 2) ref_close ile güncel close kıyasla
-                perf_lines = []
-                for t in altin_tickers[:6]:
-                    ref_close = safe_float(ref_close_map.get(t))
-                    now_row = all_map.get(t) or {}
-                    now_close = safe_float(now_row.get("close"))
+    ref_close_map = chain.get("ref_close", {}) or {}
+    if not altin_tickers:
+        altin_tickers = list(ref_close_map.keys())[:6]
 
-                    # pct_change NaN olabilir
-                    dd = pct_change(now_close, ref_close)
+    # 2) ref_close ile güncel close kıyasla
+    perf_lines = []
+    for t in altin_tickers[:6]:
+        ref_close = safe_float(ref_close_map.get(t))
+        now_row = all_map.get(t) or {}
+        now_close = safe_float(now_row.get("close"))
 
-                    # sade emoji
-                    if dd == dd:
-                        if dd > 0:
-                            mark = "🟢"
-                        elif dd < 0:
-                            mark = "🔴"
-                        else:
-                            mark = "⚪"
-                        dd_s = f"{mark} {dd:+.2f}%"
-                    else:
-                        dd_s = "⚪ n/a"
+        # pct_change NaN olabilir
+        dd = pct_change(now_close, ref_close)
 
-                    now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
-                    ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
+        # sade emoji
+        if dd == dd:
+            if dd > 0:
+                mark = "🟢"
+            elif dd < 0:
+                mark = "🔴"
+            else:
+                mark = "⚪"
+            dd_s = f"{mark} {dd:+.2f}%"
+        else:
+            dd_s = "⚪ n/a"
 
-                    perf_lines.append((t, dd_s, now_s, ref_s))
+        now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
+        ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
 
-                if perf_lines:
-                    header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
-                    lines = []
-                    lines.append("HIS   Δ%          NOW      REF")
-                    lines.append("-------------------------------")
-                    for (t, dd_s, now_s, ref_s) in perf_lines:
-                        # dd_s emoji + yüzde olduğu için genişlik biraz daha fazla
-                        lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
-                    tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
+        perf_lines.append((t, dd_s, now_s, ref_s))
 
-        except Exception as e:
-            logger.exception("ALARM -> Tomorrow performans ekleme hatası: %s", e)
-            tomorrow_perf_section = ""
+    if perf_lines:
+        header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
+        lines = []
+        lines.append("HIS   Δ%          NOW      REF")
+        lines.append("-------------------------------")
+        for (t, dd_s, now_s, ref_s) in perf_lines:
+            # dd_s emoji + yüzde olduğu için genişlik biraz daha fazla
+            lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
+        tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
 
-        # --- Alarm mesajını üret ---
-        text = build_alarm_message(
-            alarm_rows=alarm_rows,
-            watch_rows=w_rows,
-            xu_close=xu_close,
-            xu_change=xu_change,
-            thresh_s=thresh_s,
-            top_n=VOLUME_TOP_N,
-            reg=reg,
-        )
+except Exception as e:
+    logger.exception("ALARM -> Tomorrow performans ekleme hatası: %s", e)
+    tomorrow_perf_section = ""
 
-        # ✅ Alarm mesajının sonuna ekle
-        if tomorrow_perf_section:
-            text = text + tomorrow_perf_section
 
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=text,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
-        )
+# --- Alarm mesajını üret ---
+text = build_alarm_message(
+    alarm_rows=alarm_rows,
+    watch_rows=w_rows,
+    xu_close=xu_close,
+    xu_change=xu_change,
+    thresh_s=thresh_s,
+    top_n=VOLUME_TOP_N,
+    reg=reg,
+)
+
+# ✅ Alarm mesajının sonuna ekle
+if tomorrow_perf_section:
+    text = text + tomorrow_perf_section
+
+await context.bot.send_message(
+    chat_id=int(ALARM_CHAT_ID),
+    text=text,
+    parse_mode=ParseMode.HTML,
+    disable_web_page_preview=True
+)
 
     except Exception as e:
         logger.exception("Alarm job error: %s", e)
