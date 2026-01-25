@@ -205,6 +205,7 @@ def build_tomorrow_altin_perf_section(all_rows, TOMORROW_CHAINS) -> str:
     Tomorrow zincirindeki ALTIN listesini alır ve ref_close -> now_close % farkını basar.
     /tomorrow ve alarm mesajlarında kullanılabilir.
     """
+   
     try:
         all_map = {
             (r.get("ticker") or "").strip(): r
@@ -2264,7 +2265,7 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 
             if TOMORROW_CHAINS:
                 active_key = today_key_tradingday()
-        if active_key not in TOMORROW_CHAINS:
+            if active_key not in TOMORROW_CHAINS:
             active_key = max(
                 TOMORROW_CHAINS.keys(),
                 key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
