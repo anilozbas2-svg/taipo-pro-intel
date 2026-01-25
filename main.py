@@ -69,6 +69,11 @@ TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))
 TOMORROW_FOLLOW_ENABLED = int(os.getenv("TOMORROW_FOLLOW_ENABLED", "1")) == 1
 TOMORROW_FOLLOW_INTERVAL_MIN = int(os.getenv("TOMORROW_FOLLOW_INTERVAL_MIN", "60"))
 
+# ===========================
+# Tomorrow chain RAM cache
+# ===========================
+TOMORROW_CHAINS: dict = {}
+
 TOMORROW_FOLLOW_START_HOUR = int(os.getenv("TOMORROW_FOLLOW_START_HOUR", "10"))
 TOMORROW_FOLLOW_START_MIN = int(os.getenv("TOMORROW_FOLLOW_START_MIN", "30"))
 TOMORROW_FOLLOW_END_HOUR = int(os.getenv("TOMORROW_FOLLOW_END_HOUR", "17"))
@@ -2406,6 +2411,25 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         tom_rows = build_tomorrow_rows(rows)
         cand_rows = build_candidate_rows(rows, tom_rows)
         save_tomorrow_snapshot(tom_rows, xu_change)
+        
+        # ==============================
+        # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
+        # ==============================
+        global TOMORROW_CHAINS
+
+        key = today_key_tradingday()  # follow ile aynı key
+
+    TOMORROW_CHAINS[key] = {
+    "ts": time.time(),
+    "rows": tom_rows,
+    "ref_close": {r["symbol"]: r.get("ref_close") for r in tom_rows if r.get("symbol")},
+}
+
+logger.info(
+    "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
+    key,
+    len(tom_rows)
+)
 
         msg = r0_block + build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
         await context.bot.send_message(
@@ -2650,6 +2674,7 @@ def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip() or os.getenv("TELEGRAM_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
+        
 
     load_last_alarm_ts()
     load_whale_sent_day()
