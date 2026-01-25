@@ -2153,15 +2153,15 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
         rows = chain.get("rows", []) or []
         ref_close_map = chain.get("ref_close", {}) or {}
         # ✅ zinciri RAM'e kaydet (ALTIN follow buradan okuyacak)
-key = latest_key  # veya senin rapor key'in neyse aynısı
+            key = latest_key
 
-TOMORROW_CHAINS[key] = {
-    "ts": time.time(),
-    "rows": rows,
-    "ref_close": ref_close_map,
-}
+        TOMORROW_CHAINS[key] = {
+        "ts": time.time(),
+        "rows": rows,
+        "ref_close": ref_close_map,
+         }
 
-logger.info("Tomorrow zinciri kaydedildi | key=%s | rows=%d", key, len(rows))
+        logger.info("Tomorrow zinciri kaydedildi | key=%s | rows=%d", key, len(rows))
 
         altin_tickers = []
         for r in rows:
