@@ -2160,13 +2160,6 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 
         key = today_key_tradingday()
 
-TOMORROW_CHAINS[key] = {
-    "ts": time.time(),
-    "rows": rows,
-    "ref_close": ref_close_map,
-}
-logger.info("Tomorrow zinciri RAM'e yazildi | key=%s | rows=%d", key, len(rows))
-
         TOMORROW_CHAINS[key] = {
         "ts": time.time(),
         "rows": rows,
