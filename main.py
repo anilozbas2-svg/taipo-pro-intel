@@ -2267,11 +2267,14 @@ logger.info("Tomorrow zinciri RAM'e yazildi | key=%s | rows=%d", key, len(rows))
             }
 
             if TOMORROW_CHAINS:
-                latest_key = max(
-                    TOMORROW_CHAINS.keys(),
-                    key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-                )
-                chain = TOMORROW_CHAINS.get(latest_key, {}) or {}
+                active_key = today_key_tradingday()
+        if active_key not in TOMORROW_CHAINS:
+            active_key = max(
+                TOMORROW_CHAINS.keys(),
+                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+            )
+
+        chain = TOMORROW_CHAINS.get(active_key, {}) or {}
 
                 # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
                 altin_tickers = []
