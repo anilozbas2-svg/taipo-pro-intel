@@ -2263,7 +2263,7 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
                 if (r.get("ticker") or "").strip()
             }
 
-    if TOMORROW_CHAINS:
+            if TOMORROW_CHAINS:
             active_key = today_key_tradingday()
             if active_key not in TOMORROW_CHAINS:
                 active_key = max(
