@@ -2265,13 +2265,13 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 
             if TOMORROW_CHAINS:
                 active_key = today_key_tradingday()
-            if active_key not in TOMORROW_CHAINS:
-            active_key = max(
-                TOMORROW_CHAINS.keys(),
-                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+                if active_key not in TOMORROW_CHAINS:
+                    active_key = max(
+                        TOMORROW_CHAINS.keys(),
+                        key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
             )
 
-        chain = TOMORROW_CHAINS.get(active_key, {}) or {}
+            chain = TOMORROW_CHAINS.get(active_key, {}) or {}
 
                 # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
                 altin_tickers = []
