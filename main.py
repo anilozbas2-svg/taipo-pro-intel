@@ -2354,9 +2354,6 @@ await context.bot.send_message(
     disable_web_page_preview=True
 )
 
-    except Exception as e:
-        logger.exception("Alarm job error: %s", e)
-
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await update.message.reply_text("⏳ ALTIN takip manuel tetikleniyor...")
