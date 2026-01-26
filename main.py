@@ -196,6 +196,33 @@ def write_trade_log(record: dict) -> None:
     except Exception as e:
         logger.exception("Trade log write error: %s", e)
 
+def ensure_tomorrow_chains_loaded() -> None:
+    """
+    TOMORROW_CHAINS RAM boşsa diskten yüklemeyi dener.
+    (Deploy/restart sonrası /alarm_run için şart)
+    """
+    global TOMORROW_CHAINS
+    if TOMORROW_CHAINS:
+        return
+    try:
+        TOMORROW_CHAINS = load_tomorrow_chains() or {}
+    except Exception:
+        TOMORROW_CHAINS = {}
+
+
+def pick_active_tomorrow_chain() -> dict:
+    """
+    Bugünün key'i yoksa en güncel ts'li chain'i seçer.
+    """
+    if not TOMORROW_CHAINS:
+        return {}
+    active_key = today_key_tradingday()
+    if active_key not in TOMORROW_CHAINS:
+        active_key = max(
+            TOMORROW_CHAINS.keys(),
+            key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+        )
+    return TOMORROW_CHAINS.get(active_key, {}) or {}
 
 def safe_float(x: Any) -> float:
     try:
@@ -2382,17 +2409,18 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         logger.exception("Alarm job error: %s", e)
         return
 
-async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_alarm_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
-        await job_altin_live_follow(context, force=True)
+        await update.message.reply_text("⏳ Alarm taraması manuel tetikleniyor...")
+        await job_alarm_scan(context, force=True)
+        await update.message.reply_text("✅ Alarm taraması tamamlandı.")
     except Exception as e:
         await update.message.reply_text(
-            f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
+            f"❌ Alarm taraması çalıştırılamadı:\n<code>{e}</code>",
             parse_mode=ParseMode.HTML,
         )
 
-async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE, send_report: bool = True) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
@@ -2404,7 +2432,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     global LAST_REGIME
 
     try:
-        if TOMORROW_DELAY_MIN > 0:
+        if TOMORROW_DELAY_MIN > 0 and send_report:
             await asyncio.sleep(max(0, int(TOMORROW_DELAY_MIN)) * 60)
 
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
@@ -2414,18 +2442,19 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         LAST_REGIME = reg
 
         if REJIM_GATE_TOMORROW and reg.get("block"):
-            msg = (
-                f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b>\n"
-                f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
-                f"{format_regime_line(reg)}\n\n"
-                f"⛔️ <b>Rejim BLOK olduğu için Tomorrow listesi gönderilmedi.</b>"
-            )
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text=msg,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
+            if send_report:
+                msg = (
+                    f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b>\n"
+                    f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+                    f"{format_regime_line(reg)}\n\n"
+                    f"⛔️ <b>Rejim BLOK olduğu için Tomorrow listesi gönderilmedi.</b>"
+                )
+                await context.bot.send_message(
+                    chat_id=int(ALARM_CHAT_ID),
+                    text=msg,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
             return
 
         rows = await build_rows_from_is_list(bist200_list, xu_change)
@@ -2433,7 +2462,6 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
 
-        # ✅ R0 bloğu (otomatik gönderimde de üstte görünsün)
         r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
         r0_block = ""
         if r0_rows:
@@ -2453,28 +2481,23 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         cand_rows = build_candidate_rows(rows, tom_rows)
         save_tomorrow_snapshot(tom_rows, xu_change)
 
-        # ==============================
-        # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
-        # ==============================
-        key = today_key_tradingday()  # follow ile aynı key
-
+        key = today_key_tradingday()
         TOMORROW_CHAINS[key] = {
             "ts": time.time(),
             "rows": tom_rows,
             "ref_close": {
-                (r.get("symbol") or ""): r.get("ref_close")
+                (r.get("symbol") or "").strip(): r.get("ref_close")
                 for r in (tom_rows or [])
-                if r.get("symbol")
+                if (r.get("symbol") or "").strip()
             },
         }
-        # zinciri diske de yaz (restart olursa kaybolmasin)
+
         save_tomorrow_chains()
 
-        logger.info(
-            "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
-            key,
-            len(tom_rows),
-        )
+        logger.info("Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d", key, len(tom_rows))
+
+        if not send_report:
+            return
 
         msg = r0_block + build_tomorrow_message(
             tom_rows,
@@ -2881,6 +2904,8 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
+    
+    add_handler(CommandHandler("alarm_scan", cmd_alarm_scan))
     
     app.add_error_handler(on_error)
 
