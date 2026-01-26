@@ -2417,8 +2417,8 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         save_tomorrow_snapshot(tom_rows, xu_change)
         
 # ==============================
-# ✅ TOMORROW ZİNCİRİ RAM'E YAZ
-# ==============================
+        # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
+        # ==============================
         global TOMORROW_CHAINS
 
         try:
@@ -2428,8 +2428,8 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
                 "ts": time.time(),
                 "rows": tom_rows,
                 "ref_close": {
-                    r["symbol"]: r.get("ref_close")
-                    for r in tom_rows
+                    (r.get("symbol") or ""): r.get("ref_close")
+                    for r in (tom_rows or [])
                     if r.get("symbol")
                 },
             }
