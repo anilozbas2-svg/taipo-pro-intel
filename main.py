@@ -2922,7 +2922,7 @@ def main() -> None:
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     
-    add_handler(CommandHandler("alarm_scan", cmd_alarm_scan))
+    app.add_handler(CommandHandler("alarm_scan", cmd_alarm_scan))
     
     app.add_error_handler(on_error)
 
