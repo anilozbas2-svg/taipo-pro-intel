@@ -2342,10 +2342,10 @@ text = build_alarm_message(
 )
 
 # ✅ Alarm mesajının sonuna ekle
-if tomorrow_perf_section:
+    if tomorrow_perf_section:
     text = text + tomorrow_perf_section
 
-await context.bot.send_message(
+    await context.bot.send_message(
     chat_id=int(ALARM_CHAT_ID),
     text=text,
     parse_mode=ParseMode.HTML,
