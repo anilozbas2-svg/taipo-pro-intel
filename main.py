@@ -2467,6 +2467,8 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
                 if r.get("symbol")
             },
         }
+        # zinciri diske de yaz (restart olursa kaybolmasin)
+        save_tomorrow_chains()
 
         logger.info(
             "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
@@ -2508,14 +2510,23 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
 
-        if not TOMORROW_CHAINS:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            return
+        global TOMORROW_CHAINS
+
+if not TOMORROW_CHAINS:
+    try:
+        TOMORROW_CHAINS = load_tomorrow_chains() or {}
+    except Exception:
+        TOMORROW_CHAINS = {}
+
+if not TOMORROW_CHAINS:
+    keys_s = ", ".join(list(TOMORROW_CHAINS.keys())[:6])
+    await context.bot.send_message(
+        chat_id=int(ALARM_CHAT_ID),
+        text=f"⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır. | keys: {keys_s}",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+    return
 
         altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
         if not altin_tickers:
