@@ -2437,10 +2437,10 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
         altin_tickers = []
         t_rows = chain.get("rows", []) or []
         for rr in t_rows:
-        t = (rr.get("ticker") or "").strip()
-        if not t:
+            t = (rr.get("ticker") or "").strip()
+            if not t:
             continue
-        kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
+            kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
         if "ALTIN" in kind:
             altin_tickers.append(t)
 
