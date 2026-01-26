@@ -2506,10 +2506,6 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
     if (not force) and (not within_altin_follow_window(now)):
         return
 
-    try:
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-
         global TOMORROW_CHAINS
 
 if not TOMORROW_CHAINS:
@@ -2527,6 +2523,10 @@ if not TOMORROW_CHAINS:
         disable_web_page_preview=True,
     )
     return
+    
+    try:
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
 
         altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
         if not altin_tickers:
