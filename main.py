@@ -183,6 +183,7 @@ TOMORROW_CHAINS: Dict[str, Any] = {}
 # =========================================================
 # Helpers
 # =========================================================
+
 def write_trade_log(record: dict) -> None:
     """
     Appends one JSON object per line into TRADE_LOG_FILE (jsonl).
@@ -195,17 +196,20 @@ def write_trade_log(record: dict) -> None:
     except Exception as e:
         logger.exception("Trade log write error: %s", e)
 
+
 def safe_float(x: Any) -> float:
     try:
         return float(x)
     except Exception:
         return float("nan")
-def build_tomorrow_altin_perf_section(all_rows, TOMORROW_CHAINS) -> str:
+
+
+def build_tomorrow_altin_perf_section(all_rows: list) -> str:
     """
     Tomorrow zincirindeki ALTIN listesini alır ve ref_close -> now_close % farkını basar.
-    /tomorrow ve alarm mesajlarında kullanılabilir.
+    Alarm mesajına veya /tomorrow çıktısına eklenebilir.
+    HTML döner (<pre> dahil). Hata olursa "" döner.
     """
-   
     try:
         all_map = {
             (r.get("ticker") or "").strip(): r
@@ -224,43 +228,63 @@ def build_tomorrow_altin_perf_section(all_rows, TOMORROW_CHAINS) -> str:
             )
 
         chain = TOMORROW_CHAINS.get(active_key, {}) or {}
+        t_rows = chain.get("rows", []) or []
+        ref_close_map = chain.get("ref_close", {}) or {}
 
         # ALTIN tickers
         altin_tickers = []
-        t_rows = chain.get("rows", []) or []
         for rr in t_rows:
-            t = (rr.get("ticker") or "").strip()
+            t = (rr.get("ticker") or rr.get("symbol") or "").strip()
             if not t:
                 continue
             kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
             if "ALTIN" in kind:
                 altin_tickers.append(t)
 
-        ref_close_map = chain.get("ref_close", {}) or {}
         if not altin_tickers:
             altin_tickers = list(ref_close_map.keys())[:6]
+
+        if not altin_tickers:
+            return ""
 
         perf_lines = []
         for t in altin_tickers[:6]:
             ref_close = safe_float(ref_close_map.get(t))
             now_row = all_map.get(t) or {}
             now_close = safe_float(now_row.get("close"))
-
             dd = pct_change(now_close, ref_close)
-            dd_s = f"{dd:+.2f}%" if dd == dd else "n/a"
 
-            perf_lines.append((t, dd_s))
+            if dd == dd:
+                if dd > 0:
+                    mark = "🟢"
+                elif dd < 0:
+                    mark = "🔴"
+                else:
+                    mark = "⚪"
+                dd_s = f"{mark} {dd:+.2f}%"
+            else:
+                dd_s = "⚪ n/a"
+
+            now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
+            ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
+            perf_lines.append((t, dd_s, now_s, ref_s))
 
         if not perf_lines:
             return ""
 
-        header = "\n\n<b>ALTIN • Canlı Performans</b>\n"
-        body = "\n".join([f"• {t}: {dd_s}" for (t, dd_s) in perf_lines])
-        return header + body
+        header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
+        lines = []
+        lines.append("HIS   Δ%          NOW      REF")
+        lines.append("-------------------------------")
+        for (t, dd_s, now_s, ref_s) in perf_lines:
+            lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
+
+        return header + "<pre>" + "\n".join(lines) + "</pre>"
 
     except Exception as e:
         logger.exception("Tomorrow ALTIN perf section error: %s", e)
         return ""
+
 
 def format_volume(v: Any) -> str:
     try:
@@ -277,6 +301,7 @@ def format_volume(v: Any) -> str:
         return f"{n/1_000:.0f}K"
     return f"{n:.0f}"
 
+
 def env_csv(name: str, default: str = "") -> List[str]:
     raw = os.getenv(name, default)
     if raw is None:
@@ -286,11 +311,13 @@ def env_csv(name: str, default: str = "") -> List[str]:
         return []
     return [p.strip().upper() for p in raw.split(",") if p.strip()]
 
+
 def env_csv_fallback(primary: str, fallback: str, default: str = "") -> List[str]:
     lst = env_csv(primary, default)
     if lst:
         return lst
     return env_csv(fallback, default)
+
 
 def normalize_is_ticker(t: str) -> str:
     t = t.strip().upper()
@@ -2226,297 +2253,88 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         return
 
 
-async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
-    """Tomorrow ALTIN listesini canlı takip eder ve periyodik mesaj yollar."""
+async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
     if (not force) and (not within_alarm_window(now_tr())):
         return
 
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return
+
     try:
+        # XU100
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
-        if not TOMORROW_CHAINS:
-            logger.info("ALTIN follow: Tomorrow zinciri yok, otomatik üretiliyor.")
-            await job_tomorrow_list(context)
+        global LAST_REGIME
+        LAST_REGIME = reg
 
-        if not TOMORROW_CHAINS:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ Tomorrow zinciri üretilemedi. /tomorrow komutunu manuel dene.",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
+        if REJIM_GATE_ALARM and reg.get("block"):
             return
 
-        active_key = today_key_tradingday()
-        if active_key not in TOMORROW_CHAINS:
-            active_key = max(
-                TOMORROW_CHAINS.keys(),
-                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-            )
-        chain = TOMORROW_CHAINS.get(active_key, {}) or {}
-
-        ref_close_map = chain.get("ref_close", {}) or {}
-        t_rows = chain.get("rows", []) or []
-
-        tickers = list(ref_close_map.keys())
-        if not tickers:
-            tickers = [
-                (rr.get("ticker") or rr.get("symbol") or "").strip()
-                for rr in t_rows
-                if (rr.get("ticker") or rr.get("symbol") or "").strip()
-            ]
-
-        if not tickers:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ Tomorrow zincirinde ticker bulunamadı.",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            return
-
-        rows_now = await build_rows_from_is_list(tickers, xu_change)
-        all_map = {
-            (r.get("ticker") or "").strip(): r
-            for r in (rows_now or [])
-            if (r.get("ticker") or "").strip()
-        }
-
-        altin_tickers = []
-        for rr in t_rows:
-            t = (rr.get("ticker") or rr.get("symbol") or "").strip()
-            if not t:
-                continue
-            kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
-            if "ALTIN" in kind:
-                altin_tickers.append(t)
-
-        if not altin_tickers:
-            altin_tickers = list(ref_close_map.keys())[:6]
-
-        perf_lines = []
-        for t in altin_tickers[:6]:
-            ref_close = safe_float(ref_close_map.get(t))
-            now_row = all_map.get(t) or {}
-            now_close = safe_float(now_row.get("close"))
-            dd = pct_change(now_close, ref_close)
-
-            if dd == dd:
-                if dd > 0:
-                    mark = "🟢"
-                elif dd < 0:
-                    mark = "🔴"
-                else:
-                    mark = "⚪"
-                dd_s = f"{mark} {dd:+.2f}%"
-            else:
-                dd_s = "⚪ n/a"
-
-            now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
-            ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
-            perf_lines.append((t, dd_s, now_s, ref_s))
-
-        if not perf_lines:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ ALTIN performans tablosu üretilemedi (veri boş).",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            return
-
-        header = "⏳ <b>ALTIN Follow (Canlı)</b>\n"
-        lines = []
-        lines.append("HIS   Δ%          NOW      REF")
-        lines.append("-------------------------------")
-        for (t, dd_s, now_s, ref_s) in perf_lines:
-            lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
-
-        msg = header + "<pre>" + "\n".join(lines) + "</pre>"
-
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-
-    except Exception as e:
-        logger.exception("ALTIN follow error: %s", e)
-        return
-        
-        # ana listeden (BIST200) anlık row'ları çek
-        bist200_list = env_csv("BIST200_TICKERS")
-        if not bist200_list:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ BIST200_TICKERS env boş. Alarm taraması yapılamıyor.",
-                parse_mode=ParseMode.HTML
-            )
-            return
-
+        # --- Ana liste (BIST200) ---
         all_rows = await build_rows_from_is_list(bist200_list, xu_change)
-        all_map = { (r.get("ticker") or "").strip(): r for r in (all_rows or []) if (r.get("ticker") or "").strip() }
+        update_history_from_rows(all_rows)
+        min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
+        thresh_s = format_threshold(min_vol)
 
-        # performans satırlarını üret
-        perf_lines = []
-        for t in altin_tickers[:6]:
-            ref_close = safe_float(ref_close_map.get(t))
-            now_row = all_map.get(t) or {}
-            now_close = safe_float(now_row.get("close"))
-            dd = pct_change(now_close, ref_close)  # yüzde değişim
+        alarm_rows = filter_new_alarms(all_rows)
+        if not alarm_rows:
+            return
 
-            # emoji
-            if dd == dd:  # NaN değilse
-                emo = "🟢" if dd > 0 else ("🔴" if dd < 0 else "⚪️")
-                dd_s = f"{dd:+.2f}%"
-            else:
-                emo = "⚪️"
-                dd_s = "N/A"
+        ts_now = time.time()
+        for r in alarm_rows:
+            mark_alarm_sent((r.get("ticker") or "").strip(), ts_now)
+        save_last_alarm_ts()
 
-            ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "N/A"
-            now_s = f"{now_close:.2f}" if now_close == now_close else "N/A"
+        # --- Watchlist ---
+        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
+        watch = (watch or [])[:WATCHLIST_MAX]
+        w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
+        if w_rows:
+            _apply_signals_with_threshold(w_rows, xu_change, min_vol)
 
-            perf_lines.append((t, emo, dd_s, now_s, ref_s))
+        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
+        tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
 
-        header = (
-            f"✅ <b>ALTIN CANLI TAKİP</b>\n"
-            f"🕒 <b>{now_tr().strftime('%H:%M')}</b>\n"
-            f"📌 Referans: <code>{latest_key}</code>\n"
-            f"📈 XU100: <b>{xu_close:,.2f}</b>  ({xu_change:+.2f}%)\n\n"
-            f"<pre>TICKER  Δ%     NOW     REF\n"
-            f"---------------------------\n"
+        # --- Alarm mesajını üret ---
+        text = build_alarm_message(
+            alarm_rows=alarm_rows,
+            watch_rows=w_rows,
+            xu_close=xu_close,
+            xu_change=xu_change,
+            thresh_s=thresh_s,
+            top_n=VOLUME_TOP_N,
+            reg=reg,
         )
 
-        body = "\n".join([f"{t:<6} {emo} {dd_s:>7} {now_s:>7} {ref_s:>7}" for (t, emo, dd_s, now_s, ref_s) in perf_lines])
-        text = header + body + "</pre>"
+        if tomorrow_perf_section:
+            text = text + tomorrow_perf_section
 
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
             text=text,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
         )
 
     except Exception as e:
-        logger.exception("ALTIN follow job error: %s", e)
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=f"❌ ALTIN takip hata:\n<code>{e}</code>",
-            parse_mode=ParseMode.HTML
-        )
-
-    # =========================================================
-    # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek) + EMOJI
-    # =========================================================
-    tomorrow_perf_section = ""
-    try:
-        # all_rows -> hizli lookup (ticker -> row)
-        all_map = {
-            (r.get("ticker") or "").strip(): r
-            for r in (all_rows or [])
-            if (r.get("ticker") or "").strip()
-        }
-
-        # active chain seç (bugün yoksa en güncel ts'li olanı al)
-        if TOMORROW_CHAINS:
-            active_key = today_key_tradingday()
-            if active_key not in TOMORROW_CHAINS:
-                active_key = max(
-                TOMORROW_CHAINS.keys(),
-                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-               )
-            chain = TOMORROW_CHAINS.get(active_key, {}) or {}
-        else:
-            chain = {}
-
-        # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
-        altin_tickers = []
-        t_rows = chain.get("rows", []) or []
-        for rr in t_rows:
-            t = (rr.get("ticker") or "").strip()
-            if not t:
-            continue
-            kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
-        if "ALTIN" in kind:
-            altin_tickers.append(t)
-
-        ref_close_map = chain.get("ref_close", {}) or {}
-        if not altin_tickers:
-            altin_tickers = list(ref_close_map.keys())[:6]
-
-        # 2) ref_close ile güncel close kıyasla
-        perf_lines = []
-        for t in altin_tickers[:6]:
-            ref_close = safe_float(ref_close_map.get(t))
-            now_row = all_map.get(t) or {}
-            now_close = safe_float(now_row.get("close"))
-
-            dd = pct_change(now_close, ref_close)
-
-       if dd == dd:
-         if dd > 0:
-                mark = "🟢"
-            elif dd < 0:
-                mark = "🔴"
-            else:
-                mark = "⚪"
-            dd_s = f"{mark} {dd:+.2f}%"
-        else:
-            dd_s = "⚪ n/a"
-
-        now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
-        ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
-        perf_lines.append((t, dd_s, now_s, ref_s))
-
-    if perf_lines:
-        header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
-        lines = []
-        lines.append("HIS  Δ%         NOW      REF")
-        lines.append("---------------------------")
-        for (t, dd_s, now_s, ref_s) in perf_lines:
-            lines.append(f"{t:<5} {dd_s:<11} {now_s:>7} {ref_s:>7}")
-        tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
-    except Exception as e:
-        logger.exception("ALARM -> Tomorrow performans ekleme hatasi: %s", e)
-        tomorrow_perf_section = ""
-
-    # --- Alarm mesajını üret ---
-    text = build_alarm_message(
-             alarm_rows=alarm_rows,
-             watch_rows=w_rows,
-             xu_close=xu_close,
-             xu_change=xu_change,
-             thresh_s=thresh_s,
-             top_n=VOLUME_TOP_N,
-             reg=reg,
-    )
-
-    # ✅ Alarm mesajının sonuna ekle
-    if tomorrow_perf_section:
-        text = text + tomorrow_perf_section
-
-    await context.bot.send_message(
-        chat_id=int(ALARM_CHAT_ID),
-        text=text,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-     )
-
+        logger.exception("Alarm job error: %s", e)
+        return
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await update.message.reply_text("⏳ ALTIN takip manuel tetikleniyor...")
-        await job_altin_follow(context, force=True)
+        await update.message.reply_text("⏳ Alarm taraması manuel tetikleniyor...")
+        await job_alarm_scan(context, force=True)
+        await update.message.reply_text("✅ Alarm taraması bitti.")
     except Exception as e:
         await update.message.reply_text(
-            f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
+            f"❌ Alarm taraması çalıştırılamadı:\n<code>{e}</code>",
             parse_mode=ParseMode.HTML,
         )
-
 
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
