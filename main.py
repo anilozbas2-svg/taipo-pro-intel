@@ -2498,45 +2498,36 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
-
-    if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip() in ("0", "false", "False"):
+    if (not force) and (not within_alarm_window(now_tr())):
         return
 
-    now = now_tr()
-    if (not force) and (not within_altin_follow_window(now)):
+    global TOMORROW_CHAINS
+
+    if not TOMORROW_CHAINS:
+        try:
+            TOMORROW_CHAINS = load_tomorrow_chains() or {}
+        except Exception:
+            TOMORROW_CHAINS = {}
+
+    if not TOMORROW_CHAINS:
+        keys_s = ", ".join(list(TOMORROW_CHAINS.keys())[:6])
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text=f"⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır. | keys: {keys_s}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         return
 
-        global TOMORROW_CHAINS
-
-if not TOMORROW_CHAINS:
-    try:
-        TOMORROW_CHAINS = load_tomorrow_chains() or {}
-    except Exception:
-        TOMORROW_CHAINS = {}
-
-if not TOMORROW_CHAINS:
-    keys_s = ", ".join(list(TOMORROW_CHAINS.keys())[:6])
-    await context.bot.send_message(
-        chat_id=int(ALARM_CHAT_ID),
-        text=f"⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır. | keys: {keys_s}",
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
-    return
-    
     try:
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
 
-        altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
-        if not altin_tickers:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ ALTIN follow: Tomorrow zincirinde ALTIN tickers yok. Önce /tomorrow çalıştır.",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            return
+        # ... ALTIN LIVE devam kodların burada ...
+
+    except Exception as e:
+        logger.exception("ALTIN live follow error: %s", e)
+        return
 
         # Canlı fiyatlar
         rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
