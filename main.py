@@ -2485,7 +2485,7 @@ except Exception as e:
     tomorrow_perf_section = ""
 
 # --- Alarm mesajını üret ---
-  text = build_alarm_message(
+text = build_alarm_message(
          alarm_rows=alarm_rows,
          watch_rows=w_rows,
          xu_close=xu_close,
