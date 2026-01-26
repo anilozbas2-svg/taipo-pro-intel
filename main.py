@@ -2414,14 +2414,14 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 # =========================================================
 tomorrow_perf_section = ""
 try:
-        # all_rows -> hızlı lookup (ticker -> row)
-        all_map = {
+    # all_rows -> hizli lookup (ticker -> row)
+    all_map = {
         (r.get("ticker") or "").strip(): r
         for r in (all_rows or [])
         if (r.get("ticker") or "").strip()
     }
 
-        # active chain seç (bugün yoksa en güncel ts'li olanı al)
+    # active chain seç (bugün yoksa en güncel ts'li olanı al)
     if TOMORROW_CHAINS:
         active_key = today_key_tradingday()
         if active_key not in TOMORROW_CHAINS:
@@ -2455,10 +2455,8 @@ try:
         now_row = all_map.get(t) or {}
         now_close = safe_float(now_row.get("close"))
 
-        # pct_change NaN olabilir
         dd = pct_change(now_close, ref_close)
 
-        # sade emoji
         if dd == dd:
             if dd > 0:
                 mark = "🟢"
@@ -2472,20 +2470,18 @@ try:
 
         now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
         ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
-
         perf_lines.append((t, dd_s, now_s, ref_s))
 
     if perf_lines:
         header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
         lines = []
-        lines.append("HIS   Δ%          NOW      REF")
-        lines.append("-------------------------------")
+        lines.append("HIS  Δ%         NOW      REF")
+        lines.append("---------------------------")
         for (t, dd_s, now_s, ref_s) in perf_lines:
-            lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
+            lines.append(f"{t:<5} {dd_s:<11} {now_s:>7} {ref_s:>7}")
         tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
-
 except Exception as e:
-    logger.exception("ALARM -> Tomorrow performans ekleme hatası: %s", e)
+    logger.exception("ALARM -> Tomorrow performans ekleme hatasi: %s", e)
     tomorrow_perf_section = ""
 
 # --- Alarm mesajını üret ---
