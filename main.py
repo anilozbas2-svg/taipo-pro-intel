@@ -2456,7 +2456,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
             disable_web_page_preview=True,
         )
 
-    except Exception as e:
+     except Exception as e:
         logger.exception("Tomorrow job error: %s", e)
 
 async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
