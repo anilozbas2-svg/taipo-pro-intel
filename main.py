@@ -2323,14 +2323,12 @@ try:
         lines.append("HIS   Δ%          NOW      REF")
         lines.append("-------------------------------")
         for (t, dd_s, now_s, ref_s) in perf_lines:
-            # dd_s emoji + yüzde olduğu için genişlik biraz daha fazla
             lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
         tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
 
 except Exception as e:
     logger.exception("ALARM -> Tomorrow performans ekleme hatası: %s", e)
     tomorrow_perf_section = ""
-
 
 # --- Alarm mesajını üret ---
 text = build_alarm_message(
@@ -2351,8 +2349,9 @@ await context.bot.send_message(
     chat_id=int(ALARM_CHAT_ID),
     text=text,
     parse_mode=ParseMode.HTML,
-    disable_web_page_preview=True
+    disable_web_page_preview=True,
 )
+
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
@@ -2361,15 +2360,21 @@ async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         await update.message.reply_text(
             f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
         )
-        
+
+
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
+
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         return
+
+    global TOMORROW_CHAINS
+    global LAST_REGIME
+
     try:
         if TOMORROW_DELAY_MIN > 0:
             await asyncio.sleep(max(0, int(TOMORROW_DELAY_MIN)) * 60)
@@ -2378,7 +2383,6 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
-        global LAST_REGIME
         LAST_REGIME = reg
 
         if REJIM_GATE_TOMORROW and reg.get("block"):
@@ -2392,7 +2396,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=int(ALARM_CHAT_ID),
                 text=msg,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True
+                disable_web_page_preview=True,
             )
             return
 
@@ -2407,21 +2411,23 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         if r0_rows:
             r0_rows = sorted(
                 r0_rows,
-                key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
-                reverse=True
+                key=lambda x: (x.get("volume") or 0)
+                if x.get("volume") == x.get("volume")
+                else 0,
+                reverse=True,
             )[:8]
-            r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
+            r0_block = (
+                make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True)
+                + "\n\n"
+            )
 
         tom_rows = build_tomorrow_rows(rows)
         cand_rows = build_candidate_rows(rows, tom_rows)
         save_tomorrow_snapshot(tom_rows, xu_change)
-        
-    # ==============================
-    # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
-    # ==============================
-    global TOMORROW_CHAINS
 
-    try:
+        # ==============================
+        # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
+        # ==============================
         key = today_key_tradingday()  # follow ile aynı key
 
         TOMORROW_CHAINS[key] = {
@@ -2456,8 +2462,9 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
             disable_web_page_preview=True,
         )
 
-     except Exception as e:
+    except Exception as e:
         logger.exception("Tomorrow job error: %s", e)
+
 
 async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not TOMORROW_FOLLOW_ENABLED:
@@ -2471,9 +2478,7 @@ async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not chat_id:
         return
 
-    # XU100 bilgisi
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-
     reg = LAST_REGIME or {}
 
     changed = False
@@ -2484,13 +2489,11 @@ async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
         if chain.get("closed"):
             continue
 
-        # kaçıncı gün?
         try:
             age = (date.fromisoformat(today_key_tradingday()) - date.fromisoformat(ref_day_key)).days
         except Exception:
             age = 0
 
-        # ✅ 2 gün kuralı (T+1 ve T+2)
         if age >= TOMORROW_CHAIN_MAX_AGE:
             chain["closed"] = True
             changed = True
@@ -2531,19 +2534,21 @@ async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
             disable_web_page_preview=True,
         )
 
-        # checkpoint ekle
         checkpoints = chain.get("checkpoints", []) or []
-        checkpoints.append({
-            "t": now.isoformat(),
-            "day_key": today_key_tradingday(),
-            "prices": now_prices,
-        })
+        checkpoints.append(
+            {
+                "t": now.isoformat(),
+                "day_key": today_key_tradingday(),
+                "prices": now_prices,
+            }
+        )
         chain["checkpoints"] = checkpoints
         changed = True
 
     if changed:
         save_tomorrow_chains()
-        
+
+
 async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WHALE_ENABLED or not ALARM_CHAT_ID:
         return
@@ -2580,16 +2585,22 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
             t = r.get("ticker", "")
             if not t or t not in ref_map:
                 continue
+
             ref_close = ref_map[t]
             st = compute_30d_stats(t)
             if not st:
                 continue
+
             avg_vol = st.get("avg_vol", float("nan"))
             today_vol = r.get("volume", float("nan"))
             today_close = r.get("close", float("nan"))
             ch = r.get("change", float("nan"))
 
-            vol_ratio = (today_vol / avg_vol) if (avg_vol == avg_vol and avg_vol > 0 and today_vol == today_vol) else float("nan")
+            vol_ratio = (
+                (today_vol / avg_vol)
+                if (avg_vol == avg_vol and avg_vol > 0 and today_vol == today_vol)
+                else float("nan")
+            )
             dd_pct = pct_change(today_close, ref_close)
 
             if vol_ratio != vol_ratio or vol_ratio < WHALE_MIN_VOL_RATIO:
@@ -2598,16 +2609,24 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
                 continue
 
             mark = "🐋"
-            if WHALE_INDEX_BONUS and (xu_change == xu_change) and (xu_change <= 0) and (ch == ch) and (ch >= WHALE_MIN_POSITIVE_WHEN_INDEX_BAD):
+            if (
+                WHALE_INDEX_BONUS
+                and (xu_change == xu_change)
+                and (xu_change <= 0)
+                and (ch == ch)
+                and (ch >= WHALE_MIN_POSITIVE_WHEN_INDEX_BAD)
+            ):
                 mark = "🐋🐋"
 
-            out.append({
-                "ticker": t,
-                "vol_ratio": float(vol_ratio),
-                "change": float(ch) if ch == ch else float("nan"),
-                "dd_pct": float(dd_pct),
-                "mark": mark,
-            })
+            out.append(
+                {
+                    "ticker": t,
+                    "vol_ratio": float(vol_ratio),
+                    "change": float(ch) if ch == ch else float("nan"),
+                    "dd_pct": float(dd_pct),
+                    "mark": mark,
+                }
+            )
 
         if not out:
             return
@@ -2619,9 +2638,10 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
             chat_id=int(ALARM_CHAT_ID),
             text=msg,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
         )
         mark_whale_sent_today()
+
     except Exception as e:
         logger.exception("Whale job error: %s", e)
 
@@ -2638,16 +2658,25 @@ def schedule_jobs(app: Application) -> None:
             job_alarm_scan,
             interval=ALARM_INTERVAL_MIN * 60,
             first=first,
-            name="alarm_scan_repeating"
+            name="alarm_scan_repeating",
         )
-        logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
+        logger.info(
+            "Alarm scan scheduled every %d min. First=%s",
+            ALARM_INTERVAL_MIN,
+            first.isoformat(),
+        )
 
         jq.run_daily(
             job_tomorrow_list,
             time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
-            name="tomorrow_daily_at_eod_time"
+            name="tomorrow_daily_at_eod_time",
         )
-        logger.info("Tomorrow scheduled daily at %02d:%02d (+%dmin delay)", EOD_HOUR, EOD_MINUTE, TOMORROW_DELAY_MIN)
+        logger.info(
+            "Tomorrow scheduled daily at %02d:%02d (+%dmin delay)",
+            EOD_HOUR,
+            EOD_MINUTE,
+            TOMORROW_DELAY_MIN,
+        )
     else:
         logger.info("ALARM kapalı veya ALARM_CHAT_ID yok → otomatik alarm/tomorrow gönderilmeyecek.")
 
@@ -2657,17 +2686,21 @@ def schedule_jobs(app: Application) -> None:
             job_whale_follow,
             interval=WHALE_INTERVAL_MIN * 60,
             first=first_w,
-            name="whale_follow_repeating"
+            name="whale_follow_repeating",
         )
-        logger.info("Whale follow scheduled every %d min. First=%s", WHALE_INTERVAL_MIN, first_w.isoformat())
+        logger.info(
+            "Whale follow scheduled every %d min. First=%s",
+            WHALE_INTERVAL_MIN,
+            first_w.isoformat(),
+        )
     else:
         logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
 
     # ✅ Tomorrow follow (chain tracking)
-    if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID and getattr(app, "job_queue", None) is not None:
+    if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID:
         first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
-        app.job_queue.run_repeating(
-            job_altin_follow,
+        jq.run_repeating(
+            job_tomorrow_follow,
             interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
             first=first_tf,
             name="tomorrow_follow_repeating",
@@ -2677,7 +2710,7 @@ def schedule_jobs(app: Application) -> None:
             TOMORROW_FOLLOW_INTERVAL_MIN,
             first_tf.isoformat(),
         )
-        
+
 # =========================================================
 # Global error handler
 # =========================================================
