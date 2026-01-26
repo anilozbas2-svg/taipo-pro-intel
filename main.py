@@ -2496,7 +2496,7 @@ text = build_alarm_message(
 )
 
 # ✅ Alarm mesajının sonuna ekle
-       if tomorrow_perf_section:
+if tomorrow_perf_section:
           text = text + tomorrow_perf_section
 
     await context.bot.send_message(
