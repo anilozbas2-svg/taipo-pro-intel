@@ -2420,6 +2420,23 @@ async def cmd_alarm_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode=ParseMode.HTML,
         )
 
+async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /alarm_run: ALTIN canlı takip mesajını manuel tetikler.
+    Tomorrow zincirindeki ALTIN listesini referans alır ve canlı yüzde fark basar.
+    """
+    try:
+        await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
+
+        # ALTIN takip job'u sende hangi isimle varsa onu çağıracağız.
+        # En yaygın isim: job_altin_live_follow
+        await job_altin_live_follow(context, force=True)
+
+        await update.message.reply_text("✅ ALTIN canlı takip mesajı gönderildi.")
+    except Exception as e:
+        logger.exception("cmd_alarm_run error: %s", e)
+        await update.message.reply_text(f"❌ alarm_run hata: {e}")
+
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE, send_report: bool = True) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
