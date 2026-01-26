@@ -2416,34 +2416,48 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         cand_rows = build_candidate_rows(rows, tom_rows)
         save_tomorrow_snapshot(tom_rows, xu_change)
         
-        # ==============================
-        # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
-        # ==============================
+# ==============================
+# ✅ TOMORROW ZİNCİRİ RAM'E YAZ
+# ==============================
         global TOMORROW_CHAINS
 
-        key = today_key_tradingday()  # follow ile aynı key
+        try:
+            key = today_key_tradingday()  # follow ile aynı key
 
-    TOMORROW_CHAINS[key] = {
-    "ts": time.time(),
-    "rows": tom_rows,
-    "ref_close": {r["symbol"]: r.get("ref_close") for r in tom_rows if r.get("symbol")},
-}
+            TOMORROW_CHAINS[key] = {
+                "ts": time.time(),
+                "rows": tom_rows,
+                "ref_close": {
+                    r["symbol"]: r.get("ref_close")
+                    for r in tom_rows
+                    if r.get("symbol")
+                },
+            }
 
-logger.info(
-    "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
-    key,
-    len(tom_rows)
-)
+            logger.info(
+                "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
+                key,
+                len(tom_rows),
+            )
 
-        msg = r0_block + build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
-        )
-    except Exception as e:
-        logger.exception("Tomorrow job error: %s", e)
+            msg = r0_block + build_tomorrow_message(
+                tom_rows,
+                cand_rows,
+                xu_close,
+                xu_change,
+                thresh_s,
+                reg,
+            )
+
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+
+        except Exception as e:
+            logger.exception("Tomorrow job error: %s", e)
 
 async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not TOMORROW_FOLLOW_ENABLED:
