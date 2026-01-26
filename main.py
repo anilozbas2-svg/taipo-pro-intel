@@ -2413,7 +2413,7 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek) + EMOJI
 # =========================================================
 tomorrow_perf_section = ""
-    try:
+try:
         # all_rows -> hızlı lookup (ticker -> row)
         all_map = {
         (r.get("ticker") or "").strip(): r
