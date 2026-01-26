@@ -2416,7 +2416,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         cand_rows = build_candidate_rows(rows, tom_rows)
         save_tomorrow_snapshot(tom_rows, xu_change)
         
-# ==============================
+        # ==============================
         # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
         # ==============================
         global TOMORROW_CHAINS
