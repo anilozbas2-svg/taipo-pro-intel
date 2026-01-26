@@ -234,7 +234,7 @@ def build_tomorrow_altin_perf_section(all_rows: list) -> str:
         # ALTIN tickers
         altin_tickers = []
         for rr in t_rows:
-            t = (rr.get("ticker") or rr.get("symbol") or "").strip()
+            t = (rr.get("symbol") or rr.get("ticker") or "").strip()
             if not t:
                 continue
             kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
@@ -2386,7 +2386,6 @@ async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
         await job_altin_live_follow(context, force=True)
-        await update.message.reply_text("✅ ALTIN canlı takip mesajı gönderildi.")
     except Exception as e:
         await update.message.reply_text(
             f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
@@ -2509,9 +2508,14 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
 
-        # Tomorrow zinciri yoksa üretmeyi dene
         if not TOMORROW_CHAINS:
-            await job_tomorrow_list(context)
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            return
 
         altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
         if not altin_tickers:
