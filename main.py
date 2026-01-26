@@ -2497,14 +2497,14 @@ text = build_alarm_message(
 
 # ✅ Alarm mesajının sonuna ekle
 if tomorrow_perf_section:
-          text = text + tomorrow_perf_section
+    text = text + tomorrow_perf_section
 
 await context.bot.send_message(
-          chat_id=int(ALARM_CHAT_ID),
-          text=text,
-          parse_mode=ParseMode.HTML,
-          disable_web_page_preview=True,
-      )
+    chat_id=int(ALARM_CHAT_ID),
+    text=text,
+    parse_mode=ParseMode.HTML,
+    disable_web_page_preview=True,
+ )
 
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
