@@ -2255,15 +2255,15 @@ async def job_altin_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek) + EMOJI
 # =========================================================
 tomorrow_perf_section = ""
-try:
-    # all_rows -> hızlı lookup (ticker -> row)
-    all_map = {
+    try:
+        # all_rows -> hızlı lookup (ticker -> row)
+        all_map = {
         (r.get("ticker") or "").strip(): r
         for r in (all_rows or [])
         if (r.get("ticker") or "").strip()
     }
 
-    # active chain seç (bugün yoksa en güncel ts'li olanı al)
+        # active chain seç (bugün yoksa en güncel ts'li olanı al)
     if TOMORROW_CHAINS:
         active_key = today_key_tradingday()
         if active_key not in TOMORROW_CHAINS:
@@ -2331,26 +2331,26 @@ except Exception as e:
     tomorrow_perf_section = ""
 
 # --- Alarm mesajını üret ---
-text = build_alarm_message(
-    alarm_rows=alarm_rows,
-    watch_rows=w_rows,
-    xu_close=xu_close,
-    xu_change=xu_change,
-    thresh_s=thresh_s,
-    top_n=VOLUME_TOP_N,
-    reg=reg,
+  text = build_alarm_message(
+         alarm_rows=alarm_rows,
+         watch_rows=w_rows,
+         xu_close=xu_close,
+         xu_change=xu_change,
+         thresh_s=thresh_s,
+         top_n=VOLUME_TOP_N,
+         reg=reg,
 )
 
 # ✅ Alarm mesajının sonuna ekle
-    if tomorrow_perf_section:
-    text = text + tomorrow_perf_section
+       if tomorrow_perf_section:
+          text = text + tomorrow_perf_section
 
     await context.bot.send_message(
-    chat_id=int(ALARM_CHAT_ID),
-    text=text,
-    parse_mode=ParseMode.HTML,
-    disable_web_page_preview=True,
-)
+          chat_id=int(ALARM_CHAT_ID),
+          text=text,
+          parse_mode=ParseMode.HTML,
+          disable_web_page_preview=True,
+      )
 
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
