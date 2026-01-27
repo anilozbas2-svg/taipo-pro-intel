@@ -2543,38 +2543,25 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         
 
     global TOMORROW_CHAINS
+    global ALTIN_NOCHAIN_WARNED
 
     if not TOMORROW_CHAINS:
         try:
             TOMORROW_CHAINS = load_tomorrow_chains() or {}
         except Exception:
             TOMORROW_CHAINS = {}
-            
-    global ALTIN_NOCHAIN_WARNED
-
-if not TOMORROW_CHAINS:
-    if not ALTIN_NOCHAIN_WARNED:
-        ALTIN_NOCHAIN_WARNED = True
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-    return
-    
-    ALTIN_NOCHAIN_WARNED = False
-
 
     if not TOMORROW_CHAINS:
-        keys_s = ", ".join(list(TOMORROW_CHAINS.keys())[:6])
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=f"⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır. | keys: {keys_s}",
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
+        if not ALTIN_NOCHAIN_WARNED:
+            ALTIN_NOCHAIN_WARNED = True
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+                disable_web_page_preview=True,
+            )
         return
+
+    ALTIN_NOCHAIN_WARNED = False
 
     try:
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
