@@ -2486,15 +2486,15 @@ except Exception as e:
     now_map = {
         (r.get("ticker") or "").strip(): r
         for r in (rows_now or [])
-         if (r.get("ticker") or "").strip()
-        }
+        if (r.get("ticker") or "").strip()
+    }
 
-        # Tablo
-        perf = []
-        for t in altin_tickers:
-            ref_close = safe_float(ref_close_map.get(t))
-            now_close = safe_float((now_map.get(t) or {}).get("close"))
-            dd = pct_change(now_close, ref_close)
+    # Tablo
+    perf = []
+    for t in altin_tickers:
+        ref_close = safe_float(ref_close_map.get(t))
+        now_close = safe_float((now_map.get(t) or {}).get("close"))
+        dd = pct_change(now_close, ref_close)
 
             if dd == dd:
                 if dd > 0:
