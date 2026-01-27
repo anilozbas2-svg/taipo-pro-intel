@@ -2421,21 +2421,135 @@ async def cmd_alarm_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode=ParseMode.HTML,
         )
 
+async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
+    """
+    ALTIN canlı takip (manual/otomatik).
+    - /tomorrow ile oluşan TOMORROW_CHAINS içindeki ALTIN listesini referans alır.
+    - Canlı fiyatları çekip REF ile NOW farkını tablo basar.
+    """
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
+        return
+
+    # Manual modda bile /tomorrow zinciri yoksa çalışmasın (spam yapma)
+    global TOMORROW_CHAINS
+    global ALTIN_NOCHAIN_WARNED
+
+    if not TOMORROW_CHAINS:
+        try:
+            TOMORROW_CHAINS = load_tomorrow_chains() or {}
+        except Exception:
+            TOMORROW_CHAINS = {}
+
+    if not TOMORROW_CHAINS:
+        if not ALTIN_NOCHAIN_WARNED:
+            ALTIN_NOCHAIN_WARNED = True
+            try:
+                await context.bot.send_message(
+                    chat_id=int(ALARM_CHAT_ID),
+                    text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                pass
+        return
+
+    # Zincir varsa uyarı bayrağını resetle (yarın tekrar uyarabilsin)
+    ALTIN_NOCHAIN_WARNED = False
+
+    try:
+        # ALTIN tickers listesi = TOMORROW_CHAINS keys
+        altin_tickers = list((TOMORROW_CHAINS or {}).keys())
+
+        # Referans kapanışları TOMORROW_CHAINS içinde tutuluyor varsayımı
+        # (Senin yapında {"THYAO.IS": {"ref_close": 123.4, ...}} gibi)
+        ref_close_map = {}
+        for t, v in (TOMORROW_CHAINS or {}).items():
+            if isinstance(v, dict):
+                ref_close_map[t] = v.get("ref_close")
+
+        # XU100 özet
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(
+            today_key_tradingday(),
+            xu_close, xu_change, xu_vol, xu_open
+        )
+
+        # Canlı fiyatlar
+        rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
+        now_map = {
+            (r.get("ticker") or "").strip(): r
+            for r in (rows_now or [])
+            if (r.get("ticker") or "").strip()
+        }
+
+        # Tablo
+        perf = []
+        for t in altin_tickers:
+            ref_close = safe_float(ref_close_map.get(t))
+            now_close = safe_float((now_map.get(t) or {}).get("close"))
+            dd = pct_change(now_close, ref_close)
+
+            if dd == dd:
+                if dd > 0:
+                    emo = "🟢"
+                elif dd < 0:
+                    emo = "🔴"
+                else:
+                    emo = "⚪"
+                dd_s = f"{emo} {dd:+.2f}%"
+            else:
+                dd_s = "⚪ n/a"
+
+            perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
+
+        header = (
+            "⏳ <b>ALTIN LIVE TAKİP</b>\n"
+            f"🕒 <b>{now.strftime('%H:%M')}</b> | "
+            f"📈 XU100: <b>{xu_close:,.0f}</b> ({xu_change:+.2f}%)\n"
+        )
+
+        lines = []
+        lines.append("HIS  Δ%           NOW      REF")
+        lines.append("--------------------------------")
+        for (t, dd_s, now_s, ref_s) in perf:
+            lines.append(f"{t:<5} {dd_s:<12} {now_s:>7} {ref_s:>7}")
+
+        msg = header + "<pre>" + "\n".join(lines) + "</pre>"
+
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    except Exception as e:
+        logger.exception("ALTIN live follow error: %s", e)
+        return
+
 async def cmd_altin_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     /altin_run: ALTIN canlı takip mesajını manuel tetikler.
     Tomorrow zincirindeki ALTIN listesini referans alır ve canlı yüzde fark basar.
     """
     try:
+        if update.message is None:
+            return
+
         await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
 
         # ALTIN canlı takibi çalıştır (force=True)
         await job_altin_live_follow(context, force=True)
 
         await update.message.reply_text("✅ ALTIN canlı takip mesajı gönderildi.")
+
     except Exception as e:
         logger.exception("cmd_altin_run error: %s", e)
-        await update.message.reply_text(f"❌ altin_run hata: {e}")
+        try:
+            if update.message is not None:
+                await update.message.reply_text(f"❌ altin_run hata: {e}")
+        except Exception:
+            pass
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
