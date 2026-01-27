@@ -2421,6 +2421,22 @@ async def cmd_alarm_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode=ParseMode.HTML,
         )
 
+async def cmd_altin_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /altin_run: ALTIN canlı takip mesajını manuel tetikler.
+    Tomorrow zincirindeki ALTIN listesini referans alır ve canlı yüzde fark basar.
+    """
+    try:
+        await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
+
+        # ALTIN canlı takibi çalıştır (force=True)
+        await job_altin_live_follow(context, force=True)
+
+        await update.message.reply_text("✅ ALTIN canlı takip mesajı gönderildi.")
+    except Exception as e:
+        logger.exception("cmd_altin_run error: %s", e)
+        await update.message.reply_text(f"❌ altin_run hata: {e}")
+
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     /alarm_run: Tomorrow zincir listesini (BIST200_TICKERS) kontrol eder ve raporu manuel yollar.
@@ -2746,10 +2762,12 @@ def schedule_jobs(app: Application) -> None:
     else:
         logger.info("WHALE kapali veya ALARM_CHAT_ID yok -> whale gonderilmeyecek.")
 
-    # ------------------------------
+# ------------------------------
     # ALTIN live follow (OPTIONAL) - SAFE GUARD
+    # MANUEL sisteme geçildi: otomatik run_repeating KAPALI
     # ------------------------------
-    altin_follow_enabled = os.getenv("ALTIN_FOLLOW_ENABLED", "0").strip().lower() not in ("0", "false", "no", "off")
+
+    altin_follow_enabled = False  # manuel mod: otomatik altin live follow kapalı
 
     if altin_follow_enabled and ALARM_CHAT_ID:
         if "job_altin_live_follow" in globals():
@@ -2769,26 +2787,7 @@ def schedule_jobs(app: Application) -> None:
         else:
             logger.warning("ALTIN live follow enabled ama job_altin_live_follow tanimli degil -> SKIP.")
     else:
-        logger.info("ALTIN live follow kapali veya ALARM_CHAT_ID yok -> altin live follow calismaz.")
-
-    # ------------------------------
-    # Tomorrow follow (chain tracking) - run_repeating
-    # ------------------------------
-    if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID:
-        first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
-        jq.run_repeating(
-            job_tomorrow_follow,
-            interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
-            first=first_tf,
-            name="tomorrow_follow_repeating",
-        )
-        logger.info(
-            "Tomorrow follow scheduled every %d min. First=%s",
-            TOMORROW_FOLLOW_INTERVAL_MIN,
-            first_tf.isoformat(),
-        )
-    else:
-        logger.info("TOMORROW follow kapali veya ALARM_CHAT_ID yok -> tomorrow follow calismaz.")
+        logger.info("ALTIN live follow kapali (manuel mod) veya ALARM_CHAT_ID yok -> calismaz.")
 
 # =========================================================
 # Global error handler
@@ -2830,6 +2829,7 @@ def main() -> None:
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
+    app.add_handler(CommandHandler("altin_run", cmd_altin_run))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     
     app.add_handler(CommandHandler("alarm_scan", cmd_alarm_scan))
