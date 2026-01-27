@@ -2540,6 +2540,7 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         return
     if (not force) and (not within_alarm_window(now_tr())):
         return
+        
 
     global TOMORROW_CHAINS
 
@@ -2561,8 +2562,9 @@ if not TOMORROW_CHAINS:
             disable_web_page_preview=True,
         )
     return
+    
+    ALTIN_NOCHAIN_WARNED = False
 
-ALTIN_NOCHAIN_WARNED = False
 
     if not TOMORROW_CHAINS:
         keys_s = ", ".join(list(TOMORROW_CHAINS.keys())[:6])
