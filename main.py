@@ -708,8 +708,9 @@ def load_tomorrow_chains() -> None:
     except Exception as e:
         logger.warning("load_tomorrow_chains failed: %s", e)
         TOMORROW_CHAINS = {}
-
-
+        
+    return TOMORROW_CHAINS
+    
 def save_tomorrow_chains() -> None:
     global TOMORROW_CHAINS
     try:
@@ -2543,25 +2544,26 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         
 
     global TOMORROW_CHAINS
-    global ALTIN_NOCHAIN_WARNED
+global ALTIN_NOCHAIN_WARNED
 
-    if not TOMORROW_CHAINS:
-        try:
-            TOMORROW_CHAINS = load_tomorrow_chains() or {}
-        except Exception:
-            TOMORROW_CHAINS = {}
+if not TOMORROW_CHAINS:
+    try:
+        TOMORROW_CHAINS = load_tomorrow_chains() or {}
+    except Exception:
+        TOMORROW_CHAINS = {}
 
-    if not TOMORROW_CHAINS:
-        if not ALTIN_NOCHAIN_WARNED:
-            ALTIN_NOCHAIN_WARNED = True
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-                disable_web_page_preview=True,
-            )
-        return
+if not TOMORROW_CHAINS:
+    if not ALTIN_NOCHAIN_WARNED:
+        ALTIN_NOCHAIN_WARNED = True
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+            disable_web_page_preview=True,
+        )
+    return
 
-    ALTIN_NOCHAIN_WARNED = False
+# Zincir varsa: bir sonraki gün tekrar uyarabilsin diye resetle
+ALTIN_NOCHAIN_WARNED = False
 
     try:
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
@@ -2895,6 +2897,10 @@ def schedule_jobs(app: Application) -> None:
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled error: %s", context.error)
 
+# =========================
+# Global runtime flags
+# =========================
+ALTIN_NOCHAIN_WARNED = False
 
 # =========================================================
 # Main
@@ -2914,6 +2920,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("ping", cmd_ping))
+  
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
     app.add_handler(CommandHandler("rejim", cmd_rejim))
