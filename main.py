@@ -2447,103 +2447,6 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE, send_report: boo
         return
 
     global TOMORROW_CHAINS
-    global LAST_REGIME
-
-    try:
-        if TOMORROW_DELAY_MIN > 0 and send_report:
-            await asyncio.sleep(max(0, int(TOMORROW_DELAY_MIN)) * 60)
-
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
-        LAST_REGIME = reg
-
-        if REJIM_GATE_TOMORROW and reg.get("block"):
-            if send_report:
-                msg = (
-                    f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b>\n"
-                    f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
-                    f"{format_regime_line(reg)}\n\n"
-                    f"⛔️ <b>Rejim BLOK olduğu için Tomorrow listesi gönderilmedi.</b>"
-                )
-                await context.bot.send_message(
-                    chat_id=int(ALARM_CHAT_ID),
-                    text=msg,
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
-                )
-            return
-
-        rows = await build_rows_from_is_list(bist200_list, xu_change)
-        update_history_from_rows(rows)
-        min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
-        thresh_s = format_threshold(min_vol)
-
-        r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
-        r0_block = ""
-        if r0_rows:
-            r0_rows = sorted(
-                r0_rows,
-                key=lambda x: (x.get("volume") or 0)
-                if x.get("volume") == x.get("volume")
-                else 0,
-                reverse=True,
-            )[:8]
-            r0_block = (
-                make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True)
-                + "\n\n"
-            )
-
-        tom_rows = build_tomorrow_rows(rows)
-        cand_rows = build_candidate_rows(rows, tom_rows)
-        save_tomorrow_snapshot(tom_rows, xu_change)
-
-        key = today_key_tradingday()
-        TOMORROW_CHAINS[key] = {
-            "ts": time.time(),
-            "rows": tom_rows,
-            "ref_close": {
-                (r.get("symbol") or "").strip(): r.get("ref_close")
-                for r in (tom_rows or [])
-                if (r.get("symbol") or "").strip()
-            },
-        }
-
-        save_tomorrow_chains()
-
-        logger.info("Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d", key, len(tom_rows))
-
-        if not send_report:
-            return
-
-        msg = r0_block + build_tomorrow_message(
-            tom_rows,
-            cand_rows,
-            xu_close,
-            xu_change,
-            thresh_s,
-            reg,
-        )
-
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-
-    except Exception as e:
-        logger.exception("Tomorrow job error: %s", e)
-
-async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
-        return
-    if (not force) and (not within_alarm_window(now_tr())):
-        return
-        
-
-    global TOMORROW_CHAINS
 global ALTIN_NOCHAIN_WARNED
 
 if not TOMORROW_CHAINS:
@@ -2560,20 +2463,23 @@ if not TOMORROW_CHAINS:
             text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
             disable_web_page_preview=True,
         )
+    return   # ❗ burada çıkıyoruz
+
+# ✅ BURAYA KADAR GELDİYSE zincir VAR demektir
+ALTIN_NOCHAIN_WARNED = False   # reset burada olacak
+
+try:
+    xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+    update_index_history(
+        today_key_tradingday(),
+        xu_close, xu_change, xu_vol, xu_open
+    )
+
+    # ... ALTIN LIVE devam kodların burada ...
+
+except Exception as e:
+    logger.exception("ALTIN live follow error: %s", e)
     return
-
-# Zincir varsa: bir sonraki gün tekrar uyarabilsin diye resetle
-ALTIN_NOCHAIN_WARNED = False
-
-    try:
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-
-        # ... ALTIN LIVE devam kodların burada ...
-
-    except Exception as e:
-        logger.exception("ALTIN live follow error: %s", e)
-        return
 
         # Canlı fiyatlar
         rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
