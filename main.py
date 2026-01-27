@@ -2548,6 +2548,21 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             TOMORROW_CHAINS = load_tomorrow_chains() or {}
         except Exception:
             TOMORROW_CHAINS = {}
+            
+    global ALTIN_NOCHAIN_WARNED
+
+if not TOMORROW_CHAINS:
+    if not ALTIN_NOCHAIN_WARNED:
+        ALTIN_NOCHAIN_WARNED = True
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+    return
+
+ALTIN_NOCHAIN_WARNED = False
 
     if not TOMORROW_CHAINS:
         keys_s = ", ".join(list(TOMORROW_CHAINS.keys())[:6])
@@ -2899,7 +2914,7 @@ def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip() or os.getenv("TELEGRAM_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
-        
+       
 
     load_last_alarm_ts()
     load_whale_sent_day()
