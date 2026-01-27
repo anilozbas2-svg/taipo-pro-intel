@@ -2423,20 +2423,21 @@ async def cmd_alarm_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    /alarm_run: ALTIN canlı takip mesajını manuel tetikler.
-    Tomorrow zincirindeki ALTIN listesini referans alır ve canlı yüzde fark basar.
+    /alarm_run: Tomorrow zincir listesini (BIST200_TICKERS) kontrol eder ve raporu manuel yollar.
     """
     try:
-        await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
+        await update.message.reply_text("⏳ Tomorrow list kontrolü manuel tetikleniyor...")
 
-        # ALTIN takip job'u sende hangi isimle varsa onu çağıracağız.
-        # En yaygın isim: job_altin_live_follow
-        await job_altin_live_follow(context, force=True)
+        # Manuel tetikte direkt job_tomorrow_list çalıştır
+        await job_tomorrow_list(context, send_report=True)
 
-        await update.message.reply_text("✅ ALTIN canlı takip mesajı gönderildi.")
+        await update.message.reply_text("✅ Tomorrow list raporu gönderildi.")
     except Exception as e:
         logger.exception("cmd_alarm_run error: %s", e)
-        await update.message.reply_text(f"❌ alarm_run hata: {e}")
+        try:
+            await update.message.reply_text(f"❌ alarm_run hata: {e}")
+        except Exception:
+            pass
 
 async def job_tomorrow_list(
     context: ContextTypes.DEFAULT_TYPE,
@@ -2451,37 +2452,33 @@ async def job_tomorrow_list(
         return
 
     global TOMORROW_CHAINS
-
-    # Zincir bellekte boşsa dosyadan yüklemeyi dene
-    if not TOMORROW_CHAINS:
-        try:
-            load_tomorrow_chains()
-        except Exception:
-            TOMORROW_CHAINS = {}
-
-    # Hala yoksa kullanıcıyı bir kere uyar (spam yapma)
     global ALTIN_NOCHAIN_WARNED
-    if not TOMORROW_CHAINS:
-        if not ALTIN_NOCHAIN_WARNED:
-            ALTIN_NOCHAIN_WARNED = True
-            try:
-                await context.bot.send_message(
-                    chat_id=int(ALARM_CHAT_ID),
-                    text="⚠️ Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                pass
-        return
-
-    # Zincir varsa: uyarı flag'ini resetle (yarın yine bir kere uyarabilsin)
-    ALTIN_NOCHAIN_WARNED = False
 
     try:
-        # Tomorrow zinciri olan tickers'ları filtrele
-        # TOMORROW_CHAINS formatı: {"THYAO": {...}, "ASELS": {...}} gibi varsayılıyor
-        chain_keys = set((TOMORROW_CHAINS or {}).keys())
+        # Zincir bellek boşsa dosyadan yüklemeyi dene
+        if not TOMORROW_CHAINS:
+            try:
+                load_tomorrow_chains()  # global TOMORROW_CHAINS dolduruyor
+            except Exception:
+                TOMORROW_CHAINS = {}
 
+        # Hala yoksa kullanıcıyı bir kere uyar (spam yapma)
+        if not TOMORROW_CHAINS:
+            if not ALTIN_NOCHAIN_WARNED:
+                ALTIN_NOCHAIN_WARNED = True
+                if send_report:
+                    await context.bot.send_message(
+                        chat_id=int(ALARM_CHAT_ID),
+                        text="⚠️ Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+                        disable_web_page_preview=True,
+                    )
+            return
+
+        # Zincir varsa: uyarı flag'ini resetle (yarın yine bir kere uyarabilsin)
+        ALTIN_NOCHAIN_WARNED = False
+
+        # Tomorrow zinciri olan ticker'ları filtrele
+        chain_keys = set((TOMORROW_CHAINS or {}).keys())
         watch = [t for t in bist200_list if t in chain_keys]
         missing = [t for t in bist200_list if t not in chain_keys]
 
@@ -2496,7 +2493,7 @@ async def job_tomorrow_list(
             "📌 <b>Tomorrow List (BIST200)</b>\n"
             f"✅ Zincir VAR ({len(watch)}):\n<pre>{watch_s}</pre>\n"
             f"❌ Zincir YOK ({len(missing)}):\n<pre>{miss_s}</pre>\n"
-            "ℹ️ Zincir oluşturmak için: /tomorrow"
+            "🧩 Zincir oluşturmak için: /tomorrow"
         )
 
         await context.bot.send_message(
@@ -2693,9 +2690,12 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
     if jq is None:
-        logger.warning("JobQueue yok → otomatik alarm/tomorrow/whale ÇALIŞMAZ. Komutlar çalışır.")
+        logger.warning("JobQueue yok -> otomatik alarm/tomorrow/whale CALISMAZ. Komutlar calisir.")
         return
 
+    # ------------------------------
+    # Alarm scan (run_repeating)
+    # ------------------------------
     if ALARM_ENABLED and ALARM_CHAT_ID:
         first = next_aligned_run(ALARM_INTERVAL_MIN)
         jq.run_repeating(
@@ -2710,6 +2710,9 @@ def schedule_jobs(app: Application) -> None:
             first.isoformat(),
         )
 
+        # ------------------------------
+        # Tomorrow daily list (EOD sonrası)
+        # ------------------------------
         jq.run_daily(
             job_tomorrow_list,
             time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
@@ -2722,8 +2725,11 @@ def schedule_jobs(app: Application) -> None:
             TOMORROW_DELAY_MIN,
         )
     else:
-        logger.info("ALARM kapalı veya ALARM_CHAT_ID yok → otomatik alarm/tomorrow gönderilmeyecek.")
+        logger.info("ALARM kapali veya ALARM_CHAT_ID yok -> otomatik alarm/tomorrow gonderilmeyecek.")
 
+    # ------------------------------
+    # Whale follow (run_repeating)
+    # ------------------------------
     if WHALE_ENABLED and ALARM_CHAT_ID:
         first_w = next_aligned_run(WHALE_INTERVAL_MIN)
         jq.run_repeating(
@@ -2738,27 +2744,36 @@ def schedule_jobs(app: Application) -> None:
             first_w.isoformat(),
         )
     else:
-        logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
+        logger.info("WHALE kapali veya ALARM_CHAT_ID yok -> whale gonderilmeyecek.")
 
-    # ✅ ALTIN live follow (Tomorrow ALTIN listesi canlı takip)
-    if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip().lower() not in ("0", "false") and ALARM_CHAT_ID:
-        interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
-        first_af = next_aligned_run(interval_min)
+    # ------------------------------
+    # ALTIN live follow (OPTIONAL) - SAFE GUARD
+    # ------------------------------
+    altin_follow_enabled = os.getenv("ALTIN_FOLLOW_ENABLED", "0").strip().lower() not in ("0", "false", "no", "off")
 
-        jq.run_repeating(
-            job_altin_live_follow,
-            interval=interval_min * 60,
-            first=first_af,
-            name="altin_live_follow_repeating",
-        )
+    if altin_follow_enabled and ALARM_CHAT_ID:
+        if "job_altin_live_follow" in globals():
+            interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
+            first_af = next_aligned_run(interval_min)
+            jq.run_repeating(
+                job_altin_live_follow,
+                interval=interval_min * 60,
+                first=first_af,
+                name="altin_live_follow_repeating",
+            )
+            logger.info(
+                "ALTIN live follow scheduled every %d min. First=%s",
+                interval_min,
+                first_af.isoformat(),
+            )
+        else:
+            logger.warning("ALTIN live follow enabled ama job_altin_live_follow tanimli degil -> SKIP.")
+    else:
+        logger.info("ALTIN live follow kapali veya ALARM_CHAT_ID yok -> altin live follow calismaz.")
 
-        logger.info(
-            "ALTIN live follow scheduled every %d min. First=%s",
-            interval_min,
-            first_af.isoformat(),
-        )
-        
-    # ✅ Tomorrow follow (chain tracking)
+    # ------------------------------
+    # Tomorrow follow (chain tracking) - run_repeating
+    # ------------------------------
     if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID:
         first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
         jq.run_repeating(
@@ -2772,6 +2787,8 @@ def schedule_jobs(app: Application) -> None:
             TOMORROW_FOLLOW_INTERVAL_MIN,
             first_tf.isoformat(),
         )
+    else:
+        logger.info("TOMORROW follow kapali veya ALARM_CHAT_ID yok -> tomorrow follow calismaz.")
 
 # =========================================================
 # Global error handler
