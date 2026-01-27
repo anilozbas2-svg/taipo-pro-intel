@@ -2483,10 +2483,10 @@ except Exception as e:
 
         # Canlı fiyatlar
     rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
-        now_map = {
-            (r.get("ticker") or "").strip(): r
-            for r in (rows_now or [])
-            if (r.get("ticker") or "").strip()
+    now_map = {
+        (r.get("ticker") or "").strip(): r
+        for r in (rows_now or [])
+         if (r.get("ticker") or "").strip()
         }
 
         # Tablo
