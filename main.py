@@ -2438,84 +2438,66 @@ async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.exception("cmd_alarm_run error: %s", e)
         await update.message.reply_text(f"❌ alarm_run hata: {e}")
 
-async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE, send_report: bool = True) -> None:
+async def job_tomorrow_list(
+    context: ContextTypes.DEFAULT_TYPE,
+    send_report: bool = True
+) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
+    # Tomorrow listesi env'den geliyor (CSV: "AAA,BBB,CCC")
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         return
 
     global TOMORROW_CHAINS
-global ALTIN_NOCHAIN_WARNED
 
-if not TOMORROW_CHAINS:
+    # Zincir bellekte boşsa dosyadan yüklemeyi dene
+    if not TOMORROW_CHAINS:
+        try:
+            load_tomorrow_chains()
+        except Exception:
+            TOMORROW_CHAINS = {}
+
+    # Hala yoksa kullanıcıyı bir kere uyar (spam yapma)
+    global ALTIN_NOCHAIN_WARNED
+    if not TOMORROW_CHAINS:
+        if not ALTIN_NOCHAIN_WARNED:
+            ALTIN_NOCHAIN_WARNED = True
+            try:
+                await context.bot.send_message(
+                    chat_id=int(ALARM_CHAT_ID),
+                    text="⚠️ Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                pass
+        return
+
+    # Zincir varsa: uyarı flag'ini resetle (yarın yine bir kere uyarabilsin)
+    ALTIN_NOCHAIN_WARNED = False
+
     try:
-        TOMORROW_CHAINS = load_tomorrow_chains() or {}
-    except Exception:
-        TOMORROW_CHAINS = {}
+        # Tomorrow zinciri olan tickers'ları filtrele
+        # TOMORROW_CHAINS formatı: {"THYAO": {...}, "ASELS": {...}} gibi varsayılıyor
+        chain_keys = set((TOMORROW_CHAINS or {}).keys())
 
-if not TOMORROW_CHAINS:
-    if not ALTIN_NOCHAIN_WARNED:
-        ALTIN_NOCHAIN_WARNED = True
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-            disable_web_page_preview=True,
+        watch = [t for t in bist200_list if t in chain_keys]
+        missing = [t for t in bist200_list if t not in chain_keys]
+
+        if not send_report:
+            return
+
+        # Mesajı sade ve sağlam kur
+        watch_s = ", ".join(watch[:60]) if watch else "-"
+        miss_s = ", ".join(missing[:60]) if missing else "-"
+
+        msg = (
+            "📌 <b>Tomorrow List (BIST200)</b>\n"
+            f"✅ Zincir VAR ({len(watch)}):\n<pre>{watch_s}</pre>\n"
+            f"❌ Zincir YOK ({len(missing)}):\n<pre>{miss_s}</pre>\n"
+            "ℹ️ Zincir oluşturmak için: /tomorrow"
         )
-    return   # ❗ burada çıkıyoruz
-
-    # ✅ BURAYA KADAR GELDIYSE zincir VAR demektir
-    ALTIN_NOCHAIN_WARNED = False  # reset burada olacak
-
-    try:
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(
-            today_key_tradingday(),
-            xu_close, xu_change, xu_vol, xu_open
-        )
-
-        # Canlı fiyatlar
-        rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
-        now_map = {
-            (r.get("ticker") or "").strip(): r
-            for r in (rows_now or [])
-            if (r.get("ticker") or "").strip()
-        }
-
-        # Tablo
-        perf = []
-        for t in altin_tickers:
-            ref_close = safe_float(ref_close_map.get(t))
-            now_close = safe_float((now_map.get(t) or {}).get("close"))
-            dd = pct_change(now_close, ref_close)
-
-            if dd == dd:
-                if dd > 0:
-                    emo = "🟢"
-                elif dd < 0:
-                    emo = "🔴"
-                else:
-                    emo = "⚪"
-                dd_s = f"{emo} {dd:+.2f}%"
-            else:
-                dd_s = "⚪ n/a"
-
-            perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
-
-        header = (
-            "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"🕒 <b>{now.strftime('%H:%M')}</b> | "
-            f"📈 XU100: <b>{xu_close:,.0f}</b> ({xu_change:+.2f}%)\n"
-        )
-
-        lines = []
-        lines.append("HIS   Δ%           NOW      REF")
-        lines.append("--------------------------------")
-        for (t, dd_s, now_s, ref_s) in perf:
-            lines.append(f"{t:<5} {dd_s:<12} {now_s:>8} {ref_s:>8}")
-
-        msg = header + "<pre>" + "\n".join(lines) + "</pre>"
 
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
@@ -2525,7 +2507,7 @@ if not TOMORROW_CHAINS:
         )
 
     except Exception as e:
-        logger.exception("ALTIN live follow error: %s", e)
+        logger.exception("job_tomorrow_list error: %s", e)
         return
 
 async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
