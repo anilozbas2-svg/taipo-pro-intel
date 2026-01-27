@@ -2482,7 +2482,7 @@ except Exception as e:
     return
 
         # Canlı fiyatlar
-        rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
+    rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
         now_map = {
             (r.get("ticker") or "").strip(): r
             for r in (rows_now or [])
