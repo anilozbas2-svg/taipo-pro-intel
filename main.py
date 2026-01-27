@@ -2495,19 +2495,19 @@ except Exception as e:
         ref_close = safe_float(ref_close_map.get(t))
         now_close = safe_float((now_map.get(t) or {}).get("close"))
         dd = pct_change(now_close, ref_close)
-
-            if dd == dd:
-                if dd > 0:
-                    emo = "🟢"
-                elif dd < 0:
-                    emo = "🔴"
-                else:
-                    emo = "⚪"
-                dd_s = f"{emo} {dd:+.2f}%"
+        
+        if dd == dd:
+            if dd > 0:
+                emo = "🟢"
+            elif dd < 0:
+                emo = "🔴"
             else:
-                dd_s = "⚪ n/a"
+                emo = "⚪"
+            dd_s = f"{emo} {dd:+.2f}%"
+        else:
+            dd_s = "⚪ n/a"
 
-            perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
+        perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
 
         header = (
             "⏳ <b>ALTIN LIVE TAKİP</b>\n"
