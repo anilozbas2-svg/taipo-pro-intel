@@ -2465,53 +2465,47 @@ if not TOMORROW_CHAINS:
         )
     return   # ❗ burada çıkıyoruz
 
-# ✅ BURAYA KADAR GELDİYSE zincir VAR demektir
-ALTIN_NOCHAIN_WARNED = False   # reset burada olacak
+# ✅ BURAYA KADAR GELDIYSE zincir VAR demektir
+    ALTIN_NOCHAIN_WARNED = False  # reset burada olacak
 
-try:
-    xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-    update_index_history(
-        today_key_tradingday(),
-        xu_close, xu_change, xu_vol, xu_open
-    )
-
-    # ... ALTIN LIVE devam kodların burada ...
-
-except Exception as e:
-    logger.exception("ALTIN live follow error: %s", e)
-    return
+    try:
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(
+            today_key_tradingday(),
+            xu_close, xu_change, xu_vol, xu_open
+        )
 
         # Canlı fiyatlar
-    rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
-    now_map = {
-        (r.get("ticker") or "").strip(): r
-        for r in (rows_now or [])
-        if (r.get("ticker") or "").strip()
-    }
+        rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
+        now_map = {
+            (r.get("ticker") or "").strip(): r
+            for r in (rows_now or [])
+            if (r.get("ticker") or "").strip()
+        }
 
-    # Tablo
-    perf = []
-    for t in altin_tickers:
-        ref_close = safe_float(ref_close_map.get(t))
-        now_close = safe_float((now_map.get(t) or {}).get("close"))
-        dd = pct_change(now_close, ref_close)
-        
-        if dd == dd:
-            if dd > 0:
-                emo = "🟢"
-            elif dd < 0:
-                emo = "🔴"
+        # Tablo
+        perf = []
+        for t in altin_tickers:
+            ref_close = safe_float(ref_close_map.get(t))
+            now_close = safe_float((now_map.get(t) or {}).get("close"))
+            dd = pct_change(now_close, ref_close)
+
+            if dd == dd:
+                if dd > 0:
+                    emo = "🟢"
+                elif dd < 0:
+                    emo = "🔴"
+                else:
+                    emo = "⚪"
+                dd_s = f"{emo} {dd:+.2f}%"
             else:
-                emo = "⚪"
-            dd_s = f"{emo} {dd:+.2f}%"
-        else:
-            dd_s = "⚪ n/a"
+                dd_s = "⚪ n/a"
 
-        perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
+            perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
 
         header = (
             "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"🕒 <b>{now.strftime('%H:%M')}</b>  |  "
+            f"🕒 <b>{now.strftime('%H:%M')}</b> | "
             f"📈 XU100: <b>{xu_close:,.0f}</b> ({xu_change:+.2f}%)\n"
         )
 
@@ -2519,7 +2513,7 @@ except Exception as e:
         lines.append("HIS   Δ%           NOW      REF")
         lines.append("--------------------------------")
         for (t, dd_s, now_s, ref_s) in perf:
-            lines.append(f"{t:<5} {dd_s:<12}  {now_s:>7}  {ref_s:>7}")
+            lines.append(f"{t:<5} {dd_s:<12} {now_s:>8} {ref_s:>8}")
 
         msg = header + "<pre>" + "\n".join(lines) + "</pre>"
 
