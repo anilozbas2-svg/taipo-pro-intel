@@ -2465,7 +2465,7 @@ if not TOMORROW_CHAINS:
         )
     return   # ❗ burada çıkıyoruz
 
-# ✅ BURAYA KADAR GELDIYSE zincir VAR demektir
+    # ✅ BURAYA KADAR GELDIYSE zincir VAR demektir
     ALTIN_NOCHAIN_WARNED = False  # reset burada olacak
 
     try:
