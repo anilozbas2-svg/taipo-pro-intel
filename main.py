@@ -1965,27 +1965,30 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # 4) Disk'e kaydet (0 ticker ise KAYDETME - dosyayı bozma)
         new_len = len(chains or {})
 
-        if new_len == 0:
-            logger.warning("TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0).")
-        else:
-            global TOMORROW_CHAINS
-            TOMORROW_CHAINS = chains
+            if new_len == 0:
+                logger.warning(
+                 "TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0)."
+                  )
+                  else:
+                  global TOMORROW_CHAINS
+                  TOMORROW_CHAINS = chains
 
-        try:
-                save_json(TOMORROW_CHAIN_FILE, chains)
-                logger.info("TOMORROW_CHAINS saved: %d tickers (save_json)", new_len)
-            except Exception as e:
-            logger.warning("save_json failed, fallback save_tomorrow_chains(): %s", e)
-                save_tomorrow_chains()
-                logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
-                # Projede save_tomorrow_chains parametresiz ise:
-                # Global'e yaz, fonksiyon kendi global'den okusun
-                global TOMORROW_CHAINS
-                TOMORROW_CHAINS = chains
-                save_tomorrow_chains()
-                logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
-            except Exception as e2:
-                logger.error("fallback save_tomorrow_chains failed: %s", e2)
+               try:
+                        save_json(TOMORROW_CHAIN_FILE, chains)
+                        logger.info(
+                       "TOMORROW_CHAINS saved: %d ticker(save_json)",
+                   new_len
+                      )
+    except Exception as e:
+        logger.warning(
+            "save_json failed, fallback save_tomorrow_chains(): %s",
+            e
+        )
+        save_tomorrow_chains()
+        logger.info(
+            "TOMORROW_CHAINS saved: %d tickers (fallback)",
+            new_len
+        )
         
         # 5) Kullanıcıya rapor
         watch = sorted(list(TOMORROW_CHAINS.keys()))
