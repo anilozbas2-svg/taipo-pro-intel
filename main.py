@@ -196,33 +196,6 @@ def write_trade_log(record: dict) -> None:
     except Exception as e:
         logger.exception("Trade log write error: %s", e)
 
-def ensure_tomorrow_chains_loaded() -> None:
-    """
-    TOMORROW_CHAINS RAM boşsa diskten yüklemeyi dener.
-    (Deploy/restart sonrası /alarm_run için şart)
-    """
-    global TOMORROW_CHAINS
-    if TOMORROW_CHAINS:
-        return
-    try:
-        TOMORROW_CHAINS = load_tomorrow_chains() or {}
-    except Exception:
-        TOMORROW_CHAINS = {}
-
-
-def pick_active_tomorrow_chain() -> dict:
-    """
-    Bugünün key'i yoksa en güncel ts'li chain'i seçer.
-    """
-    if not TOMORROW_CHAINS:
-        return {}
-    active_key = today_key_tradingday()
-    if active_key not in TOMORROW_CHAINS:
-        active_key = max(
-            TOMORROW_CHAINS.keys(),
-            key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-        )
-    return TOMORROW_CHAINS.get(active_key, {}) or {}
 
 def safe_float(x: Any) -> float:
     try:
@@ -708,21 +681,12 @@ def load_tomorrow_chains() -> None:
     except Exception as e:
         logger.warning("load_tomorrow_chains failed: %s", e)
         TOMORROW_CHAINS = {}
-        
-    return TOMORROW_CHAINS
-    
-def save_tomorrow_chains(chains: dict | None = None) -> None:
+
+
+def save_tomorrow_chains() -> None:
     global TOMORROW_CHAINS
-
-    if chains is not None:
-        TOMORROW_CHAINS = chains
-
     try:
         _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS or {})
-        logger.info(
-            "TOMORROW_CHAINS saved: %d tickers",
-            len(TOMORROW_CHAINS or {})
-        )
     except Exception as e:
         logger.warning("save_tomorrow_chains failed: %s", e)
 
@@ -1391,18 +1355,17 @@ def _relax_thresholds(min_ratio: float, max_band: float) -> Tuple[float, float]:
     mb = max(0.0, min(95.0, mb))
     return mr, mb
 
-def build_tomorrow_rows(all_rows: list[dict[str, any]]) -> list[dict[str, any]]:
-    def _pass(relaxed: bool) -> list[dict[str, any]]:
-        out: list[dict[str, any]] = []
 
-        for r in (all_rows or []):
+def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _pass(relaxed: bool) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for r in all_rows:
             kind = r.get("signal_text", "")
 
             # ALTIN liste: sinyal + BIST200 (liste zaten BIST200 rows)
             # R0 sadece öne aldırır, kriter değil ama "liste boş" olmasın diye aday havuzunda tutulabilir
-            if kind not in ("TOPLAMA", "DIP TOPLAMA", "UÇAN (RO)"):
-                if not (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
-                    continue
+            if kind not in ("TOPLAMA", "DİP TOPLAMA", "UÇAN (R0)") and not (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
+                continue
 
             t = r.get("ticker", "")
             if not t:
@@ -1431,14 +1394,55 @@ def build_tomorrow_rows(all_rows: list[dict[str, any]]) -> list[dict[str, any]]:
 
     # 1) normal
     out = _pass(relaxed=False)
-    logger.info("TOM_BUILD: normal_pass=%d", len(out or []))
 
     # 2) ALTIN hiç çıkmadıysa ufak gevşeme
     if not out:
         out = _pass(relaxed=True)
-        logger.info("TOM_BUILD: relaxed_pass=%d", len(out or []))
 
     return out
+
+
+def build_candidate_rows(all_rows: List[Dict[str, Any]], gold_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    gold_set = set((r.get("ticker") or "").strip().upper() for r in (gold_rows or []))
+
+    def _pass(relaxed: bool) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for r in all_rows:
+            kind = r.get("signal_text", "")
+            if kind not in ("TOPLAMA", "DİP TOPLAMA", "UÇAN (R0)") and not (CANDIDATE_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
+                continue
+
+            t = (r.get("ticker") or "").strip().upper()
+            if not t or t in gold_set:
+                continue
+
+            st = compute_30d_stats(t)
+            if not st:
+                continue
+
+            ratio = st.get("ratio", float("nan"))
+            band = st.get("band_pct", 50.0)
+
+            min_ratio = CANDIDATE_MIN_VOL_RATIO
+            max_band = CANDIDATE_MAX_BAND
+            if relaxed:
+                min_ratio, max_band = _relax_thresholds(min_ratio, max_band)
+
+            if ratio != ratio or ratio < min_ratio:
+                continue
+            if band > max_band:
+                continue
+
+            out.append(r)
+
+        out.sort(key=tomorrow_score, reverse=True)
+        return out[:max(1, CANDIDATE_MAX)]
+
+    out = _pass(relaxed=False)
+    if not out:
+        out = _pass(relaxed=True)
+    return out
+
 
 def format_threshold(min_vol: float) -> str:
     if not isinstance(min_vol, (int, float)) or math.isnan(min_vol) or min_vol == float("inf"):
@@ -1868,114 +1872,83 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=ParseMode.HTML
     )
 
+
 async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /tomorrow:
-    - BIST200 listesinden (env: BIST200_TICKERS) "tomorrow zinciri"ni üretir.
-    - Referans kapanış (ref_close) olarak bugünün/yakın günün fiyatlarını snapshot'lar.
-    - TOMORROW_CHAINS'i diske yazar: TOMORROW_CHAIN_FILE
-    """
-    try:
-        if update.message is None:
-            return
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        return
+    await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
+    xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+    update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+    reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
-        if not ALARM_CHAT_ID:
-            await update.message.reply_text("❌ ALARM_CHAT_ID yok. Render env'e ALARM_CHAT_ID ekle.")
-            return
+    global LAST_REGIME
+    LAST_REGIME = reg
 
-        bist200_list = env_csv("BIST200_TICKERS")
-        if not bist200_list:
-            await update.message.reply_text("❌ BIST200_TICKERS boş. Env'e CSV liste ekle (AAA.IS,BBB.IS,...)")
-            return
+    rows = await build_rows_from_is_list(bist200_list, xu_change)
+    update_history_from_rows(rows)
+    min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+    thresh_s = format_threshold(min_vol)
 
-        await update.message.reply_text("🧩 Tomorrow zinciri hazırlanıyor...")
+    # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
+    r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
+    r0_block = ""
+    if r0_rows:
+        r0_rows = sorted(
+            r0_rows,
+            key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
+            reverse=True
+        )[:8]
+        r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
 
-        # 1) BIST200 tickers -> rows (IS list) çek
-        # build_rows_from_is_list: senin mevcut fonksiyonun (tickers, xu_change) alıyordu.
-        # Biz burada xu_change bilinmiyorsa None/0 geçiyoruz, fonksiyon tolerate etmeli.
-        try:
-            xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        except Exception:
-            xu_change = 0.0
-
-        rows_now = await build_rows_from_is_list(bist200_list, xu_change)
-
-        # 2) ref_close map hazırla (close yoksa None)
-        ref_map: dict[str, float] = {}
-        for r in (rows_now or []):
-            t = (r.get("ticker") or "").strip()
-            if not t:
-                continue
-            ref_close = safe_float(r.get("close"))
-            if ref_close == ref_close and ref_close > 0:
-                ref_map[t] = ref_close
-                
-        # 3) Zincir dict'i kur (basit zincir: sadece ref_close kaydı)
-        # Ileride buraya senin "chain logic" (pattern / filtre) eklenecek.
-        chains: dict[str, dict] = {}
-
-        for t in bist200_list:
-            if t in ref_map:
-                chains[t] = {
-                    "ref_close": ref_map[t],
-                    "ts": datetime.now(TZ).isoformat(),
-                }
-                
-        # 4) Disk'e kaydet (0 ticker ise KAYDETME - dosyayı bozma)
-        new_len = len(chains or {})
-
-        if new_len == 0:
-            logger.warning(
-                "TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0)."
-            )
-        else:
-            global TOMORROW_CHAINS
-            TOMORROW_CHAINS = chains
-
-            try:
-                save_json(TOMORROW_CHAIN_FILE, chains)
-                logger.info(
-                    "TOMORROW_CHAINS saved: %d tickers (save_json)",
-                    new_len
-                )
-            except Exception as e:
-                logger.warning(
-                    "save_json failed, fallback save_tomorrow_chains(): %s",
-                    e
-                )
-                save_tomorrow_chains()
-                logger.info(
-                    "TOMORROW_CHAINS saved: %d tickers (fallback)",
-                    new_len
-                )
-            
-        # 5) Kullanıcıya rapor
-        watch = sorted(list(TOMORROW_CHAINS.keys()))
-        missing = sorted([t for t in bist200_list if t not in TOMORROW_CHAINS])
-
-        watch_s = ", ".join(watch[:60]) if watch else "-"
-        miss_s = ", ".join(missing[:60]) if missing else "-"
-
+    if REJIM_GATE_TOMORROW and reg.get("block"):
         msg = (
-            "📌 <b>Tomorrow Zinciri Oluşturuldu (BIST200)</b>\n"
-            f"✅ Zincir VAR ({len(watch)}):\n<pre>{watch_s}</pre>\n"
-            f"❌ Zincir YOK ({len(missing)}):\n<pre>{miss_s}</pre>\n"
-            "⏳ Canlı fark için: /altin_run"
+            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
+            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
+            f"{format_regime_line(reg)}\n\n"
+            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
+            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
         )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        return
 
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
+    tom_rows = build_tomorrow_rows(rows)
+    cand_rows = build_candidate_rows(rows, tom_rows)
+    save_tomorrow_snapshot(tom_rows, xu_change)
 
-        await update.message.reply_text("✅ Tomorrow zinciri kaydedildi.")
+
+# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
+    try:
+        ref_day_key = today_key_tradingday()
+        open_or_update_tomorrow_chain(ref_day_key, tom_rows)
     except Exception as e:
-        logger.exception("cmd_tomorrow error: %s", e)
-        if update.message is not None:
-            await update.message.reply_text(f"❌ /tomorrow hata: {e}")
+        logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
+    msg = r0_block + build_tomorrow_message(
+        tom_rows,
+        cand_rows,
+        xu_close,
+        xu_change,
+        thresh_s,
+        reg,
+    )
+    
+# ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
+    try:
+        perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
+    except Exception:
+        perf_section = ""
+
+    if perf_section:
+        msg = msg + "\n\n" + perf_section
+
+
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
     if not watch:
@@ -2409,69 +2382,150 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         logger.exception("Alarm job error: %s", e)
         return
 
-async def cmd_alarm_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await update.message.reply_text("⏳ Alarm taraması manuel tetikleniyor...")
-        await job_alarm_scan(context, force=True)
-        await update.message.reply_text("✅ Alarm taraması tamamlandı.")
+        await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
+        await job_altin_live_follow(context, force=True)
     except Exception as e:
         await update.message.reply_text(
-            f"❌ Alarm taraması çalıştırılamadı:\n<code>{e}</code>",
+            f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
             parse_mode=ParseMode.HTML,
         )
 
-async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
-    """
-    ALTIN canlı takip (manual/otomatik).
-    - /tomorrow ile oluşan TOMORROW_CHAINS içindeki ALTIN listesini referans alır.
-    - Canlı fiyatları çekip REF ile NOW farkını tablo basar.
-    """
+async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
-    # Manual modda bile /tomorrow zinciri yoksa çalışmasın (spam yapma)
-    global TOMORROW_CHAINS
-    global ALTIN_NOCHAIN_WARNED
-
-    if not TOMORROW_CHAINS:
-        try:
-            TOMORROW_CHAINS = load_tomorrow_chains() or {}
-        except Exception:
-            TOMORROW_CHAINS = {}
-
-    if not TOMORROW_CHAINS:
-        if not ALTIN_NOCHAIN_WARNED:
-            ALTIN_NOCHAIN_WARNED = True
-            try:
-                await context.bot.send_message(
-                    chat_id=int(ALARM_CHAT_ID),
-                    text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                pass
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
         return
 
-    # Zincir varsa uyarı bayrağını resetle (yarın tekrar uyarabilsin)
-    ALTIN_NOCHAIN_WARNED = False
+    global TOMORROW_CHAINS
+    global LAST_REGIME
 
     try:
-        # ALTIN tickers listesi = TOMORROW_CHAINS keys
-        altin_tickers = list((TOMORROW_CHAINS or {}).keys())
+        if TOMORROW_DELAY_MIN > 0:
+            await asyncio.sleep(max(0, int(TOMORROW_DELAY_MIN)) * 60)
 
-        # Referans kapanışları TOMORROW_CHAINS içinde tutuluyor varsayımı
-        # (Senin yapında {"THYAO.IS": {"ref_close": 123.4, ...}} gibi)
-        ref_close_map = {}
-        for t, v in (TOMORROW_CHAINS or {}).items():
-            if isinstance(v, dict):
-                ref_close_map[t] = v.get("ref_close")
-
-        # XU100 özet
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(
-            today_key_tradingday(),
-            xu_close, xu_change, xu_vol, xu_open
+        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+
+        LAST_REGIME = reg
+
+        if REJIM_GATE_TOMORROW and reg.get("block"):
+            msg = (
+                f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b>\n"
+                f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+                f"{format_regime_line(reg)}\n\n"
+                f"⛔️ <b>Rejim BLOK olduğu için Tomorrow listesi gönderilmedi.</b>"
+            )
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            return
+
+        rows = await build_rows_from_is_list(bist200_list, xu_change)
+        update_history_from_rows(rows)
+        min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+        thresh_s = format_threshold(min_vol)
+
+        # ✅ R0 bloğu (otomatik gönderimde de üstte görünsün)
+        r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
+        r0_block = ""
+        if r0_rows:
+            r0_rows = sorted(
+                r0_rows,
+                key=lambda x: (x.get("volume") or 0)
+                if x.get("volume") == x.get("volume")
+                else 0,
+                reverse=True,
+            )[:8]
+            r0_block = (
+                make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True)
+                + "\n\n"
+            )
+
+        tom_rows = build_tomorrow_rows(rows)
+        cand_rows = build_candidate_rows(rows, tom_rows)
+        save_tomorrow_snapshot(tom_rows, xu_change)
+
+        # ==============================
+        # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
+        # ==============================
+        key = today_key_tradingday()  # follow ile aynı key
+
+        TOMORROW_CHAINS[key] = {
+            "ts": time.time(),
+            "rows": tom_rows,
+            "ref_close": {
+                (r.get("symbol") or ""): r.get("ref_close")
+                for r in (tom_rows or [])
+                if r.get("symbol")
+            },
+        }
+
+        logger.info(
+            "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
+            key,
+            len(tom_rows),
         )
+
+        msg = r0_block + build_tomorrow_message(
+            tom_rows,
+            cand_rows,
+            xu_close,
+            xu_change,
+            thresh_s,
+            reg,
+        )
+
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    except Exception as e:
+        logger.exception("Tomorrow job error: %s", e)
+
+async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
+        return
+
+    if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip() in ("0", "false", "False"):
+        return
+
+    now = now_tr()
+    if (not force) and (not within_altin_follow_window(now)):
+        return
+
+    try:
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+
+        if not TOMORROW_CHAINS:
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            return
+
+        altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
+        if not altin_tickers:
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text="⚠️ ALTIN follow: Tomorrow zincirinde ALTIN tickers yok. Önce /tomorrow çalıştır.",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            return
 
         # Canlı fiyatlar
         rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
@@ -2500,20 +2554,18 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
                 dd_s = "⚪ n/a"
 
             perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
-            
-            now = datetime.now(TZ)
-            
+
         header = (
             "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"🕒 <b>{now.strftime('%H:%M')}</b> | "
+            f"🕒 <b>{now.strftime('%H:%M')}</b>  |  "
             f"📈 XU100: <b>{xu_close:,.0f}</b> ({xu_change:+.2f}%)\n"
         )
 
         lines = []
-        lines.append("HIS  Δ%           NOW      REF")
+        lines.append("HIS   Δ%           NOW      REF")
         lines.append("--------------------------------")
         for (t, dd_s, now_s, ref_s) in perf:
-            lines.append(f"{t:<5} {dd_s:<12} {now_s:>7} {ref_s:>7}")
+            lines.append(f"{t:<5} {dd_s:<12}  {now_s:>7}  {ref_s:>7}")
 
         msg = header + "<pre>" + "\n".join(lines) + "</pre>"
 
@@ -2526,116 +2578,6 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
 
     except Exception as e:
         logger.exception("ALTIN live follow error: %s", e)
-        return
-
-async def cmd_altin_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /altin_run: ALTIN canlı takip mesajını manuel tetikler.
-    Tomorrow zincirindeki ALTIN listesini referans alır ve canlı yüzde fark basar.
-    """
-    try:
-        if update.message is None:
-            return
-
-        await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
-
-        # ALTIN canlı takibi çalıştır (force=True)
-        await job_altin_live_follow(context, force=True)
-
-        await update.message.reply_text("✅ ALTIN canlı takip mesajı gönderildi.")
-
-    except Exception as e:
-        logger.exception("cmd_altin_run error: %s", e)
-        try:
-            if update.message is not None:
-                await update.message.reply_text(f"❌ altin_run hata: {e}")
-        except Exception:
-            pass
-
-async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /alarm_run: Tomorrow zincir listesini (BIST200_TICKERS) kontrol eder ve raporu manuel yollar.
-    """
-    try:
-        await update.message.reply_text("⏳ Tomorrow list kontrolü manuel tetikleniyor...")
-
-        # Manuel tetikte direkt job_tomorrow_list çalıştır
-        await job_tomorrow_list(context, send_report=True)
-
-        await update.message.reply_text("✅ Tomorrow list raporu gönderildi.")
-    except Exception as e:
-        logger.exception("cmd_alarm_run error: %s", e)
-        try:
-            await update.message.reply_text(f"❌ alarm_run hata: {e}")
-        except Exception:
-            pass
-
-async def job_tomorrow_list(
-    context: ContextTypes.DEFAULT_TYPE,
-    send_report: bool = True
-) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
-        return
-
-    # Tomorrow listesi env'den geliyor (CSV: "AAA,BBB,CCC")
-    bist200_list = env_csv("BIST200_TICKERS")
-    if not bist200_list:
-        return
-
-    global TOMORROW_CHAINS
-    global ALTIN_NOCHAIN_WARNED
-
-    try:
-        # Zincir bellek boşsa dosyadan yüklemeyi dene
-        if not TOMORROW_CHAINS:
-            try:
-                load_tomorrow_chains()  # global TOMORROW_CHAINS dolduruyor
-            except Exception:
-                TOMORROW_CHAINS = {}
-
-        # Hala yoksa kullanıcıyı bir kere uyar (spam yapma)
-        if not TOMORROW_CHAINS:
-            if not ALTIN_NOCHAIN_WARNED:
-                ALTIN_NOCHAIN_WARNED = True
-                if send_report:
-                    await context.bot.send_message(
-                        chat_id=int(ALARM_CHAT_ID),
-                        text="⚠️ Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-                        disable_web_page_preview=True,
-                    )
-            return
-
-        # Zincir varsa: uyarı flag'ini resetle (yarın yine bir kere uyarabilsin)
-        ALTIN_NOCHAIN_WARNED = False
-
-        # Tomorrow zinciri olan ticker'ları filtrele
-        chain_keys = set((TOMORROW_CHAINS or {}).keys())
-        watch = [t for t in bist200_list if t in chain_keys]
-        missing = [t for t in bist200_list if t not in chain_keys]
-
-        if not send_report:
-            return
-
-        # Mesajı sade ve sağlam kur
-        watch_s = ", ".join(watch[:60]) if watch else "-"
-        miss_s = ", ".join(missing[:60]) if missing else "-"
-
-        msg = (
-            "📌 <b>Tomorrow List (BIST200)</b>\n"
-            f"✅ Zincir VAR ({len(watch)}):\n<pre>{watch_s}</pre>\n"
-            f"❌ Zincir YOK ({len(missing)}):\n<pre>{miss_s}</pre>\n"
-            "🧩 Zincir oluşturmak için: /tomorrow"
-        )
-
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-
-    except Exception as e:
-        logger.exception("job_tomorrow_list error: %s", e)
         return
 
 async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2821,12 +2763,9 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
     if jq is None:
-        logger.warning("JobQueue yok -> otomatik alarm/tomorrow/whale CALISMAZ. Komutlar calisir.")
+        logger.warning("JobQueue yok → otomatik alarm/tomorrow/whale ÇALIŞMAZ. Komutlar çalışır.")
         return
 
-    # ------------------------------
-    # Alarm scan (run_repeating)
-    # ------------------------------
     if ALARM_ENABLED and ALARM_CHAT_ID:
         first = next_aligned_run(ALARM_INTERVAL_MIN)
         jq.run_repeating(
@@ -2841,9 +2780,6 @@ def schedule_jobs(app: Application) -> None:
             first.isoformat(),
         )
 
-        # ------------------------------
-        # Tomorrow daily list (EOD sonrası)
-        # ------------------------------
         jq.run_daily(
             job_tomorrow_list,
             time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
@@ -2856,11 +2792,8 @@ def schedule_jobs(app: Application) -> None:
             TOMORROW_DELAY_MIN,
         )
     else:
-        logger.info("ALARM kapali veya ALARM_CHAT_ID yok -> otomatik alarm/tomorrow gonderilmeyecek.")
+        logger.info("ALARM kapalı veya ALARM_CHAT_ID yok → otomatik alarm/tomorrow gönderilmeyecek.")
 
-    # ------------------------------
-    # Whale follow (run_repeating)
-    # ------------------------------
     if WHALE_ENABLED and ALARM_CHAT_ID:
         first_w = next_aligned_run(WHALE_INTERVAL_MIN)
         jq.run_repeating(
@@ -2875,34 +2808,40 @@ def schedule_jobs(app: Application) -> None:
             first_w.isoformat(),
         )
     else:
-        logger.info("WHALE kapali veya ALARM_CHAT_ID yok -> whale gonderilmeyecek.")
+        logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
 
-# ------------------------------
-    # ALTIN live follow (OPTIONAL) - SAFE GUARD
-    # MANUEL sisteme geçildi: otomatik run_repeating KAPALI
-    # ------------------------------
+    # ✅ ALTIN live follow (Tomorrow ALTIN listesi canlı takip)
+    if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip().lower() not in ("0", "false") and ALARM_CHAT_ID:
+        interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
+        first_af = next_aligned_run(interval_min)
 
-    altin_follow_enabled = False  # manuel mod: otomatik altin live follow kapalı
+        jq.run_repeating(
+            job_altin_live_follow,
+            interval=interval_min * 60,
+            first=first_af,
+            name="altin_live_follow_repeating",
+        )
 
-    if altin_follow_enabled and ALARM_CHAT_ID:
-        if "job_altin_live_follow" in globals():
-            interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
-            first_af = next_aligned_run(interval_min)
-            jq.run_repeating(
-                job_altin_live_follow,
-                interval=interval_min * 60,
-                first=first_af,
-                name="altin_live_follow_repeating",
-            )
-            logger.info(
-                "ALTIN live follow scheduled every %d min. First=%s",
-                interval_min,
-                first_af.isoformat(),
-            )
-        else:
-            logger.warning("ALTIN live follow enabled ama job_altin_live_follow tanimli degil -> SKIP.")
-    else:
-        logger.info("ALTIN live follow kapali (manuel mod) veya ALARM_CHAT_ID yok -> calismaz.")
+        logger.info(
+            "ALTIN live follow scheduled every %d min. First=%s",
+            interval_min,
+            first_af.isoformat(),
+        )
+        
+    # ✅ Tomorrow follow (chain tracking)
+    if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID:
+        first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
+        jq.run_repeating(
+            job_tomorrow_follow,
+            interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
+            first=first_tf,
+            name="tomorrow_follow_repeating",
+        )
+        logger.info(
+            "Tomorrow follow scheduled every %d min. First=%s",
+            TOMORROW_FOLLOW_INTERVAL_MIN,
+            first_tf.isoformat(),
+        )
 
 # =========================================================
 # Global error handler
@@ -2910,10 +2849,6 @@ def schedule_jobs(app: Application) -> None:
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled error: %s", context.error)
 
-# =========================
-# Global runtime flags
-# =========================
-ALTIN_NOCHAIN_WARNED = False
 
 # =========================================================
 # Main
@@ -2922,7 +2857,7 @@ def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip() or os.getenv("TELEGRAM_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
-       
+        
 
     load_last_alarm_ts()
     load_whale_sent_day()
@@ -2933,7 +2868,6 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("ping", cmd_ping))
-  
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
     app.add_handler(CommandHandler("rejim", cmd_rejim))
@@ -2944,10 +2878,7 @@ def main() -> None:
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
-    app.add_handler(CommandHandler("altin_run", cmd_altin_run))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
-    
-    app.add_handler(CommandHandler("alarm_scan", cmd_alarm_scan))
     
     app.add_error_handler(on_error)
 
