@@ -1966,18 +1966,18 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         new_len = len(chains or {})
 
         if new_len == 0:
-        logger.warning("TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0).")
+            logger.warning("TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0).")
         else:
-        global TOMORROW_CHAINS
-        TOMORROW_CHAINS = chains
+            global TOMORROW_CHAINS
+            TOMORROW_CHAINS = chains
 
         try:
-            save_json(TOMORROW_CHAIN_FILE, chains)
-            logger.info("TOMORROW_CHAINS saved: %d tickers (save_json)", new_len)
-        except Exception as e:
+                save_json(TOMORROW_CHAIN_FILE, chains)
+                logger.info("TOMORROW_CHAINS saved: %d tickers (save_json)", new_len)
+            except Exception as e:
             logger.warning("save_json failed, fallback save_tomorrow_chains(): %s", e)
-            save_tomorrow_chains()
-            logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
+                save_tomorrow_chains()
+                logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
                 # Projede save_tomorrow_chains parametresiz ise:
                 # Global'e yaz, fonksiyon kendi global'den okusun
                 global TOMORROW_CHAINS
