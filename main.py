@@ -1429,13 +1429,15 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return out[:max(1, TOMORROW_MAX)]
 
     # 1) normal
-    out = _pass(relaxed=False)
+out = _pass(relaxed=False)
+logger.info("TOM_BUILD: normal_pass=%d", len(out or []))
 
-    # 2) ALTIN hiç çıkmadıysa ufak gevşeme
-    if not out:
-        out = _pass(relaxed=True)
+# 2) ALTIN hiç çıkmadıysa ufak gevşeme
+if not out:
+    out = _pass(relaxed=True)
+    logger.info("TOM_BUILD: relaxed_pass=%d", len(out or []))
 
-    return out
+return out
 
 
 def build_candidate_rows(all_rows: List[Dict[str, Any]], gold_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1960,17 +1962,22 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     "ts": datetime.now(TZ).isoformat(),
                 }
 
-        # 4) Global'e yaz + diske kaydet
-        global TOMORROW_CHAINS
-        TOMORROW_CHAINS = chains
+        # 4) Disk'e kaydet (0 ticker ise KAYDETME - dosyayı bozma)
+new_len = len(TOMORROW_CHAINS or {})
 
+if new_len == 0:
+    logger.warning("TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0).")
+else:
+    try:
+        save_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
+        logger.info("TOMORROW_CHAINS saved: %d tickers (save_json)", new_len)
+    except Exception as e:
+        logger.warning("save_json failed, fallback save_tomorrow_chains(): %s", e)
         try:
-            save_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
-        except Exception:
-            # fallback: mevcut projende farklı save fonksiyonu olabilir
-            save_tomorrow_chains(TOMORROW_CHAINS)
-
-        logger.info("TOMORROW_CHAINS saved: %s tickers", len(TOMORROW_CHAINS))
+            save_tomorrow_chains()  # <-- parametre YOK!
+            logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
+        except Exception as e2:
+            logger.error("fallback save_tomorrow_chains failed: %s", e2)
 
         # 5) Kullanıcıya rapor
         watch = sorted(list(TOMORROW_CHAINS.keys()))
