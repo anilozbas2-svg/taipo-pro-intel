@@ -1892,55 +1892,64 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     thresh_s = format_threshold(min_vol)
 
     # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
-    r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
-    r0_block = ""
-    if r0_rows:
-        r0_rows = sorted(
-            r0_rows,
-            key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
-            reverse=True
-        )[:8]
-        r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
-        
+        r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
+        r0_block = ""
+        if r0_rows:
+            r0_rows = sorted(
+                r0_rows,
+                key=lambda x: (x.get("volume") or 0)
+                if x.get("volume") == x.get("volume")
+                else 0,
+                reverse=True
+            )[:8]
+            r0_block = make_table(
+                r0_rows,
+                "🚀 <b>R0 - UÇANLAR (Erken Yakalananlar)</b>",
+                include_kind=True
+            ) + "\n\n"
+
+        # 🔐 Rejim soft-block (Tomorrow yumuşatma)
         rejim_soft_block = False
 
-    if REJIM_GATE_TOMORROW and reg.get("block"):
-        rejim_soft_block = True
+        if REJIM_GATE_TOMORROW and reg.get("block"):
+            rejim_soft_block = True
 
-    warn_msg = (
-        "⚠️ <b>REJİM KORUMA MODU</b>\n"
-        "Piyasa riskli. Tomorrow listesi <b>yumuşatılmış</b> üretilecektir.\n\n"
-        f"{format_regime_line(reg)}\n"
-    )
+            warn_msg = (
+                "⚠️ <b>REJİM KORUMA MODU</b>\n"
+                "Piyasa riskli. Tomorrow listesi <b>yumuşatılmış</b> üretilecektir.\n\n"
+                f"{format_regime_line(reg)}\n"
+            )
 
-    await update.message.reply_text(
-        warn_msg,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
+            await update.message.reply_text(
+                warn_msg,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
 
-    tom_rows = build_tomorrow_rows(rows, relaxed=rejim_soft_block)
-    if rejim_soft_block:
-        tom_rows = tom_rows[:2]  # rejimde 2 hisse
+        # 📅 Tomorrow listesi üretimi
+        tom_rows = build_tomorrow_rows(rows, relaxed=rejim_soft_block)
+
+        if rejim_soft_block:
+            tom_rows = tom_rows[:2]  # rejimde maksimum 2 hisse
+
         cand_rows = build_candidate_rows(rows, tom_rows)
         save_tomorrow_snapshot(tom_rows, xu_change)
 
+        # 🔗 Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
+        try:
+            ref_day_key = today_key_tradingday()
+            open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+        except Exception as e:
+            logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
-# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
-    try:
-        ref_day_key = today_key_tradingday()
-        open_or_update_tomorrow_chain(ref_day_key, tom_rows)
-    except Exception as e:
-        logger.warning("open_or_update_tomorrow_chain failed: %s", e)
-
-    msg = r0_block + build_tomorrow_message(
-        tom_rows,
-        cand_rows,
-        xu_close,
-        xu_change,
-        thresh_s,
-        reg,
-    )
+        msg = r0_block + build_tomorrow_message(
+            tom_rows,
+            cand_rows,
+            xu_close,
+            xu_change,
+            thresh_s,
+            reg,
+        )
     
 # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
