@@ -1935,11 +1935,11 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         tom_rows = build_tomorrow_rows(rows, relaxed=rejim_soft_block)
         
         if not tom_rows:
-        await update.message.reply_text(
-            "⚠️ Tomorrow listesi için uygun hisse çıkmadı (filtreler sıkı olabilir).",
-        disable_web_page_preview=True,
-        )
-        return
+            await update.message.reply_text(
+                "⚠️ Tomorrow listesi için uygun hisse çıkmadı (filtreler sıkı olabilir).",
+                disable_web_page_preview=True,
+            )
+            return
 
         if rejim_soft_block:
             tom_rows = tom_rows[:2]  # rejimde maksimum 2 hisse
