@@ -1951,45 +1951,46 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             ref_close = safe_float(r.get("close"))
             if ref_close == ref_close and ref_close > 0:
                 ref_map[t] = ref_close
-
+                
         # 3) Zincir dict'i kur (basit zincir: sadece ref_close kaydı)
-        # İleride buraya senin "chain logic" (pattern / filtre) eklenecek.
+        # Ileride buraya senin "chain logic" (pattern / filtre) eklenecek.
         chains: dict[str, dict] = {}
+
         for t in bist200_list:
             if t in ref_map:
                 chains[t] = {
                     "ref_close": ref_map[t],
                     "ts": datetime.now(TZ).isoformat(),
                 }
-
+                
         # 4) Disk'e kaydet (0 ticker ise KAYDETME - dosyayı bozma)
         new_len = len(chains or {})
 
-            if new_len == 0:
-                logger.warning(
-                 "TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0)."
-                  )
-                  else:
-                  global TOMORROW_CHAINS
-                  TOMORROW_CHAINS = chains
+        if new_len == 0:
+            logger.warning(
+                "TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0)."
+            )
+        else:
+            global TOMORROW_CHAINS
+            TOMORROW_CHAINS = chains
 
-               try:
-                        save_json(TOMORROW_CHAIN_FILE, chains)
-                        logger.info(
-                       "TOMORROW_CHAINS saved: %d ticker(save_json)",
-                   new_len
-                      )
-    except Exception as e:
-        logger.warning(
-            "save_json failed, fallback save_tomorrow_chains(): %s",
-            e
-        )
-        save_tomorrow_chains()
-        logger.info(
-            "TOMORROW_CHAINS saved: %d tickers (fallback)",
-            new_len
-        )
-        
+            try:
+                save_json(TOMORROW_CHAIN_FILE, chains)
+                logger.info(
+                    "TOMORROW_CHAINS saved: %d tickers (save_json)",
+                    new_len
+                )
+            except Exception as e:
+                logger.warning(
+                    "save_json failed, fallback save_tomorrow_chains(): %s",
+                    e
+                )
+                save_tomorrow_chains()
+                logger.info(
+                    "TOMORROW_CHAINS saved: %d tickers (fallback)",
+                    new_len
+                )
+            
         # 5) Kullanıcıya rapor
         watch = sorted(list(TOMORROW_CHAINS.keys()))
         missing = sorted([t for t in bist200_list if t not in TOMORROW_CHAINS])
