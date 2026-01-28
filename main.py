@@ -1391,17 +1391,18 @@ def _relax_thresholds(min_ratio: float, max_band: float) -> Tuple[float, float]:
     mb = max(0.0, min(95.0, mb))
     return mr, mb
 
+def build_tomorrow_rows(all_rows: list[dict[str, any]]) -> list[dict[str, any]]:
+    def _pass(relaxed: bool) -> list[dict[str, any]]:
+        out: list[dict[str, any]] = []
 
-def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    def _pass(relaxed: bool) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
-        for r in all_rows:
+        for r in (all_rows or []):
             kind = r.get("signal_text", "")
 
             # ALTIN liste: sinyal + BIST200 (liste zaten BIST200 rows)
             # R0 sadece öne aldırır, kriter değil ama "liste boş" olmasın diye aday havuzunda tutulabilir
-            if kind not in ("TOPLAMA", "DİP TOPLAMA", "UÇAN (R0)") and not (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
-                continue
+            if kind not in ("TOPLAMA", "DIP TOPLAMA", "UÇAN (RO)"):
+                if not (TOMORROW_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
+                    continue
 
             t = r.get("ticker", "")
             if not t:
@@ -1429,58 +1430,15 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return out[:max(1, TOMORROW_MAX)]
 
     # 1) normal
-out = _pass(relaxed=False)
-logger.info("TOM_BUILD: normal_pass=%d", len(out or []))
-
-# 2) ALTIN hiç çıkmadıysa ufak gevşeme
-if not out:
-    out = _pass(relaxed=True)
-    logger.info("TOM_BUILD: relaxed_pass=%d", len(out or []))
-
-return out
-
-
-def build_candidate_rows(all_rows: List[Dict[str, Any]], gold_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    gold_set = set((r.get("ticker") or "").strip().upper() for r in (gold_rows or []))
-
-    def _pass(relaxed: bool) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
-        for r in all_rows:
-            kind = r.get("signal_text", "")
-            if kind not in ("TOPLAMA", "DİP TOPLAMA", "UÇAN (R0)") and not (CANDIDATE_INCLUDE_AYRISMA and kind == "AYRIŞMA"):
-                continue
-
-            t = (r.get("ticker") or "").strip().upper()
-            if not t or t in gold_set:
-                continue
-
-            st = compute_30d_stats(t)
-            if not st:
-                continue
-
-            ratio = st.get("ratio", float("nan"))
-            band = st.get("band_pct", 50.0)
-
-            min_ratio = CANDIDATE_MIN_VOL_RATIO
-            max_band = CANDIDATE_MAX_BAND
-            if relaxed:
-                min_ratio, max_band = _relax_thresholds(min_ratio, max_band)
-
-            if ratio != ratio or ratio < min_ratio:
-                continue
-            if band > max_band:
-                continue
-
-            out.append(r)
-
-        out.sort(key=tomorrow_score, reverse=True)
-        return out[:max(1, CANDIDATE_MAX)]
-
     out = _pass(relaxed=False)
+    logger.info("TOM_BUILD: normal_pass=%d", len(out or []))
+
+    # 2) ALTIN hiç çıkmadıysa ufak gevşeme
     if not out:
         out = _pass(relaxed=True)
-    return out
+        logger.info("TOM_BUILD: relaxed_pass=%d", len(out or []))
 
+    return out
 
 def format_threshold(min_vol: float) -> str:
     if not isinstance(min_vol, (int, float)) or math.isnan(min_vol) or min_vol == float("inf"):
