@@ -69,11 +69,6 @@ TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))
 TOMORROW_FOLLOW_ENABLED = int(os.getenv("TOMORROW_FOLLOW_ENABLED", "1")) == 1
 TOMORROW_FOLLOW_INTERVAL_MIN = int(os.getenv("TOMORROW_FOLLOW_INTERVAL_MIN", "60"))
 
-# ===========================
-# Tomorrow chain RAM cache
-# ===========================
-TOMORROW_CHAINS: dict = {}
-
 TOMORROW_FOLLOW_START_HOUR = int(os.getenv("TOMORROW_FOLLOW_START_HOUR", "10"))
 TOMORROW_FOLLOW_START_MIN = int(os.getenv("TOMORROW_FOLLOW_START_MIN", "30"))
 TOMORROW_FOLLOW_END_HOUR = int(os.getenv("TOMORROW_FOLLOW_END_HOUR", "17"))
@@ -94,11 +89,8 @@ TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))
 TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))
 TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
-TOMORROW_MAX_PICK = int(os.getenv("TOMORROW_MAX_PICK", "50"))
 
 CANDIDATE_MAX = int(os.getenv("CANDIDATE_MAX", "20"))
-CANDIDATE_MAX_PICK = int(os.getenv("CANDIDATE_MAX_PICK", str(CANDIDATE_MAX)))
-
 CANDIDATE_MIN_VOL_RATIO = float(os.getenv("CANDIDATE_MIN_VOL_RATIO", "1.10"))
 CANDIDATE_MAX_BAND = float(os.getenv("CANDIDATE_MAX_BAND", "75"))
 CANDIDATE_INCLUDE_AYRISMA = os.getenv("CANDIDATE_INCLUDE_AYRISMA", "0").strip() == "1"
@@ -186,7 +178,6 @@ TOMORROW_CHAINS: Dict[str, Any] = {}
 # =========================================================
 # Helpers
 # =========================================================
-
 def write_trade_log(record: dict) -> None:
     """
     Appends one JSON object per line into TRADE_LOG_FILE (jsonl).
@@ -199,19 +190,15 @@ def write_trade_log(record: dict) -> None:
     except Exception as e:
         logger.exception("Trade log write error: %s", e)
 
-
 def safe_float(x: Any) -> float:
     try:
         return float(x)
     except Exception:
         return float("nan")
-
-
-def build_tomorrow_altin_perf_section(all_rows: list) -> str:
+def build_tomorrow_altin_perf_section(all_rows, TOMORROW_CHAINS) -> str:
     """
     Tomorrow zincirindeki ALTIN listesini alır ve ref_close -> now_close % farkını basar.
-    Alarm mesajına veya /tomorrow çıktısına eklenebilir.
-    HTML döner (<pre> dahil). Hata olursa "" döner.
+    /tomorrow ve alarm mesajlarında kullanılabilir.
     """
     try:
         all_map = {
@@ -223,71 +210,48 @@ def build_tomorrow_altin_perf_section(all_rows: list) -> str:
         if not TOMORROW_CHAINS:
             return ""
 
-        active_key = today_key_tradingday()
-        if active_key not in TOMORROW_CHAINS:
-            active_key = max(
-                TOMORROW_CHAINS.keys(),
-                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-            )
-
-        chain = TOMORROW_CHAINS.get(active_key, {}) or {}
-        t_rows = chain.get("rows", []) or []
-        ref_close_map = chain.get("ref_close", {}) or {}
+        latest_key = max(
+            TOMORROW_CHAINS.keys(),
+            key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+        )
+        chain = TOMORROW_CHAINS.get(latest_key, {}) or {}
 
         # ALTIN tickers
         altin_tickers = []
+        t_rows = chain.get("rows", []) or []
         for rr in t_rows:
-            t = (rr.get("symbol") or rr.get("ticker") or "").strip()
+            t = (rr.get("ticker") or "").strip()
             if not t:
                 continue
             kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
             if "ALTIN" in kind:
                 altin_tickers.append(t)
 
+        ref_close_map = chain.get("ref_close", {}) or {}
         if not altin_tickers:
             altin_tickers = list(ref_close_map.keys())[:6]
-
-        if not altin_tickers:
-            return ""
 
         perf_lines = []
         for t in altin_tickers[:6]:
             ref_close = safe_float(ref_close_map.get(t))
             now_row = all_map.get(t) or {}
             now_close = safe_float(now_row.get("close"))
+
             dd = pct_change(now_close, ref_close)
+            dd_s = f"{dd:+.2f}%" if dd == dd else "n/a"
 
-            if dd == dd:
-                if dd > 0:
-                    mark = "🟢"
-                elif dd < 0:
-                    mark = "🔴"
-                else:
-                    mark = "⚪"
-                dd_s = f"{mark} {dd:+.2f}%"
-            else:
-                dd_s = "⚪ n/a"
-
-            now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
-            ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
-            perf_lines.append((t, dd_s, now_s, ref_s))
+            perf_lines.append((t, dd_s))
 
         if not perf_lines:
             return ""
 
-        header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
-        lines = []
-        lines.append("HIS   Δ%          NOW      REF")
-        lines.append("-------------------------------")
-        for (t, dd_s, now_s, ref_s) in perf_lines:
-            lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
-
-        return header + "<pre>" + "\n".join(lines) + "</pre>"
+        header = "\n\n<b>ALTIN • Canlı Performans</b>\n"
+        body = "\n".join([f"• {t}: {dd_s}" for (t, dd_s) in perf_lines])
+        return header + body
 
     except Exception as e:
         logger.exception("Tomorrow ALTIN perf section error: %s", e)
         return ""
-
 
 def format_volume(v: Any) -> str:
     try:
@@ -304,7 +268,6 @@ def format_volume(v: Any) -> str:
         return f"{n/1_000:.0f}K"
     return f"{n:.0f}"
 
-
 def env_csv(name: str, default: str = "") -> List[str]:
     raw = os.getenv(name, default)
     if raw is None:
@@ -319,33 +282,6 @@ def env_csv_fallback(primary: str, fallback: str, default: str = "") -> List[str
     if lst:
         return lst
     return env_csv(fallback, default)
-    
-def parse_hhmm(s: str, default_h: int, default_m: int) -> tuple[int, int]:
-    try:
-        s = (s or "").strip()
-        if ":" not in s:
-            return default_h, default_m
-        hh, mm = s.split(":", 1)
-        return int(hh), int(mm)
-    except Exception:
-        return default_h, default_m
-
-
-def within_altin_follow_window(now: datetime) -> bool:
-    start_s = os.getenv("ALTIN_FOLLOW_START", "10:30")
-    end_s = os.getenv("ALTIN_FOLLOW_END", "19:30")
-    sh, sm = parse_hhmm(start_s, 10, 30)
-    eh, em = parse_hhmm(end_s, 19, 30)
-
-    start_t = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
-    end_t = now.replace(hour=eh, minute=em, second=0, microsecond=0)
-
-    return start_t <= now <= end_t
-
-
-def fmt_price(x: float) -> str:
-    return f"{x:.2f}" if x == x else "n/a"
-
 
 def normalize_is_ticker(t: str) -> str:
     t = t.strip().upper()
@@ -358,38 +294,6 @@ def normalize_is_ticker(t: str) -> str:
     if base.endswith(".IS"):
         base = base[:-3]
     return f"BIST:{base}"
-    
-def get_altin_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
-    """
-    Dünkü /tomorrow zincirinden ALTIN tickers + ref_close_map döner.
-    """
-    if not TOMORROW_CHAINS:
-        return [], {}
-
-    active_key = today_key_tradingday()
-    if active_key not in TOMORROW_CHAINS:
-        active_key = max(
-            TOMORROW_CHAINS.keys(),
-            key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-        )
-
-    chain = TOMORROW_CHAINS.get(active_key, {}) or {}
-    t_rows = chain.get("rows", []) or []
-    ref_close_map = chain.get("ref_close", {}) or {}
-
-    altin_tickers = []
-    for rr in t_rows:
-        t = (rr.get("ticker") or rr.get("symbol") or "").strip()
-        if not t:
-            continue
-        kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
-        if "ALTIN" in kind:
-            altin_tickers.append(t)
-
-    if not altin_tickers:
-        altin_tickers = list(ref_close_map.keys())[:6]
-
-    return altin_tickers[:6], ref_close_map
 
 # =========================================================
 # Tomorrow (Altın Liste) - Message section
@@ -685,9 +589,7 @@ def load_tomorrow_chains() -> None:
         logger.warning("load_tomorrow_chains failed: %s", e)
         TOMORROW_CHAINS = {}
 
-
 def save_tomorrow_chains() -> None:
-    global TOMORROW_CHAINS
     try:
         _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS or {})
     except Exception as e:
@@ -1593,18 +1495,14 @@ def build_alarm_message(
     tomorrow_section = ""
     try:
         if TOMORROW_CHAINS:
-            key = today_key_tradingday()
-
-            if key not in TOMORROW_CHAINS:
-                key = max(
-                    TOMORROW_CHAINS.keys(),
-                    key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0)
-        )
-
-            blob = TOMORROW_CHAINS.get(key, {}) or {}
+            latest_key = max(
+                TOMORROW_CHAINS.keys(),
+                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+            )
+            blob = TOMORROW_CHAINS.get(latest_key, {}) or {}
             t_rows = blob.get("rows", []) or []
             t_chain_id = blob.get("chain_id", make_chain_id("TOMORROW"))
-            t_ref_day_key = blob.get("ref_day_key", key)
+            t_ref_day_key = blob.get("ref_day_key", latest_key)
 
             tomorrow_section = format_tomorrow_section(
                 tomorrow_rows=t_rows,
@@ -1893,71 +1791,41 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     update_history_from_rows(rows)
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
-    
+
     # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
     r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
     r0_block = ""
-    
-    tom_rows = []
-    cand_rows = []
-
     if r0_rows:
         r0_rows = sorted(
             r0_rows,
-            key=lambda x: (x.get("volume") or 0)
-            if x.get("volume") == x.get("volume")
-            else 0,
-            reverse=True,
+            key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
+            reverse=True
         )[:8]
+        r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
 
-        r0_block = make_table(
-            r0_rows,
-            "🚀 <b>R0 - UÇANLAR (Erken Yakalananlar)</b>",
-            include_kind=True,
-        ) + "\n\n"
-		
-        # 🔐 Rejim soft-block (Tomorrow yumuşatma)
-        rejim_soft_block = False
+    if REJIM_GATE_TOMORROW and reg.get("block"):
+        msg = (
+            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
+            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
+            f"{format_regime_line(reg)}\n\n"
+            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
+            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        return
 
-        if REJIM_GATE_TOMORROW and reg.get("block"):
-            rejim_soft_block = True
+    tom_rows = build_tomorrow_rows(rows)
+    cand_rows = build_candidate_rows(rows, tom_rows)
+    save_tomorrow_snapshot(tom_rows, xu_change)
 
-            warn_msg = (
-                "⚠️ <b>REJİM KORUMA MODU</b>\n"
-                "Piyasa riskli. Tomorrow listesi <b>yumuşatılmış</b> üretilecektir.\n\n"
-                f"{format_regime_line(reg)}\n"
-            )
 
-            await update.message.reply_text(
-                warn_msg,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-
-        # 📅 Tomorrow listesi üretimi
-        tom_rows = build_tomorrow_rows(rows, relaxed=rejim_soft_block)
-        
-        if not tom_rows:
-            await update.message.reply_text(
-                "⚠️ Tomorrow listesi için uygun hisse çıkmadı (filtreler sıkı olabilir).",
-                disable_web_page_preview=True,
-            )
-            return
-
-        if rejim_soft_block:
-            tom_rows = tom_rows[:2]  # rejimde maksimum 2 hisse
-
-        cand_rows = build_candidate_rows(rows, tom_rows)
-        save_tomorrow_snapshot(tom_rows, xu_change)
-
-        # ⛓️ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
+# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
     try:
         ref_day_key = today_key_tradingday()
         open_or_update_tomorrow_chain(ref_day_key, tom_rows)
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
-    # ✅ msg HER ZAMAN üretilecek (UnboundLocalError fix)
     msg = r0_block + build_tomorrow_message(
         tom_rows,
         cand_rows,
@@ -1966,8 +1834,8 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         thresh_s,
         reg,
     )
-
-    # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
+    
+# ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
         perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
     except Exception:
@@ -1976,13 +1844,12 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if perf_section:
         msg = msg + "\n\n" + perf_section
 
+
     await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
-
-
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
     if not watch:
@@ -2202,10 +2069,10 @@ async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # =========================================================
 # Scheduled jobs
 # =========================================================
-async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
+async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
-    if (not force) and (not within_alarm_window(now_tr())):
+    if not within_alarm_window(now_tr()):
         return
 
     bist200_list = env_csv("BIST200_TICKERS")
@@ -2236,7 +2103,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
 
         ts_now = time.time()
         for r in alarm_rows:
-            mark_alarm_sent((r.get("ticker") or "").strip(), ts_now)
+            mark_alarm_sent(r.get("ticker", ""), ts_now)
         save_last_alarm_ts()
 
         # --- Watchlist ---
@@ -2251,6 +2118,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         # =========================================================
         tomorrow_perf_section = ""
         try:
+            # all_rows -> hızlı lookup (ticker -> row)
             all_map = {
                 (r.get("ticker") or "").strip(): r
                 for r in (all_rows or [])
@@ -2258,61 +2126,63 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
             }
 
             if TOMORROW_CHAINS:
-                active_key = today_key_tradingday()
-                if active_key not in TOMORROW_CHAINS:
-                    active_key = max(
-                        TOMORROW_CHAINS.keys(),
-                        key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-                    )
-                chain = TOMORROW_CHAINS.get(active_key, {}) or {}
-            else:
-                chain = {}
+                latest_key = max(
+                    TOMORROW_CHAINS.keys(),
+                    key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+                )
+                chain = TOMORROW_CHAINS.get(latest_key, {}) or {}
 
-            altin_tickers = []
-            t_rows = chain.get("rows", []) or []
-            for rr in t_rows:
-                t = (rr.get("ticker") or rr.get("symbol") or "").strip()
-                if not t:
-                    continue
-                kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
-                if "ALTIN" in kind:
-                    altin_tickers.append(t)
+                # 1) ALTIN tickers'ı bul (önce chain.rows'tan, yoksa ref_close'tan fallback)
+                altin_tickers = []
+                t_rows = chain.get("rows", []) or []
+                for rr in t_rows:
+                    t = (rr.get("ticker") or "").strip()
+                    if not t:
+                        continue
+                    kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
+                    if "ALTIN" in kind:
+                        altin_tickers.append(t)
 
-            ref_close_map = chain.get("ref_close", {}) or {}
-            if not altin_tickers:
-                altin_tickers = list(ref_close_map.keys())[:6]
+                ref_close_map = chain.get("ref_close", {}) or {}
+                if not altin_tickers:
+                    altin_tickers = list(ref_close_map.keys())[:6]
 
-            perf_lines = []
-            for t in altin_tickers[:6]:
-                ref_close = safe_float(ref_close_map.get(t))
-                now_row = all_map.get(t) or {}
-                now_close = safe_float(now_row.get("close"))
-                dd = pct_change(now_close, ref_close)
+                # 2) ref_close ile güncel close kıyasla
+                perf_lines = []
+                for t in altin_tickers[:6]:
+                    ref_close = safe_float(ref_close_map.get(t))
+                    now_row = all_map.get(t) or {}
+                    now_close = safe_float(now_row.get("close"))
 
-                if dd == dd:
-                    if dd > 0:
-                        mark = "🟢"
-                    elif dd < 0:
-                        mark = "🔴"
+                    # pct_change NaN olabilir
+                    dd = pct_change(now_close, ref_close)
+
+                    # sade emoji
+                    if dd == dd:
+                        if dd > 0:
+                            mark = "🟢"
+                        elif dd < 0:
+                            mark = "🔴"
+                        else:
+                            mark = "⚪"
+                        dd_s = f"{mark} {dd:+.2f}%"
                     else:
-                        mark = "⚪"
-                    dd_s = f"{mark} {dd:+.2f}%"
-                else:
-                    dd_s = "⚪ n/a"
+                        dd_s = "⚪ n/a"
 
-                now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
-                ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
+                    now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
+                    ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
 
-                perf_lines.append((t, dd_s, now_s, ref_s))
+                    perf_lines.append((t, dd_s, now_s, ref_s))
 
-            if perf_lines:
-                header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
-                lines = []
-                lines.append("HIS   Δ%          NOW      REF")
-                lines.append("-------------------------------")
-                for (t, dd_s, now_s, ref_s) in perf_lines:
-                    lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
-                tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
+                if perf_lines:
+                    header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
+                    lines = []
+                    lines.append("HIS   Δ%          NOW      REF")
+                    lines.append("-------------------------------")
+                    for (t, dd_s, now_s, ref_s) in perf_lines:
+                        # dd_s emoji + yüzde olduğu için genişlik biraz daha fazla
+                        lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
+                    tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
 
         except Exception as e:
             logger.exception("ALARM -> Tomorrow performans ekleme hatası: %s", e)
@@ -2329,6 +2199,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
             reg=reg,
         )
 
+        # ✅ Alarm mesajının sonuna ekle
         if tomorrow_perf_section:
             text = text + tomorrow_perf_section
 
@@ -2336,107 +2207,25 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
             chat_id=int(ALARM_CHAT_ID),
             text=text,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            disable_web_page_preview=True
         )
 
     except Exception as e:
         logger.exception("Alarm job error: %s", e)
-        return
-
-
-async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
-        return
-    if (not force) and (not within_alarm_window(now_tr())):
-        return
-
-    bist200_list = env_csv("BIST200_TICKERS")
-    if not bist200_list:
-        return
-
-    try:
-        # XU100
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
-        global LAST_REGIME
-        LAST_REGIME = reg
-
-        if REJIM_GATE_ALARM and reg.get("block"):
-            return
-
-        # --- Ana liste (BIST200) ---
-        all_rows = await build_rows_from_is_list(bist200_list, xu_change)
-        update_history_from_rows(all_rows)
-        min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
-        thresh_s = format_threshold(min_vol)
-
-        alarm_rows = filter_new_alarms(all_rows)
-        if not alarm_rows:
-            return
-
-        ts_now = time.time()
-        for r in alarm_rows:
-            mark_alarm_sent((r.get("ticker") or "").strip(), ts_now)
-        save_last_alarm_ts()
-
-        # --- Watchlist ---
-        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
-        watch = (watch or [])[:WATCHLIST_MAX]
-        w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
-        if w_rows:
-            _apply_signals_with_threshold(w_rows, xu_change, min_vol)
-
-        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
-        tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
-
-        # --- Alarm mesajını üret ---
-        text = build_alarm_message(
-            alarm_rows=alarm_rows,
-            watch_rows=w_rows,
-            xu_close=xu_close,
-            xu_change=xu_change,
-            thresh_s=thresh_s,
-            top_n=VOLUME_TOP_N,
-            reg=reg,
-        )
-
-        if tomorrow_perf_section:
-            text = text + tomorrow_perf_section
-
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=text,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-
-    except Exception as e:
-        logger.exception("Alarm job error: %s", e)
-        return
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
-        await job_altin_live_follow(context, force=True)
+        await update.message.reply_text("⏳ Alarm manuel tetikleniyor…")
+        await job_alarm(context)
     except Exception as e:
-        await update.message.reply_text(
-            f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
-            parse_mode=ParseMode.HTML,
-        )
-
+        await update.message.reply_text(f"❌ Alarm çalıştırılamadı:\n<code>{e}</code>", parse_mode=ParseMode.HTML)
+        
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
-
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         return
-
-    global TOMORROW_CHAINS
-    global LAST_REGIME
-
     try:
         if TOMORROW_DELAY_MIN > 0:
             await asyncio.sleep(max(0, int(TOMORROW_DELAY_MIN)) * 60)
@@ -2445,6 +2234,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
+        global LAST_REGIME
         LAST_REGIME = reg
 
         if REJIM_GATE_TOMORROW and reg.get("block"):
@@ -2458,7 +2248,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=int(ALARM_CHAT_ID),
                 text=msg,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                disable_web_page_preview=True
             )
             return
 
@@ -2473,146 +2263,24 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         if r0_rows:
             r0_rows = sorted(
                 r0_rows,
-                key=lambda x: (x.get("volume") or 0)
-                if x.get("volume") == x.get("volume")
-                else 0,
-                reverse=True,
+                key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
+                reverse=True
             )[:8]
-            r0_block = (
-                make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True)
-                + "\n\n"
-            )
+            r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
 
         tom_rows = build_tomorrow_rows(rows)
         cand_rows = build_candidate_rows(rows, tom_rows)
         save_tomorrow_snapshot(tom_rows, xu_change)
 
-        # ==============================
-        # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
-        # ==============================
-        key = today_key_tradingday()  # follow ile aynı key
-
-        TOMORROW_CHAINS[key] = {
-            "ts": time.time(),
-            "rows": tom_rows,
-            "ref_close": {
-                (r.get("symbol") or ""): r.get("ref_close")
-                for r in (tom_rows or [])
-                if r.get("symbol")
-            },
-        }
-
-        logger.info(
-            "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
-            key,
-            len(tom_rows),
-        )
-
-        msg = r0_block + build_tomorrow_message(
-            tom_rows,
-            cand_rows,
-            xu_close,
-            xu_change,
-            thresh_s,
-            reg,
-        )
-
+        msg = r0_block + build_tomorrow_message(tom_rows, cand_rows, xu_close, xu_change, thresh_s, reg)
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
             text=msg,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            disable_web_page_preview=True
         )
-
     except Exception as e:
         logger.exception("Tomorrow job error: %s", e)
-
-async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
-        return
-
-    if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip() in ("0", "false", "False"):
-        return
-
-    now = now_tr()
-    if (not force) and (not within_altin_follow_window(now)):
-        return
-
-    try:
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-
-        if not TOMORROW_CHAINS:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            return
-
-        altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
-        if not altin_tickers:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ ALTIN follow: Tomorrow zincirinde ALTIN tickers yok. Önce /tomorrow çalıştır.",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            return
-
-        # Canlı fiyatlar
-        rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
-        now_map = {
-            (r.get("ticker") or "").strip(): r
-            for r in (rows_now or [])
-            if (r.get("ticker") or "").strip()
-        }
-
-        # Tablo
-        perf = []
-        for t in altin_tickers:
-            ref_close = safe_float(ref_close_map.get(t))
-            now_close = safe_float((now_map.get(t) or {}).get("close"))
-            dd = pct_change(now_close, ref_close)
-
-            if dd == dd:
-                if dd > 0:
-                    emo = "🟢"
-                elif dd < 0:
-                    emo = "🔴"
-                else:
-                    emo = "⚪"
-                dd_s = f"{emo} {dd:+.2f}%"
-            else:
-                dd_s = "⚪ n/a"
-
-            perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
-
-        header = (
-            "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"🕒 <b>{now.strftime('%H:%M')}</b>  |  "
-            f"📈 XU100: <b>{xu_close:,.0f}</b> ({xu_change:+.2f}%)\n"
-        )
-
-        lines = []
-        lines.append("HIS   Δ%           NOW      REF")
-        lines.append("--------------------------------")
-        for (t, dd_s, now_s, ref_s) in perf:
-            lines.append(f"{t:<5} {dd_s:<12}  {now_s:>7}  {ref_s:>7}")
-
-        msg = header + "<pre>" + "\n".join(lines) + "</pre>"
-
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-
-    except Exception as e:
-        logger.exception("ALTIN live follow error: %s", e)
-        return
 
 async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not TOMORROW_FOLLOW_ENABLED:
@@ -2626,7 +2294,9 @@ async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not chat_id:
         return
 
+    # XU100 bilgisi
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+
     reg = LAST_REGIME or {}
 
     changed = False
@@ -2637,11 +2307,13 @@ async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
         if chain.get("closed"):
             continue
 
+        # kaçıncı gün?
         try:
             age = (date.fromisoformat(today_key_tradingday()) - date.fromisoformat(ref_day_key)).days
         except Exception:
             age = 0
 
+        # ✅ 2 gün kuralı (T+1 ve T+2)
         if age >= TOMORROW_CHAIN_MAX_AGE:
             chain["closed"] = True
             changed = True
@@ -2682,21 +2354,19 @@ async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
             disable_web_page_preview=True,
         )
 
+        # checkpoint ekle
         checkpoints = chain.get("checkpoints", []) or []
-        checkpoints.append(
-            {
-                "t": now.isoformat(),
-                "day_key": today_key_tradingday(),
-                "prices": now_prices,
-            }
-        )
+        checkpoints.append({
+            "t": now.isoformat(),
+            "day_key": today_key_tradingday(),
+            "prices": now_prices,
+        })
         chain["checkpoints"] = checkpoints
         changed = True
 
     if changed:
         save_tomorrow_chains()
-
-
+        
 async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WHALE_ENABLED or not ALARM_CHAT_ID:
         return
@@ -2733,22 +2403,16 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
             t = r.get("ticker", "")
             if not t or t not in ref_map:
                 continue
-
             ref_close = ref_map[t]
             st = compute_30d_stats(t)
             if not st:
                 continue
-
             avg_vol = st.get("avg_vol", float("nan"))
             today_vol = r.get("volume", float("nan"))
             today_close = r.get("close", float("nan"))
             ch = r.get("change", float("nan"))
 
-            vol_ratio = (
-                (today_vol / avg_vol)
-                if (avg_vol == avg_vol and avg_vol > 0 and today_vol == today_vol)
-                else float("nan")
-            )
+            vol_ratio = (today_vol / avg_vol) if (avg_vol == avg_vol and avg_vol > 0 and today_vol == today_vol) else float("nan")
             dd_pct = pct_change(today_close, ref_close)
 
             if vol_ratio != vol_ratio or vol_ratio < WHALE_MIN_VOL_RATIO:
@@ -2757,24 +2421,16 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
                 continue
 
             mark = "🐋"
-            if (
-                WHALE_INDEX_BONUS
-                and (xu_change == xu_change)
-                and (xu_change <= 0)
-                and (ch == ch)
-                and (ch >= WHALE_MIN_POSITIVE_WHEN_INDEX_BAD)
-            ):
+            if WHALE_INDEX_BONUS and (xu_change == xu_change) and (xu_change <= 0) and (ch == ch) and (ch >= WHALE_MIN_POSITIVE_WHEN_INDEX_BAD):
                 mark = "🐋🐋"
 
-            out.append(
-                {
-                    "ticker": t,
-                    "vol_ratio": float(vol_ratio),
-                    "change": float(ch) if ch == ch else float("nan"),
-                    "dd_pct": float(dd_pct),
-                    "mark": mark,
-                }
-            )
+            out.append({
+                "ticker": t,
+                "vol_ratio": float(vol_ratio),
+                "change": float(ch) if ch == ch else float("nan"),
+                "dd_pct": float(dd_pct),
+                "mark": mark,
+            })
 
         if not out:
             return
@@ -2786,10 +2442,9 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
             chat_id=int(ALARM_CHAT_ID),
             text=msg,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            disable_web_page_preview=True
         )
         mark_whale_sent_today()
-
     except Exception as e:
         logger.exception("Whale job error: %s", e)
 
@@ -2806,25 +2461,16 @@ def schedule_jobs(app: Application) -> None:
             job_alarm_scan,
             interval=ALARM_INTERVAL_MIN * 60,
             first=first,
-            name="alarm_scan_repeating",
+            name="alarm_scan_repeating"
         )
-        logger.info(
-            "Alarm scan scheduled every %d min. First=%s",
-            ALARM_INTERVAL_MIN,
-            first.isoformat(),
-        )
+        logger.info("Alarm scan scheduled every %d min. First=%s", ALARM_INTERVAL_MIN, first.isoformat())
 
         jq.run_daily(
             job_tomorrow_list,
             time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
-            name="tomorrow_daily_at_eod_time",
+            name="tomorrow_daily_at_eod_time"
         )
-        logger.info(
-            "Tomorrow scheduled daily at %02d:%02d (+%dmin delay)",
-            EOD_HOUR,
-            EOD_MINUTE,
-            TOMORROW_DELAY_MIN,
-        )
+        logger.info("Tomorrow scheduled daily at %02d:%02d (+%dmin delay)", EOD_HOUR, EOD_MINUTE, TOMORROW_DELAY_MIN)
     else:
         logger.info("ALARM kapalı veya ALARM_CHAT_ID yok → otomatik alarm/tomorrow gönderilmeyecek.")
 
@@ -2834,38 +2480,16 @@ def schedule_jobs(app: Application) -> None:
             job_whale_follow,
             interval=WHALE_INTERVAL_MIN * 60,
             first=first_w,
-            name="whale_follow_repeating",
+            name="whale_follow_repeating"
         )
-        logger.info(
-            "Whale follow scheduled every %d min. First=%s",
-            WHALE_INTERVAL_MIN,
-            first_w.isoformat(),
-        )
+        logger.info("Whale follow scheduled every %d min. First=%s", WHALE_INTERVAL_MIN, first_w.isoformat())
     else:
         logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
 
-    # ✅ ALTIN live follow (Tomorrow ALTIN listesi canlı takip)
-    if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip().lower() not in ("0", "false") and ALARM_CHAT_ID:
-        interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
-        first_af = next_aligned_run(interval_min)
-
-        jq.run_repeating(
-            job_altin_live_follow,
-            interval=interval_min * 60,
-            first=first_af,
-            name="altin_live_follow_repeating",
-        )
-
-        logger.info(
-            "ALTIN live follow scheduled every %d min. First=%s",
-            interval_min,
-            first_af.isoformat(),
-        )
-        
     # ✅ Tomorrow follow (chain tracking)
-    if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID:
+    if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID and getattr(app, "job_queue", None) is not None:
         first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
-        jq.run_repeating(
+        app.job_queue.run_repeating(
             job_tomorrow_follow,
             interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
             first=first_tf,
@@ -2876,7 +2500,7 @@ def schedule_jobs(app: Application) -> None:
             TOMORROW_FOLLOW_INTERVAL_MIN,
             first_tf.isoformat(),
         )
-
+        
 # =========================================================
 # Global error handler
 # =========================================================
@@ -2891,7 +2515,6 @@ def main() -> None:
     token = os.getenv("BOT_TOKEN", "").strip() or os.getenv("TELEGRAM_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN env missing")
-        
 
     load_last_alarm_ts()
     load_whale_sent_day()
