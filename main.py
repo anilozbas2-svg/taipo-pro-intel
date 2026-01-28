@@ -1894,6 +1894,9 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
     r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
     r0_block = ""
+    
+    tom_rows = []
+    cand_rows = []
 
     if r0_rows:
         r0_rows = sorted(
@@ -1930,6 +1933,13 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         # 📅 Tomorrow listesi üretimi
         tom_rows = build_tomorrow_rows(rows, relaxed=rejim_soft_block)
+        
+        if not tom_rows:
+        await update.message.reply_text(
+            "⚠️ Tomorrow listesi için uygun hisse çıkmadı (filtreler sıkı olabilir).",
+        disable_web_page_preview=True,
+        )
+        return
 
         if rejim_soft_block:
             tom_rows = tom_rows[:2]  # rejimde maksimum 2 hisse
