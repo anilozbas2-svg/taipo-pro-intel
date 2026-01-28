@@ -711,10 +711,18 @@ def load_tomorrow_chains() -> None:
         
     return TOMORROW_CHAINS
     
-def save_tomorrow_chains() -> None:
+def save_tomorrow_chains(chains: dict | None = None) -> None:
     global TOMORROW_CHAINS
+
+    if chains is not None:
+        TOMORROW_CHAINS = chains
+
     try:
         _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS or {})
+        logger.info(
+            "TOMORROW_CHAINS saved: %d tickers",
+            len(TOMORROW_CHAINS or {})
+        )
     except Exception as e:
         logger.warning("save_tomorrow_chains failed: %s", e)
 
