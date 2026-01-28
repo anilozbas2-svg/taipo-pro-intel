@@ -1892,7 +1892,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     thresh_s = format_threshold(min_vol)
 
     # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
-        r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
+    r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
         r0_block = ""
         if r0_rows:
             r0_rows = sorted(
