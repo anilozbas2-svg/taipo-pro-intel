@@ -1905,7 +1905,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         rejim_soft_block = False
 
     if REJIM_GATE_TOMORROW and reg.get("block"):
-    rejim_soft_block = True
+        rejim_soft_block = True
 
     warn_msg = (
         "⚠️ <b>REJİM KORUMA MODU</b>\n"
