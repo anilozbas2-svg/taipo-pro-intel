@@ -1963,21 +1963,22 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 }
 
         # 4) Disk'e kaydet (0 ticker ise KAYDETME - dosyayı bozma)
-new_len = len(TOMORROW_CHAINS or {})
+        new_len = len(chains or {})
 
-if new_len == 0:
-    logger.warning("TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0).")
-else:
-    try:
-        save_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
-        logger.info("TOMORROW_CHAINS saved: %d tickers (save_json)", new_len)
-    except Exception as e:
-        logger.warning("save_json failed, fallback save_tomorrow_chains(): %s", e)
+        if new_len == 0:
+        logger.warning("TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0).")
+        else:
         try:
-            save_tomorrow_chains()  # <-- parametre YOK!
-            logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
-        except Exception as e2:
-            logger.error("fallback save_tomorrow_chains failed: %s", e2)
+            _atomic_write_json(TOMORROW_CHAIN_FILE, chains)
+            logger.info("TOMORROW_CHAINS saved: %d tickers (atomic)", new_len)
+        except Exception as e:
+            logger.warning("atomic save failed, fallback save_tomorrow_chains(): %s", e)
+            try:
+                TOMORROW_CHAINS = chains
+                save_tomorrow_chains()
+                logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
+            except Exception as e2:
+                logger.error("fallback save_tomorrow_chains failed: %s", e2)
 
         # 5) Kullanıcıya rapor
         watch = sorted(list(TOMORROW_CHAINS.keys()))
