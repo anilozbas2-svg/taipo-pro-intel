@@ -2501,7 +2501,9 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
                 dd_s = "⚪ n/a"
 
             perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
-
+            
+            now = datetime.now(TZ)
+            
         header = (
             "⏳ <b>ALTIN LIVE TAKİP</b>\n"
             f"🕒 <b>{now.strftime('%H:%M')}</b> | "
