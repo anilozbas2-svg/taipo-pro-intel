@@ -1968,18 +1968,25 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if new_len == 0:
         logger.warning("TOM_CHAIN_EMPTY -> skip save (would overwrite file with 0).")
         else:
+        global TOMORROW_CHAINS
+        TOMORROW_CHAINS = chains
+
         try:
-            _atomic_write_json(TOMORROW_CHAIN_FILE, chains)
-            logger.info("TOMORROW_CHAINS saved: %d tickers (atomic)", new_len)
+            save_json(TOMORROW_CHAIN_FILE, chains)
+            logger.info("TOMORROW_CHAINS saved: %d tickers (save_json)", new_len)
         except Exception as e:
-            logger.warning("atomic save failed, fallback save_tomorrow_chains(): %s", e)
-            try:
+            logger.warning("save_json failed, fallback save_tomorrow_chains(): %s", e)
+            save_tomorrow_chains()
+            logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
+                # Projede save_tomorrow_chains parametresiz ise:
+                # Global'e yaz, fonksiyon kendi global'den okusun
+                global TOMORROW_CHAINS
                 TOMORROW_CHAINS = chains
                 save_tomorrow_chains()
                 logger.info("TOMORROW_CHAINS saved: %d tickers (fallback)", new_len)
             except Exception as e2:
                 logger.error("fallback save_tomorrow_chains failed: %s", e2)
-
+        
         # 5) Kullanıcıya rapor
         watch = sorted(list(TOMORROW_CHAINS.keys()))
         missing = sorted([t for t in bist200_list if t not in TOMORROW_CHAINS])
