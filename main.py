@@ -1901,19 +1901,27 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             reverse=True
         )[:8]
         r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
+        
+        rejim_soft_block = False
 
     if REJIM_GATE_TOMORROW and reg.get("block"):
-        msg = (
-            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
-            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
-            f"{format_regime_line(reg)}\n\n"
-            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
-            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
-        )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        return
+    rejim_soft_block = True
 
-    tom_rows = build_tomorrow_rows(rows)
+    warn_msg = (
+        "⚠️ <b>REJİM KORUMA MODU</b>\n"
+        "Piyasa riskli. Tomorrow listesi <b>yumuşatılmış</b> üretilecektir.\n\n"
+        f"{format_regime_line(reg)}\n"
+    )
+
+    await update.message.reply_text(
+        warn_msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+    tom_rows = build_tomorrow_rows(rows, relaxed=rejim_soft_block)
+    if rejim_soft_block:
+    tom_rows = tom_rows[:2]  # rejimde 2 hisse
     cand_rows = build_candidate_rows(rows, tom_rows)
     save_tomorrow_snapshot(tom_rows, xu_change)
 
