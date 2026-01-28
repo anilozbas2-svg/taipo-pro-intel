@@ -1890,24 +1890,26 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     update_history_from_rows(rows)
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
-
+    
     # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
     r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
-        r0_block = ""
-        if r0_rows:
-            r0_rows = sorted(
-                r0_rows,
-                key=lambda x: (x.get("volume") or 0)
-                if x.get("volume") == x.get("volume")
-                else 0,
-                reverse=True
-            )[:8]
-            r0_block = make_table(
-                r0_rows,
-                "🚀 <b>R0 - UÇANLAR (Erken Yakalananlar)</b>",
-                include_kind=True
-            ) + "\n\n"
+    r0_block = ""
 
+    if r0_rows:
+        r0_rows = sorted(
+            r0_rows,
+            key=lambda x: (x.get("volume") or 0)
+            if x.get("volume") == x.get("volume")
+            else 0,
+            reverse=True,
+        )[:8]
+
+        r0_block = make_table(
+            r0_rows,
+            "🚀 <b>R0 - UÇANLAR (Erken Yakalananlar)</b>",
+            include_kind=True,
+        ) + "\n\n"
+		
         # 🔐 Rejim soft-block (Tomorrow yumuşatma)
         rejim_soft_block = False
 
