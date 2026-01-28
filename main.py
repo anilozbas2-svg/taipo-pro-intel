@@ -1937,37 +1937,39 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         cand_rows = build_candidate_rows(rows, tom_rows)
         save_tomorrow_snapshot(tom_rows, xu_change)
 
-        # 🔗 Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
-        try:
-            ref_day_key = today_key_tradingday()
-            open_or_update_tomorrow_chain(ref_day_key, tom_rows)
-        except Exception as e:
-            logger.warning("open_or_update_tomorrow_chain failed: %s", e)
+        # ⛓️ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
+try:
+    ref_day_key = today_key_tradingday()
+    open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+except Exception as e:
+    logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
-        msg = r0_block + build_tomorrow_message(
-            tom_rows,
-            cand_rows,
-            xu_close,
-            xu_change,
-            thresh_s,
-            reg,
-        )
-    
+# ✅ msg HER ZAMAN üretilecek (UnboundLocalError fix)
+msg = r0_block + build_tomorrow_message(
+    tom_rows,
+    cand_rows,
+    xu_close,
+    xu_change,
+    thresh_s,
+    reg,
+)
+
 # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
-    try:
-        perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
-    except Exception:
-        perf_section = ""
+try:
+    perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
+except Exception:
+    perf_section = ""
 
-    if perf_section:
-        msg = msg + "\n\n" + perf_section
+if perf_section:
+    msg = msg + "\n\n" + perf_section
+
+await update.message.reply_text(
+    msg,
+    parse_mode=ParseMode.HTML,
+    disable_web_page_preview=True,
+)
 
 
-    await update.message.reply_text(
-        msg,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
     if not watch:
