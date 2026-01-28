@@ -1921,9 +1921,9 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     tom_rows = build_tomorrow_rows(rows, relaxed=rejim_soft_block)
     if rejim_soft_block:
-    tom_rows = tom_rows[:2]  # rejimde 2 hisse
-    cand_rows = build_candidate_rows(rows, tom_rows)
-    save_tomorrow_snapshot(tom_rows, xu_change)
+        tom_rows = tom_rows[:2]  # rejimde 2 hisse
+        cand_rows = build_candidate_rows(rows, tom_rows)
+        save_tomorrow_snapshot(tom_rows, xu_change)
 
 
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
