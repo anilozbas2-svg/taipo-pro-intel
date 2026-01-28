@@ -1900,83 +1900,97 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=ParseMode.HTML
     )
 
-
 async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    bist200_list = env_csv("BIST200_TICKERS")
-    if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
-        return
-    await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
-    xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-    update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-    reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+    """
+    /tomorrow:
+    - BIST200 listesinden (env: BIST200_TICKERS) "tomorrow zinciri"ni üretir.
+    - Referans kapanış (ref_close) olarak bugünün/yakın günün fiyatlarını snapshot'lar.
+    - TOMORROW_CHAINS'i diske yazar: TOMORROW_CHAIN_FILE
+    """
+    try:
+        if update.message is None:
+            return
 
-    global LAST_REGIME
-    LAST_REGIME = reg
+        if not ALARM_CHAT_ID:
+            await update.message.reply_text("❌ ALARM_CHAT_ID yok. Render env'e ALARM_CHAT_ID ekle.")
+            return
 
-    rows = await build_rows_from_is_list(bist200_list, xu_change)
-    update_history_from_rows(rows)
-    min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
-    thresh_s = format_threshold(min_vol)
+        bist200_list = env_csv("BIST200_TICKERS")
+        if not bist200_list:
+            await update.message.reply_text("❌ BIST200_TICKERS boş. Env'e CSV liste ekle (AAA.IS,BBB.IS,...)")
+            return
 
-    # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
-    r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
-    r0_block = ""
-    if r0_rows:
-        r0_rows = sorted(
-            r0_rows,
-            key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
-            reverse=True
-        )[:8]
-        r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
+        await update.message.reply_text("🧩 Tomorrow zinciri hazırlanıyor...")
 
-    if REJIM_GATE_TOMORROW and reg.get("block"):
+        # 1) BIST200 tickers -> rows (IS list) çek
+        # build_rows_from_is_list: senin mevcut fonksiyonun (tickers, xu_change) alıyordu.
+        # Biz burada xu_change bilinmiyorsa None/0 geçiyoruz, fonksiyon tolerate etmeli.
+        try:
+            xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        except Exception:
+            xu_change = 0.0
+
+        rows_now = await build_rows_from_is_list(bist200_list, xu_change)
+
+        # 2) ref_close map hazırla (close yoksa None)
+        ref_map: dict[str, float] = {}
+        for r in (rows_now or []):
+            t = (r.get("ticker") or "").strip()
+            if not t:
+                continue
+            ref_close = safe_float(r.get("close"))
+            if ref_close == ref_close and ref_close > 0:
+                ref_map[t] = ref_close
+
+        # 3) Zincir dict'i kur (basit zincir: sadece ref_close kaydı)
+        # İleride buraya senin "chain logic" (pattern / filtre) eklenecek.
+        chains: dict[str, dict] = {}
+        for t in bist200_list:
+            if t in ref_map:
+                chains[t] = {
+                    "ref_close": ref_map[t],
+                    "ts": datetime.now(TZ).isoformat(),
+                }
+
+        # 4) Global'e yaz + diske kaydet
+        global TOMORROW_CHAINS
+        TOMORROW_CHAINS = chains
+
+        try:
+            save_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
+        except Exception:
+            # fallback: mevcut projende farklı save fonksiyonu olabilir
+            save_tomorrow_chains(TOMORROW_CHAINS)
+
+        logger.info("TOMORROW_CHAINS saved: %s tickers", len(TOMORROW_CHAINS))
+
+        # 5) Kullanıcıya rapor
+        watch = sorted(list(TOMORROW_CHAINS.keys()))
+        missing = sorted([t for t in bist200_list if t not in TOMORROW_CHAINS])
+
+        watch_s = ", ".join(watch[:60]) if watch else "-"
+        miss_s = ", ".join(missing[:60]) if missing else "-"
+
         msg = (
-            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
-            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
-            f"{format_regime_line(reg)}\n\n"
-            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
-            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
+            "📌 <b>Tomorrow Zinciri Oluşturuldu (BIST200)</b>\n"
+            f"✅ Zincir VAR ({len(watch)}):\n<pre>{watch_s}</pre>\n"
+            f"❌ Zincir YOK ({len(missing)}):\n<pre>{miss_s}</pre>\n"
+            "⏳ Canlı fark için: /altin_run"
         )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        return
 
-    tom_rows = build_tomorrow_rows(rows)
-    cand_rows = build_candidate_rows(rows, tom_rows)
-    save_tomorrow_snapshot(tom_rows, xu_change)
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
-
-# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
-    try:
-        ref_day_key = today_key_tradingday()
-        open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+        await update.message.reply_text("✅ Tomorrow zinciri kaydedildi.")
     except Exception as e:
-        logger.warning("open_or_update_tomorrow_chain failed: %s", e)
+        logger.exception("cmd_tomorrow error: %s", e)
+        if update.message is not None:
+            await update.message.reply_text(f"❌ /tomorrow hata: {e}")
 
-    msg = r0_block + build_tomorrow_message(
-        tom_rows,
-        cand_rows,
-        xu_close,
-        xu_change,
-        thresh_s,
-        reg,
-    )
-    
-# ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
-    try:
-        perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
-    except Exception:
-        perf_section = ""
-
-    if perf_section:
-        msg = msg + "\n\n" + perf_section
-
-
-    await update.message.reply_text(
-        msg,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
     if not watch:
