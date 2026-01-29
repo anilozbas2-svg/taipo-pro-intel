@@ -94,11 +94,8 @@ TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))
 TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))
 TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
-TOMORROW_MAX_PICK = int(os.getenv("TOMORROW_MAX_PICK", "50"))
 
 CANDIDATE_MAX = int(os.getenv("CANDIDATE_MAX", "20"))
-CANDIDATE_MAX_PICK = int(os.getenv("CANDIDATE_MAX_PICK", str(CANDIDATE_MAX)))
-
 CANDIDATE_MIN_VOL_RATIO = float(os.getenv("CANDIDATE_MIN_VOL_RATIO", "1.10"))
 CANDIDATE_MAX_BAND = float(os.getenv("CANDIDATE_MAX_BAND", "75"))
 CANDIDATE_INCLUDE_AYRISMA = os.getenv("CANDIDATE_INCLUDE_AYRISMA", "0").strip() == "1"
@@ -1893,71 +1890,41 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     update_history_from_rows(rows)
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
-    
+
     # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
     r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
     r0_block = ""
-    
-    tom_rows = []
-    cand_rows = []
-
     if r0_rows:
         r0_rows = sorted(
             r0_rows,
-            key=lambda x: (x.get("volume") or 0)
-            if x.get("volume") == x.get("volume")
-            else 0,
-            reverse=True,
+            key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
+            reverse=True
         )[:8]
+        r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
 
-        r0_block = make_table(
-            r0_rows,
-            "🚀 <b>R0 - UÇANLAR (Erken Yakalananlar)</b>",
-            include_kind=True,
-        ) + "\n\n"
-		
-        # 🔐 Rejim soft-block (Tomorrow yumuşatma)
-        rejim_soft_block = False
+    if REJIM_GATE_TOMORROW and reg.get("block"):
+        msg = (
+            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
+            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
+            f"{format_regime_line(reg)}\n\n"
+            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
+            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        return
 
-        if REJIM_GATE_TOMORROW and reg.get("block"):
-            rejim_soft_block = True
+    tom_rows = build_tomorrow_rows(rows)
+    cand_rows = build_candidate_rows(rows, tom_rows)
+    save_tomorrow_snapshot(tom_rows, xu_change)
 
-            warn_msg = (
-                "⚠️ <b>REJİM KORUMA MODU</b>\n"
-                "Piyasa riskli. Tomorrow listesi <b>yumuşatılmış</b> üretilecektir.\n\n"
-                f"{format_regime_line(reg)}\n"
-            )
 
-            await update.message.reply_text(
-                warn_msg,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-
-        # 📅 Tomorrow listesi üretimi
-        tom_rows = build_tomorrow_rows(rows, relaxed=rejim_soft_block)
-        
-        if not tom_rows:
-            await update.message.reply_text(
-                "⚠️ Tomorrow listesi için uygun hisse çıkmadı (filtreler sıkı olabilir).",
-                disable_web_page_preview=True,
-            )
-            return
-
-        if rejim_soft_block:
-            tom_rows = tom_rows[:2]  # rejimde maksimum 2 hisse
-
-        cand_rows = build_candidate_rows(rows, tom_rows)
-        save_tomorrow_snapshot(tom_rows, xu_change)
-
-        # ⛓️ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
+# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
     try:
         ref_day_key = today_key_tradingday()
         open_or_update_tomorrow_chain(ref_day_key, tom_rows)
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
-    # ✅ msg HER ZAMAN üretilecek (UnboundLocalError fix)
     msg = r0_block + build_tomorrow_message(
         tom_rows,
         cand_rows,
@@ -1966,8 +1933,8 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         thresh_s,
         reg,
     )
-
-    # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
+    
+# ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
         perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
     except Exception:
@@ -1976,13 +1943,12 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if perf_section:
         msg = msg + "\n\n" + perf_section
 
+
     await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
-
-
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
     if not watch:
