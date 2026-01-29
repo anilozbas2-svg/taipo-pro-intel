@@ -89,6 +89,13 @@ TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))
 TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))
 TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
+TOMORROW_DEBUG = os.getenv("TOMORROW_DEBUG", "0").strip() == "1"
+
+TOMORROW_TRACK_ENABLED = os.getenv("TOMORROW_TRACK_ENABLED", "0").strip() == "1"
+TOMORROW_TRACK_HOUR = int(os.getenv("TOMORROW_TRACK_HOUR", "10"))
+TOMORROW_TRACK_MIN = int(os.getenv("TOMORROW_TRACK_MIN", "30"))
+
+TOMORROW_SNAPSHOT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "tomorrow_snapshot.json")
 
 CANDIDATE_MAX = int(os.getenv("CANDIDATE_MAX", "20"))
 CANDIDATE_MIN_VOL_RATIO = float(os.getenv("CANDIDATE_MIN_VOL_RATIO", "1.10"))
