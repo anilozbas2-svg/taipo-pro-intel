@@ -1932,14 +1932,14 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
-try:
-    if "open_or_update_tomorrow_chain" in globals():
-        ref_day_key = today_key_tradingday()
-        open_or_update_tomorrow_chain(ref_day_key, tom_rows)
-    else:
-        logger.info("Tomorrow chain disabled: open_or_update_tomorrow_chain not defined.")
-except Exception as e:
-    logger.warning("open_or_update_tomorrow_chain failed: %s", e)
+    try:
+        if "open_or_update_tomorrow_chain" in globals():
+            ref_day_key = today_key_tradingday()
+            open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+        else:
+            logger.info("Tomorrow chain disabled: open_or_update_tomorrow_chain not defined.")
+    except Exception as e:
+        logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
     msg = r0_block + build_tomorrow_message(
         tom_rows,
@@ -1949,8 +1949,8 @@ except Exception as e:
         thresh_s,
         reg,
     )
-    
-# ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
+
+    # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
         perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
     except Exception:
@@ -1959,12 +1959,11 @@ except Exception as e:
     if perf_section:
         msg = msg + "\n\n" + perf_section
 
-
     await update.message.reply_text(
-            msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-      )
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
      
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
