@@ -196,6 +196,8 @@ def write_trade_log(record: dict) -> None:
     except Exception as e:
         logger.exception("Trade log write error: %s", e)
 
+def open_or_update_tomorrow_chain(day_key: str, tom_rows: List[Dict[str, Any]]) -> None:
+    return
 
 def safe_float(x: Any) -> float:
     try:
@@ -1931,10 +1933,13 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
     try:
+    if "open_or_update_tomorrow_chain" in globals():
         ref_day_key = today_key_tradingday()
         open_or_update_tomorrow_chain(ref_day_key, tom_rows)
-    except Exception as e:
-        logger.warning("open_or_update_tomorrow_chain failed: %s", e)
+    else:
+        logger.info("Tomorrow chain disabled: open_or_update_tomorrow_chain not defined.")
+except Exception as e:
+    logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
     msg = r0_block + build_tomorrow_message(
         tom_rows,
