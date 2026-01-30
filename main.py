@@ -2536,6 +2536,13 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
 
         if not TOMORROW_CHAINS:
+            # Diskten yeniden yüklemeyi dene (restart/deploy sonrası boş kalabiliyor)
+            try:
+                load_tomorrow_chains()
+            except Exception as e:
+                logger.warning("load_tomorrow_chains failed: %s", e)
+
+        if not TOMORROW_CHAINS:
             await context.bot.send_message(
                 chat_id=int(ALARM_CHAT_ID),
                 text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
