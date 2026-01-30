@@ -2510,6 +2510,15 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Tomorrow job error: %s", e)
 
 async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
+    logger.info(
+        "ALTIN_FOLLOW DEBUG | force=%s ALARM_ENABLED=%s ALARM_CHAT_ID=%s ALTIN_FOLLOW_ENABLED=%s TOMORROW_CHAINS=%s",
+        force,
+        ALARM_ENABLED,
+        ALARM_CHAT_ID,
+        os.getenv("ALTIN_FOLLOW_ENABLED"),
+        bool(TOMORROW_CHAINS),
+    )
+    if not force:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
 
