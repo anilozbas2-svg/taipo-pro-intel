@@ -1511,31 +1511,51 @@ def build_tomorrow_message(
     return head + "\n" + gold_table + "\n\n" + cand_table + "\n" + notes + foot
 
 
-def save_tomorrow_snapshot(rows: List[Dict[str, Any]], xu_change: float) -> None:
+def save_tomorrow_snapshot(
+    tom_rows: List[Dict[str, Any]],
+    cand_rows: "Optional[List[Dict[str, Any]]]",
+    xu_change: float,
+) -> None:
+      for r in (tom_rows + cand_rows):
     try:
         day_key = today_key_tradingday()
         snap = _load_json(TOMORROW_SNAPSHOT_FILE)
         if not isinstance(snap, dict):
             snap = {}
-        items = []
-        for r in rows:
-            t = (r.get("ticker") or "").strip().upper()
-            cl = r.get("close", float("nan"))
-            ch = r.get("change", float("nan"))
-            vol = r.get("volume", float("nan"))
-            if not t or cl != cl:
-                continue
-            items.append({
-                "ticker": t,
-                "ref_close": float(cl),
-                "change": float(ch) if ch == ch else None,
-                "volume": float(vol) if vol == vol else None,
-                "kind": (r.get("signal_text") or ""),
-                "saved_at": now_tr().isoformat(),
-                "xu100_change": float(xu_change) if xu_change == xu_change else None,
-            })
-        snap[day_key] = items
+
+        def _pack(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            items: List[Dict[str, Any]] = []
+            for r in rows or []:
+                t = (r.get("ticker") or "").strip().upper()
+                cl = r.get("close", float("nan"))
+                ch = r.get("change", float("nan"))
+                vol = r.get("volume", float("nan"))
+                if not t or cl != cl:
+                    continue
+                items.append(
+                    {
+                        "ticker": t,
+                        "close": float(cl),
+                        "change": float(ch) if ch == ch else float("nan"),
+                        "volume": float(vol) if vol == vol else float("nan"),
+                        "kind": (r.get("kind") or r.get("list") or r.get("bucket") or "").strip(),
+                        "signal_text": (r.get("signal_text") or "").strip(),
+                    }
+                )
+            return items
+
+        tom_items = _pack(tom_rows)
+        cand_items = _pack(cand_rows or [])
+
+        snap[day_key] = {
+            "ts": int(time.time()),
+            "xu_change": float(xu_change) if xu_change == xu_change else 0.0,
+            "tom": tom_items,      # ALTIN snapshot (tomorrow list)
+            "cand": cand_items,    # ADAY snapshot
+        }
+
         _atomic_write_json(TOMORROW_SNAPSHOT_FILE, snap)
+
     except Exception as e:
         logger.warning("save_tomorrow_snapshot failed: %s", e)
 
@@ -1915,7 +1935,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     tom_rows = build_tomorrow_rows(rows)
     cand_rows = build_candidate_rows(rows, tom_rows)
-    save_tomorrow_snapshot(tom_rows, xu_change)
+    save_tomorrow_snapshot(tom_rows, cand_rows, xu_change)
 
 
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
@@ -2451,7 +2471,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         tom_rows = build_tomorrow_rows(rows)
         cand_rows = build_candidate_rows(rows, tom_rows)
-        save_tomorrow_snapshot(tom_rows, xu_change)
+        save_tomorrow_snapshot(tom_rows, cand_rows, xu_change)
 
         # ==============================
         # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
