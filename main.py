@@ -1963,7 +1963,7 @@ except Exception as e:
         msg,
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
-     )
+    )
      
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
