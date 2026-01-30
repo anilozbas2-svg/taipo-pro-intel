@@ -1959,12 +1959,12 @@ except Exception as e:
     if perf_section:
         msg = msg + "\n\n" + perf_section
 
-
-        await update.message.reply_text(
-            msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+     )
+     
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
     if not watch:
