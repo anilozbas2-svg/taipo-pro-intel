@@ -1513,47 +1513,38 @@ def build_tomorrow_message(
 
 def save_tomorrow_snapshot(
     tom_rows: List[Dict[str, Any]],
-    cand_rows: "Optional[List[Dict[str, Any]]]",
+    cand_rows: List[Dict[str, Any]],
     xu_change: float,
 ) -> None:
-      for r in (tom_rows + cand_rows):
     try:
         day_key = today_key_tradingday()
         snap = _load_json(TOMORROW_SNAPSHOT_FILE)
         if not isinstance(snap, dict):
             snap = {}
 
-        def _pack(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-            items: List[Dict[str, Any]] = []
-            for r in rows or []:
-                t = (r.get("ticker") or "").strip().upper()
-                cl = r.get("close", float("nan"))
-                ch = r.get("change", float("nan"))
-                vol = r.get("volume", float("nan"))
-                if not t or cl != cl:
-                    continue
-                items.append(
-                    {
-                        "ticker": t,
-                        "close": float(cl),
-                        "change": float(ch) if ch == ch else float("nan"),
-                        "volume": float(vol) if vol == vol else float("nan"),
-                        "kind": (r.get("kind") or r.get("list") or r.get("bucket") or "").strip(),
-                        "signal_text": (r.get("signal_text") or "").strip(),
-                    }
-                )
-            return items
+        items: List[Dict[str, Any]] = []
+        for r in (tom_rows + cand_rows):
+            t = (r.get("ticker") or "").strip().upper()
+            cl = r.get("close", float("nan"))
+            ch = r.get("change", float("nan"))
+            vol = r.get("volume", float("nan"))
 
-        tom_items = _pack(tom_rows)
-        cand_items = _pack(cand_rows or [])
+            if (not t) or (cl != cl):
+                continue
 
-        snap[day_key] = {
-            "ts": int(time.time()),
-            "xu_change": float(xu_change) if xu_change == xu_change else 0.0,
-            "tom": tom_items,      # ALTIN snapshot (tomorrow list)
-            "cand": cand_items,    # ADAY snapshot
-        }
+            items.append(
+                {
+                    "ticker": t,
+                    "ref_close": float(cl),
+                    "change": float(ch) if ch == ch else None,
+                    "volume": float(vol) if vol == vol else None,
+                    "kind": (r.get("signal_text") or r.get("kind") or ""),
+                    "saved_at": now_tr().isoformat(),
+                    "xu100_change": float(xu_change) if xu_change == xu_change else None,
+                }
+            )
 
+        snap[day_key] = items
         _atomic_write_json(TOMORROW_SNAPSHOT_FILE, snap)
 
     except Exception as e:
