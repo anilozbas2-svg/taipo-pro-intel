@@ -2518,16 +2518,18 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         os.getenv("ALTIN_FOLLOW_ENABLED"),
         bool(TOMORROW_CHAINS),
     )
+
+    # Otomatik job çağrılarında (force=False) güvenlik kapıları
     if not force:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
-        return
+        if (not ALARM_ENABLED) or (not ALARM_CHAT_ID):
+            return
 
-    if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip() in ("0", "false", "False"):
-        return
+        if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip() in ("0", "false", "False"):
+            return
 
-    now = now_tr()
-    if (not force) and (not within_altin_follow_window(now)):
-        return
+        now = now_tr()
+        if not within_altin_follow_window(now):
+            return
 
     try:
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
@@ -2542,7 +2544,9 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             )
             return
 
-        altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
+        ref_close_map = get_altin_tickers_from_tomorrow_chain()
+        altin_tickers = list(ref_close_map.keys())
+
         if not altin_tickers:
             await context.bot.send_message(
                 chat_id=int(ALARM_CHAT_ID),
@@ -2555,12 +2559,12 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         # Canlı fiyatlar
         rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
         now_map = {
-            (r.get("ticker") or "").strip(): r
+            (r.get("ticker") or "").strip().upper(): r
             for r in (rows_now or [])
             if (r.get("ticker") or "").strip()
         }
 
-        # Tablo
+        # Performans tablosu
         perf = []
         for t in altin_tickers:
             ref_close = safe_float(ref_close_map.get(t))
@@ -2582,15 +2586,15 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
 
         header = (
             "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"🕒 <b>{now.strftime('%H:%M')}</b>  |  "
-            f"📈 XU100: <b>{xu_close:,.0f}</b> ({xu_change:+.2f}%)\n"
+            f"🕒 <b>{now_tr().strftime('%H:%M')}</b>\n"
+            f"📈 XU100: <b>{xu_close:.0f}</b> ({xu_change:+.2f}%)\n"
         )
 
         lines = []
-        lines.append("HIS   Δ%           NOW      REF")
+        lines.append("HIS  Δ%           NOW      REF")
         lines.append("--------------------------------")
         for (t, dd_s, now_s, ref_s) in perf:
-            lines.append(f"{t:<5} {dd_s:<12}  {now_s:>7}  {ref_s:>7}")
+            lines.append(f"{t:<5} {dd_s:<12} {now_s:>7} {ref_s:>7}")
 
         msg = header + "<pre>" + "\n".join(lines) + "</pre>"
 
@@ -2603,6 +2607,15 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
 
     except Exception as e:
         logger.exception("ALTIN live follow error: %s", e)
+        try:
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID) if ALARM_CHAT_ID else None,
+                text=f"❌ ALTIN live takip hata:\n<code>{e}</code>",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            pass
         return
 
 async def job_tomorrow_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
