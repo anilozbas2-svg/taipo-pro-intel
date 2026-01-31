@@ -1930,18 +1930,41 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     cand_rows = build_candidate_rows(rows, tom_rows)
     save_tomorrow_snapshot(tom_rows, cand_rows, xu_change)
 
-    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz
+    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (list/dict uyumlu)
     try:
         global TOMORROW_CHAINS
-        TOMORROW_CHAINS.clear()
 
-        for r in tom_rows:
-            TOMORROW_CHAINS.append(r)
+        if isinstance(TOMORROW_CHAINS, dict):
+            TOMORROW_CHAINS.clear()
 
-        logger.info(
-            "CMD_TOMORROW | TOMORROW_CHAINS populated: %d chain",
-            len(TOMORROW_CHAINS),
-        )
+            # En yaygın kullanım: { ref_day_key: [rows...] }
+            ref_day_key = today_key_tradingday()
+
+            # tom_rows list ise direkt koy
+            TOMORROW_CHAINS[ref_day_key] = list(tom_rows)
+
+            logger.info(
+                "CMD_TOMORROW | TOMORROW_CHAINS populated (dict): key=%s count=%d",
+                ref_day_key,
+                len(TOMORROW_CHAINS[ref_day_key]),
+            )
+
+        elif isinstance(TOMORROW_CHAINS, list):
+            TOMORROW_CHAINS.clear()
+
+            for r in tom_rows:
+                TOMORROW_CHAINS.append(r)
+
+            logger.info(
+                "CMD_TOMORROW | TOMORROW_CHAINS populated (list): count=%d",
+                len(TOMORROW_CHAINS),
+            )
+
+        else:
+            logger.warning(
+                "CMD_TOMORROW | TOMORROW_CHAINS has unexpected type: %s",
+                type(TOMORROW_CHAINS).__name__,
+            )
 
     except Exception as e:
         logger.warning(
