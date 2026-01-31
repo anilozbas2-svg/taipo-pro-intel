@@ -2668,6 +2668,7 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
     )
 
     if not TOMORROW_CHAINS:
+        # Diskten yeniden yüklemeyi dene (restart/deploy sonrası boş kalabiliyor)
         try:
             load_tomorrow_chains()
         except Exception as e:
@@ -2682,7 +2683,7 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         )
         return
 
-    # ✅ BURASI TRY İÇİNDE
+    # ✅ BURASI DA TRY İÇİNDE
     altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
 
     if not altin_tickers:
@@ -2696,6 +2697,22 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             disable_web_page_preview=True,
         )
         return
+
+    # ⬇️ bundan sonra gelen mevcut rows_now / perf / mesaj oluşturma kodların
+    #    HİÇ DEĞİŞMEDEN buradan devam edecek
+
+except Exception as e:
+    logger.exception("ALTIN live follow error: %s", e)
+    try:
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID) if ALARM_CHAT_ID else None,
+            text=f"❌ ALTIN live takip hata:\n<code>{e}</code>",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        pass
+    return
 
 except Exception as e:
     logger.exception("ALTIN live follow error: %s", e)
