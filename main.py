@@ -2657,8 +2657,10 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             )
             return
 
-        ref_close_map = get_altin_tickers_from_tomorrow_chain()
-        altin_tickers = list(ref_close_map.keys())
+        altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
+
+if not altin_tickers:
+    altin_tickers = list(ref_close_map.keys())[:6]
 
         if not altin_tickers:
             await context.bot.send_message(
