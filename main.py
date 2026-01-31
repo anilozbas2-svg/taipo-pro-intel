@@ -361,30 +361,95 @@ def normalize_is_ticker(t: str) -> str:
 def get_altin_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
     """
     Dünkü /tomorrow zincirinden ALTIN tickers + ref_close_map döner.
+
+    Desteklenen formatlar:
+    1) TOMORROW_CHAINS = { "2026-01-30": {"rows":[...], "ref_close":{...}, "ts":...} }
+    2) TOMORROW_CHAINS = { "2026-01-30": [ {row},{row},... ] }   <-- senin şu anki formatın
+    3) TOMORROW_CHAINS = [ {row},{row},... ]  (eski/yan format)
     """
+
     if not TOMORROW_CHAINS:
         return [], {}
 
-    active_key = today_key_tradingday()
-    if active_key not in TOMORROW_CHAINS:
-        active_key = max(
-            TOMORROW_CHAINS.keys(),
-            key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-        )
+    rows: list[dict] = []
+    ref_close_map: dict = {}
 
-    chain = TOMORROW_CHAINS.get(active_key, {}) or {}
-    t_rows = chain.get("rows", []) or []
-    ref_close_map = chain.get("ref_close", {}) or {}
+    # ------------------------------------------------------------
+    # A) TOMORROW_CHAINS dict ise: key -> (dict veya list)
+    # ------------------------------------------------------------
+    if isinstance(TOMORROW_CHAINS, dict):
+        active_key = today_key_tradingday()
 
-    altin_tickers = []
-    for rr in t_rows:
-        t = (rr.get("ticker") or rr.get("symbol") or "").strip()
+        if active_key not in TOMORROW_CHAINS:
+            # ts alanı yoksa fallback: en büyük key
+            def _ts_for_key(k):
+                v = TOMORROW_CHAINS.get(k)
+                if isinstance(v, dict):
+                    return v.get("ts", 0) or 0
+                return 0
+
+            try:
+                active_key = max(TOMORROW_CHAINS.keys(), key=_ts_for_key)
+            except Exception:
+                active_key = sorted(TOMORROW_CHAINS.keys())[-1]
+
+        chain_obj = TOMORROW_CHAINS.get(active_key)
+
+        # chain_obj dict formatı: {"rows":[...], "ref_close":{...}}
+        if isinstance(chain_obj, dict):
+            rows = chain_obj.get("rows", []) or []
+            ref_close_map = chain_obj.get("ref_close", {}) or {}
+
+        # chain_obj list formatı: [row,row]
+        elif isinstance(chain_obj, list):
+            rows = chain_obj
+            # ref_close_map yoksa rows içinden üret
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
+                c = safe_float(r.get("close") or r.get("fyt") or r.get("price") or r.get("ref_close"))
+                if t and c is not None:
+                    ref_close_map[t] = c
+
+        else:
+            rows = []
+            ref_close_map = {}
+
+    # ------------------------------------------------------------
+    # B) TOMORROW_CHAINS list ise: direkt rows kabul et
+    # ------------------------------------------------------------
+    elif isinstance(TOMORROW_CHAINS, list):
+        rows = TOMORROW_CHAINS
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
+            c = safe_float(r.get("close") or r.get("fyt") or r.get("price") or r.get("ref_close"))
+            if t and c is not None:
+                ref_close_map[t] = c
+
+    else:
+        return [], {}
+
+    # ------------------------------------------------------------
+    # ALTIN tickers seçimi (kind/list/bucket alanlarından)
+    # ------------------------------------------------------------
+    altin_tickers: list[str] = []
+
+    for rr in rows:
+        if not isinstance(rr, dict):
+            continue
+
+        t = (rr.get("ticker") or rr.get("symbol") or rr.get("his") or "").strip().upper()
         if not t:
             continue
-        kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
+
+        kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or rr.get("kategori") or "").strip().upper()
         if "ALTIN" in kind:
             altin_tickers.append(t)
 
+    # Eğer kind üzerinden ALTIN bulunamadıysa: ref_close_map'ten ilk 6'yı al
     if not altin_tickers:
         altin_tickers = list(ref_close_map.keys())[:6]
 
