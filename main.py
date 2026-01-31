@@ -2639,26 +2639,6 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
 
     try:
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-
-        if not TOMORROW_CHAINS:
-            # Diskten yeniden yüklemeyi dene (restart/deploy sonrası boş kalabiliyor)
-            try:
-                load_tomorrow_chains()
-            except Exception as e:
-                logger.warning("load_tomorrow_chains failed: %s", e)
-
-        if not TOMORROW_CHAINS:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            return
-
-        try:
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(
             today_key_tradingday(),
             xu_close,
@@ -2667,13 +2647,14 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             xu_open
         )
 
+        # Tomorrow zinciri yoksa diskten yüklemeyi dene
         if not TOMORROW_CHAINS:
-            # Diskten yeniden yüklemeyi dene (restart/deploy sonrası boş kalabiliyor)
             try:
                 load_tomorrow_chains()
             except Exception as e:
                 logger.warning("load_tomorrow_chains failed: %s", e)
 
+        # Hâlâ yoksa çık
         if not TOMORROW_CHAINS:
             await context.bot.send_message(
                 chat_id=int(ALARM_CHAT_ID),
@@ -2683,6 +2664,7 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             )
             return
 
+        # Tomorrow zincirinden ALTIN tickers al
         altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
 
         if not altin_tickers:
@@ -2697,23 +2679,63 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             )
             return
 
-    # ✅ BURASI DA TRY İÇİNDE
-    altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
+        # ===== BURADAN SONRASI: MEVCUT KODLARIN =====
+        rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
 
-    if not altin_tickers:
-        altin_tickers = list(ref_close_map.keys())[:6]
+        now_map = {
+            (r.get("ticker") or "").strip().upper(): r
+            for r in (rows_now or [])
+            if (r.get("ticker") or "").strip()
+        }
 
-    if not altin_tickers:
+        perf = []
+        for t in altin_tickers:
+            ref_close = safe_float(ref_close_map.get(t))
+            now_close = safe_float((now_map.get(t) or {}).get("close"))
+            dd = pct_change(now_close, ref_close) or 0.0
+
+            if dd > 0:
+                emo = "🟢"
+            elif dd < 0:
+                emo = "🔴"
+            else:
+                emo = "⚪"
+
+            perf.append((t, f"{emo} {dd:+.2f}%", fmt_price(now_close), fmt_price(ref_close)))
+
+        header = (
+            "⏳ <b>ALTIN LIVE TAKİP</b>\n"
+            f"<b>{now_tr().strftime('%H:%M')}</b>\n"
+            f"XU100: <b>{xu_close:.0f}</b> / %{xu_change:+.2f}\n"
+        )
+
+        lines = []
+        lines.append("HIS     %Δ        NOW       REF")
+        lines.append("--------------------------------")
+        for t, dd_s, now_s, ref_s in perf:
+            lines.append(f"{t:<6} {dd_s:<10} {now_s:>8} {ref_s:>8}")
+
+        msg = header + "<pre>" + "\n".join(lines) + "</pre>"
+
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
-            text="⚠️ ALTIN follow: Tomorrow zincirinde ALTIN tickers yok. Önce /tomorrow çalıştır.",
+            text=msg,
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
         )
-        return
 
-    # ⬇️ bundan sonra gelen mevcut rows_now / perf / mesaj oluşturma kodların
-    #    HİÇ DEĞİŞMEDEN buradan devam edecek
+    except Exception as e:
+        logger.exception("ALTIN live follow error: %s", e)
+        try:
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID) if ALARM_CHAT_ID else None,
+                text=f"❌ ALTIN live takip hata:\n<code>{e}</code>",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            pass
+        return
 
 except Exception as e:
     logger.exception("ALTIN live follow error: %s", e)
