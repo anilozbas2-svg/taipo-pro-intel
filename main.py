@@ -2644,7 +2644,7 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             xu_close,
             xu_change,
             xu_vol,
-            xu_open
+            xu_open,
         )
 
         # Tomorrow zinciri yoksa diskten yüklemeyi dene
@@ -2666,6 +2666,13 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
 
         # Tomorrow zincirinden ALTIN tickers al
         altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
+
+        # Güvenlik: yanlış dönüş (tuple) gelirse toparla
+        if isinstance(ref_close_map, tuple) and len(ref_close_map) == 2:
+            altin_tickers, ref_close_map = ref_close_map
+
+        if not isinstance(ref_close_map, dict):
+            ref_close_map = {}
 
         if not altin_tickers:
             altin_tickers = list(ref_close_map.keys())[:6]
@@ -2692,91 +2699,9 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         for t in altin_tickers:
             ref_close = safe_float(ref_close_map.get(t))
             now_close = safe_float((now_map.get(t) or {}).get("close"))
-            dd = pct_change(now_close, ref_close) or 0.0
-
-            if dd > 0:
-                emo = "🟢"
-            elif dd < 0:
-                emo = "🔴"
-            else:
-                emo = "⚪"
-
-            perf.append((t, f"{emo} {dd:+.2f}%", fmt_price(now_close), fmt_price(ref_close)))
-
-        header = (
-            "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"<b>{now_tr().strftime('%H:%M')}</b>\n"
-            f"XU100: <b>{xu_close:.0f}</b> / %{xu_change:+.2f}\n"
-        )
-
-        lines = []
-        lines.append("HIS     %Δ        NOW       REF")
-        lines.append("--------------------------------")
-        for t, dd_s, now_s, ref_s in perf:
-            lines.append(f"{t:<6} {dd_s:<10} {now_s:>8} {ref_s:>8}")
-
-        msg = header + "<pre>" + "\n".join(lines) + "</pre>"
-
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-
-    except Exception as e:
-        logger.exception("ALTIN live follow error: %s", e)
-        try:
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID) if ALARM_CHAT_ID else None,
-                text=f"❌ ALTIN live takip hata:\n<code>{e}</code>",
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            pass
-        return
-
-except Exception as e:
-    logger.exception("ALTIN live follow error: %s", e)
-    try:
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID) if ALARM_CHAT_ID else None,
-            text=f"❌ ALTIN live takip hata:\n<code>{e}</code>",
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-    except Exception:
-        pass
-    return
-
-except Exception as e:
-    logger.exception("ALTIN live follow error: %s", e)
-    try:
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID) if ALARM_CHAT_ID else None,
-            text=f"❌ ALTIN live takip hata:\n<code>{e}</code>",
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-    except Exception:
-        pass
-
-        # Canlı fiyatlar
-        rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
-        now_map = {
-            (r.get("ticker") or "").strip().upper(): r
-            for r in (rows_now or [])
-            if (r.get("ticker") or "").strip()
-        }
-
-        # Performans tablosu
-        perf = []
-        for t in altin_tickers:
-            ref_close = safe_float(ref_close_map.get(t))
-            now_close = safe_float((now_map.get(t) or {}).get("close"))
             dd = pct_change(now_close, ref_close)
 
+            # dd NaN kontrolü
             if dd == dd:
                 if dd > 0:
                     emo = "🟢"
@@ -2792,15 +2717,15 @@ except Exception as e:
 
         header = (
             "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"🕒 <b>{now_tr().strftime('%H:%M')}</b>\n"
-            f"📈 XU100: <b>{xu_close:.0f}</b> ({xu_change:+.2f}%)\n"
+            f"<b>{now_tr().strftime('%H:%M')}</b>\n"
+            f"XU100: <b>{xu_close:.0f}</b> / %{xu_change:+.2f}\n"
         )
 
         lines = []
-        lines.append("HIS  Δ%           NOW      REF")
+        lines.append("HIS     %Δ        NOW       REF")
         lines.append("--------------------------------")
-        for (t, dd_s, now_s, ref_s) in perf:
-            lines.append(f"{t:<5} {dd_s:<12} {now_s:>7} {ref_s:>7}")
+        for t, dd_s, now_s, ref_s in perf:
+            lines.append(f"{t:<6} {dd_s:<10} {now_s:>8} {ref_s:>8}")
 
         msg = header + "<pre>" + "\n".join(lines) + "</pre>"
 
