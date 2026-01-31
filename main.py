@@ -2658,30 +2658,44 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             return
 
         try:
-    xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-    update_index_history(
-        today_key_tradingday(),
-        xu_close,
-        xu_change,
-        xu_vol,
-        xu_open
-    )
-
-    if not TOMORROW_CHAINS:
-        # Diskten yeniden yüklemeyi dene (restart/deploy sonrası boş kalabiliyor)
-        try:
-            load_tomorrow_chains()
-        except Exception as e:
-            logger.warning("load_tomorrow_chains failed: %s", e)
-
-    if not TOMORROW_CHAINS:
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(
+            today_key_tradingday(),
+            xu_close,
+            xu_change,
+            xu_vol,
+            xu_open
         )
-        return
+
+        if not TOMORROW_CHAINS:
+            # Diskten yeniden yüklemeyi dene (restart/deploy sonrası boş kalabiliyor)
+            try:
+                load_tomorrow_chains()
+            except Exception as e:
+                logger.warning("load_tomorrow_chains failed: %s", e)
+
+        if not TOMORROW_CHAINS:
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text="⚠️ ALTIN follow: Tomorrow zinciri yok. Önce /tomorrow çalıştır.",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            return
+
+        altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
+
+        if not altin_tickers:
+            altin_tickers = list(ref_close_map.keys())[:6]
+
+        if not altin_tickers:
+            await context.bot.send_message(
+                chat_id=int(ALARM_CHAT_ID),
+                text="⚠️ ALTIN follow: Tomorrow zincirinde ALTIN tickers yok. Önce /tomorrow çalıştır.",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            return
 
     # ✅ BURASI DA TRY İÇİNDE
     altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
