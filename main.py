@@ -341,6 +341,46 @@ def within_altin_follow_window(now: datetime) -> bool:
 
     return start_t <= now <= end_t
 
+# =========================
+# Universe / Evren yardımcıları
+# =========================
+
+def parse_ticker_list(env_value: str) -> list[str]:
+    if not env_value:
+        return []
+    items = [x.strip().upper() for x in env_value.split(",")]
+    return [x for x in items if x]
+
+
+def universe_stats() -> dict:
+    raw = os.getenv("BIST200_TICKERS", "")
+    tickers = parse_ticker_list(raw)
+    uniq = sorted(set(tickers))
+    bad = [t for t in uniq if not t.endswith(".IS")]
+    return {
+        "count_raw": len(tickers),
+        "count_unique": len(uniq),
+        "bad_suffix": bad[:10],
+        "head": uniq[:8],
+        "tail": uniq[-8:],
+    }
+
+
+async def cmd_universe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    st = universe_stats()
+    msg = (
+        "📦 <b>UNIVERSE CHECK</b>\n"
+        f"Raw entries: <b>{st['count_raw']}</b>\n"
+        f"Unique tickers: <b>{st['count_unique']}</b>\n"
+        f"Bad suffix (ilk 10): <code>{', '.join(st['bad_suffix'])}</code>\n\n"
+        f"Head: <code>{', '.join(st['head'])}</code>\n"
+        f"Tail: <code>{', '.join(st['tail'])}</code>\n"
+    )
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
 
 def fmt_price(x: float) -> str:
     return f"{x:.2f}" if x == x else "n/a"
@@ -3048,6 +3088,7 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
+    app.add_handler(CommandHandler("universe", cmd_universe))
     
     app.add_error_handler(on_error)
 
