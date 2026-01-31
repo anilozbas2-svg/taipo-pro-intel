@@ -1930,6 +1930,24 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     cand_rows = build_candidate_rows(rows, tom_rows)
     save_tomorrow_snapshot(tom_rows, cand_rows, xu_change)
 
+    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz
+    try:
+        global TOMORROW_CHAINS
+        TOMORROW_CHAINS.clear()
+
+        for r in tom_rows:
+            TOMORROW_CHAINS.append(r)
+
+        logger.info(
+            "CMD_TOMORROW | TOMORROW_CHAINS populated: %d chain",
+            len(TOMORROW_CHAINS),
+        )
+
+    except Exception as e:
+        logger.warning(
+            "CMD_TOMORROW | Failed to populate TOMORROW_CHAINS: %s",
+            e,
+        )
 
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
     try:
