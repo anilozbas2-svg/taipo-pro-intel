@@ -2435,7 +2435,17 @@ async def job_momo_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("MOMO_SCAN error: %s", e)
 
-async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
+async def job_alarm_scan(
+    context: ContextTypes.DEFAULT_TYPE,
+    force: bool = False
+) -> None:
+
+    logger.info(
+        "job_alarm_scan tick | force=%s | ALARM_ENABLED=%s | CHAT_ID=%s",
+        force,
+        ALARM_ENABLED,
+        ALARM_CHAT_ID,
+    )
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
     if (not force) and (not within_alarm_window(now_tr())):
