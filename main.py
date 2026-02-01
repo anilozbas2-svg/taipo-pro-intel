@@ -37,6 +37,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("TAIPO_PRO_INTEL")
 
+# ===============================
+# Runtime caches (RAM)
+# ===============================
+
+# Tomorrow candidate cache
+TOMORROW_CHAINS = {}           # { trading_day_key: [rows...] }
+TOMORROW_LAST_BUILD_TS = 0.0   # unix ts
+
+# MOMO cache (intraday momentum memory)
+MOMO_CACHE = {}                # { ticker: {price, ts, score, ...} }
+MOMO_LAST_SCAN_TS = 0.0
+
 BOT_VERSION = os.getenv(
     "BOT_VERSION",
     "v1.7.0-premium-yahoo-bootstrap-tradingdaykey-torpil-faz2-whale-stable-rejim"
@@ -76,10 +88,6 @@ MOMO_CACHE = {}
 TOMORROW_FOLLOW_ENABLED = int(os.getenv("TOMORROW_FOLLOW_ENABLED", "1")) == 1
 TOMORROW_FOLLOW_INTERVAL_MIN = int(os.getenv("TOMORROW_FOLLOW_INTERVAL_MIN", "60"))
 
-# ===========================
-# Tomorrow chain RAM cache
-# ===========================
-TOMORROW_CHAINS: dict = {}
 
 TOMORROW_FOLLOW_START_HOUR = int(os.getenv("TOMORROW_FOLLOW_START_HOUR", "10"))
 TOMORROW_FOLLOW_START_MIN = int(os.getenv("TOMORROW_FOLLOW_START_MIN", "30"))
