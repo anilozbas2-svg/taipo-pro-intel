@@ -58,6 +58,12 @@ ALARM_START_MIN = int(os.getenv("ALARM_START_MIN", "0"))
 ALARM_END_HOUR = int(os.getenv("ALARM_END_HOUR", "17"))
 ALARM_END_MIN = int(os.getenv("ALARM_END_MIN", "30"))
 
+# ------------------------
+# MOMO config
+# ------------------------
+MOMO_ENABLED = os.getenv("MOMO_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
+MOMO_INTERVAL_MIN = int(os.getenv("MOMO_INTERVAL_MIN", "10"))
+
 # EOD / Tomorrow
 EOD_HOUR = int(os.getenv("EOD_HOUR", "17"))
 EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
@@ -2413,6 +2419,22 @@ async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
             parse_mode=ParseMode.HTML,
         )
+
+if MOMO_ENABLED and ALARM_CHAT_ID:
+    first_m = next_aligned_run(MOMO_INTERVAL_MIN)
+    jq.run_repeating(
+        job_momo_scan,
+        interval=MOMO_INTERVAL_MIN * 60,
+        first=first_m,
+        name="momo_scan_repeating",
+    )
+    logger.info(
+        "MOMO scan scheduled every %d min. First=%s",
+        MOMO_INTERVAL_MIN,
+        first_m.isoformat(),
+    )
+else:
+    logger.info("MOMO kapali veya ALARM_CHAT_ID yok -> momo calismayacak.")
 
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
