@@ -63,6 +63,13 @@ EOD_HOUR = int(os.getenv("EOD_HOUR", "17"))
 EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
 TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))
 
+# ===============================
+# Runtime caches (in-memory)
+# ===============================
+
+TOMORROW_CHAINS = {}
+MOMO_CACHE = {}
+
 # =========================================================
 # Tomorrow Follow (2-day chain tracking)
 # =========================================================
@@ -2450,6 +2457,13 @@ async def job_alarm_scan(
         return
     if (not force) and (not within_alarm_window(now_tr())):
         return
+    # MOMO snapshot (ALARM çalışırken MOMO cache var mı?)
+    try:
+        momo_count = len(MOMO_CACHE) if isinstance(MOMO_CACHE, dict) else -1
+    except Exception:
+        momo_count = -1
+
+    logger.info("job_alarm_scan | MOMO_CACHE count=%s", momo_count)
 
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
