@@ -329,6 +329,27 @@ def parse_hhmm(s: str, default_h: int, default_m: int) -> tuple[int, int]:
     except Exception:
         return default_h, default_m
 
+def get_universe_tickers() -> list[str]:
+    s = (os.getenv("UNIVERSE_TICKERS") or "").strip()
+    if not s:
+        s = (os.getenv("BIST200_TICKERS") or "").strip()
+    arr = []
+    for x in s.split(","):
+        t = x.strip().upper()
+        if not t:
+            continue
+        if not t.endswith(".IS"):
+            t = t + ".IS"
+        arr.append(t)
+    # uniq
+    seen = set()
+    out = []
+    for t in arr:
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
 
 def within_altin_follow_window(now: datetime) -> bool:
     start_s = os.getenv("ALTIN_FOLLOW_START", "10:30")
@@ -339,6 +360,15 @@ def within_altin_follow_window(now: datetime) -> bool:
     start_t = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
     end_t = now.replace(hour=eh, minute=em, second=0, microsecond=0)
 
+    return start_t <= now <= end_t
+
+def within_momo_window(now: datetime) -> bool:
+    start_s = os.getenv("MOMO_START", "10:00")
+    end_s = os.getenv("MOMO_END", "18:10")
+    sh, sm = parse_hhmm(start_s, 10, 0)
+    eh, em = parse_hhmm(end_s, 18, 10)
+    start_t = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+    end_t = now.replace(hour=eh, minute=em, second=0, microsecond=0)
     return start_t <= now <= end_t
 
 # =========================
@@ -3018,7 +3048,25 @@ def schedule_jobs(app: Application) -> None:
         )
     else:
         logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
+    
+    # 🚀 MOMO scan (uçan-kaçan sessiz tarama)
+if int(os.getenv("MOMO_ENABLED", "0")) == 1 and ALARM_CHAT_ID:
+    interval_min = int(os.getenv("MOMO_INTERVAL_MIN", "5"))
+    first_at = next_aligned_run(interval_min)
 
+    jq.run_repeating(
+        job_momo_scan,
+        interval=interval_min * 60,
+        first=first_at,
+        name="momo_scan_repeating",
+    )
+
+    logger.info(
+        "MOMO scan scheduled every %d min. First=%s",
+        interval_min,
+        first_at.isoformat(),
+    )
+    
     # ✅ ALTIN live follow (Tomorrow ALTIN listesi canlı takip)
     if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip().lower() not in ("0", "false") and ALARM_CHAT_ID:
         interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
