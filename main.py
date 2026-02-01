@@ -3011,7 +3011,7 @@ def schedule_jobs(app: Application) -> None:
         first_at = next_aligned_run(interval_min)
 
         jq.run_repeating(
-            job_momo_scan,
+            job_momo_follow,
             interval=interval_min * 60,
             first=first_at,
             name="momo_scan_repeating",
