@@ -3004,6 +3004,24 @@ def schedule_jobs(app: Application) -> None:
     if jq is None:
         logger.warning("JobQueue yok → otomatik alarm/tomorrow/whale ÇALIŞMAZ. Komutlar çalışır.")
         return
+    
+    # 🚀 MOMO scan (uçan-kaçan sessiz tarama)
+    if int(os.getenv("MOMO_ENABLED", "0")) == 1 and ALARM_CHAT_ID:
+        interval_min = int(os.getenv("MOMO_INTERVAL_MIN", "5"))
+        first_at = next_aligned_run(interval_min)
+
+        jq.run_repeating(
+            job_momo_scan,
+            interval=interval_min * 60,
+            first=first_at,
+            name="momo_scan_repeating",
+        )
+
+        logger.info(
+            "MOMO scan scheduled every %d min. First=%s",
+            interval_min,
+            first_at.isoformat(),
+        )
 
     if ALARM_ENABLED and ALARM_CHAT_ID:
         first = next_aligned_run(ALARM_INTERVAL_MIN)
@@ -3049,24 +3067,7 @@ def schedule_jobs(app: Application) -> None:
     else:
         logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
     
-    # 🚀 MOMO scan (uçan-kaçan sessiz tarama)
-if int(os.getenv("MOMO_ENABLED", "0")) == 1 and ALARM_CHAT_ID:
-    interval_min = int(os.getenv("MOMO_INTERVAL_MIN", "5"))
-    first_at = next_aligned_run(interval_min)
 
-    jq.run_repeating(
-        job_momo_scan,
-        interval=interval_min * 60,
-        first=first_at,
-        name="momo_scan_repeating",
-    )
-
-    logger.info(
-        "MOMO scan scheduled every %d min. First=%s",
-        interval_min,
-        first_at.isoformat(),
-    )
-    
     # ✅ ALTIN live follow (Tomorrow ALTIN listesi canlı takip)
     if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip().lower() not in ("0", "false") and ALARM_CHAT_ID:
         interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
