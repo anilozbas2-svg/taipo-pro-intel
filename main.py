@@ -2431,6 +2431,22 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         logger.exception("Alarm job error: %s", e)
         return
 
+async def job_momo_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        now = datetime.now(TZ)
+
+        sh = int(os.getenv("MOMO_START_HOUR", "10"))
+        sm = int(os.getenv("MOMO_START_MINUTE", "0"))
+        eh = int(os.getenv("MOMO_END_HOUR", "18"))
+        em = int(os.getenv("MOMO_END_MINUTE", "0"))
+
+        if (now.hour, now.minute) < (sh, sm) or (now.hour, now.minute) > (eh, em):
+            return
+
+        logger.info("MOMO_SCAN tick: %s", now.isoformat())
+
+    except Exception as e:
+        logger.exception("MOMO_SCAN error: %s", e)
 
 async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
