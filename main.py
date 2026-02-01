@@ -2349,7 +2349,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         return
 
     try:
-        # --- XU100 ---
+        # XU100
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
@@ -2383,12 +2383,9 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         if w_rows:
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
 
-        # ✅ Tomorrow ALTIN call performs bloğu (Alarm'a ek)
-        try:
-            tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
-        except Exception as e:
-            logger.exception("Tomorrow perf section hata: %s", e)
-            tomorrow_perf_section = ""
+        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
+        # build_tomorrow_altin_perf_section async ise await kalacak:
+        tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
 
         # --- Alarm mesajını üret ---
         text = build_alarm_message(
@@ -2859,9 +2856,12 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
     if jq is None:
-        logger.warning("JobQueue yok → otomatik alarm/tomorrow/whale ÇALIŞMAZ. Komutlar çalışır.")
+        logger.warning("JobQueue yok -> otomatik alarm/tomorrow/whale/momo CALISMAZ. Komutlar calisir.")
         return
 
+    # ---------------------------
+    # ALARM scan repeating + Tomorrow daily
+    # ---------------------------
     if ALARM_ENABLED and ALARM_CHAT_ID:
         first = next_aligned_run(ALARM_INTERVAL_MIN)
         jq.run_repeating(
@@ -2888,8 +2888,11 @@ def schedule_jobs(app: Application) -> None:
             TOMORROW_DELAY_MIN,
         )
     else:
-        logger.info("ALARM kapalı veya ALARM_CHAT_ID yok → otomatik alarm/tomorrow gönderilmeyecek.")
+        logger.info("ALARM kapali veya ALARM_CHAT_ID yok -> otomatik alarm/tomorrow gonderilmeyecek.")
 
+    # ---------------------------
+    # WHALE follow repeating
+    # ---------------------------
     if WHALE_ENABLED and ALARM_CHAT_ID:
         first_w = next_aligned_run(WHALE_INTERVAL_MIN)
         jq.run_repeating(
@@ -2904,27 +2907,31 @@ def schedule_jobs(app: Application) -> None:
             first_w.isoformat(),
         )
     else:
-        logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
+        logger.info("WHALE kapali veya ALARM_CHAT_ID yok -> whale gonderilmeyecek.")
 
-    # ✅ ALTIN live follow (Tomorrow ALTIN listesi canlı takip)
+    # ---------------------------
+    # ALTIN live follow repeating
+    # ---------------------------
     if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip().lower() not in ("0", "false") and ALARM_CHAT_ID:
         interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
         first_af = next_aligned_run(interval_min)
-
         jq.run_repeating(
             job_altin_live_follow,
             interval=interval_min * 60,
             first=first_af,
             name="altin_live_follow_repeating",
         )
-
         logger.info(
             "ALTIN live follow scheduled every %d min. First=%s",
             interval_min,
             first_af.isoformat(),
         )
-        
-    # ✅ Tomorrow follow (chain tracking)
+    else:
+        logger.info("ALTIN live follow kapali veya ALARM_CHAT_ID yok -> altin live follow calismayacak.")
+
+    # ---------------------------
+    # Tomorrow follow (chain tracking)
+    # ---------------------------
     if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID:
         first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
         jq.run_repeating(
@@ -2938,6 +2945,27 @@ def schedule_jobs(app: Application) -> None:
             TOMORROW_FOLLOW_INTERVAL_MIN,
             first_tf.isoformat(),
         )
+    else:
+        logger.info("Tomorrow follow kapali veya ALARM_CHAT_ID yok -> tomorrow follow calismayacak.")
+
+    # ---------------------------
+    # MOMO scan repeating
+    # ---------------------------
+    if MOMO_ENABLED and ALARM_CHAT_ID:
+        first_m = next_aligned_run(MOMO_INTERVAL_MIN)
+        jq.run_repeating(
+            job_momo_scan,
+            interval=MOMO_INTERVAL_MIN * 60,
+            first=first_m,
+            name="momo_scan_repeating",
+        )
+        logger.info(
+            "MOMO scan scheduled every %d min. First=%s",
+            MOMO_INTERVAL_MIN,
+            first_m.isoformat(),
+        )
+    else:
+        logger.info("MOMO kapali veya ALARM_CHAT_ID yok -> momo calismayacak.")
 
 # =========================================================
 # Global error handler
