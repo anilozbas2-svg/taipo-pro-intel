@@ -2361,6 +2361,53 @@ async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Scheduled jobs
 # =========================================================
 
+        
+
+
+async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
+        return
+    if (not force) and (not within_alarm_window(now_tr())):
+        return
+
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return
+
+    try:
+        # XU100
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+
+        global LAST_REGIME
+        LAST_REGIME = reg
+
+        if REJIM_GATE_ALARM and reg.get("block"):
+            return
+
+        # --- Ana liste (BIST200) ---
+        all_rows = await build_rows_from_is_list(bist200_list, xu_change)
+        update_history_from_rows(all_rows)
+        min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
+        thresh_s = format_threshold(min_vol)
+
+        alarm_rows = filter_new_alarms(all_rows)
+        if not alarm_rows:
+            return
+
+        ts_now = time.time()
+        for r in alarm_rows:
+            mark_alarm_sent((r.get("ticker") or "").strip(), ts_now)
+        save_last_alarm_ts()
+
+        # --- Watchlist ---
+        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
+        watch = (watch or [])[:WATCHLIST_MAX]
+        w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
+        if w_rows:
+            _apply_signals_with_threshold(w_rows, xu_change, min_vol)
+
         # =========================================================
         # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek) + EMOJI
         # =========================================================
@@ -2457,51 +2504,6 @@ async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("Alarm job error: %s", e)
         return
-
-
-async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
-        return
-    if (not force) and (not within_alarm_window(now_tr())):
-        return
-
-    bist200_list = env_csv("BIST200_TICKERS")
-    if not bist200_list:
-        return
-
-    try:
-        # XU100
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
-        global LAST_REGIME
-        LAST_REGIME = reg
-
-        if REJIM_GATE_ALARM and reg.get("block"):
-            return
-
-        # --- Ana liste (BIST200) ---
-        all_rows = await build_rows_from_is_list(bist200_list, xu_change)
-        update_history_from_rows(all_rows)
-        min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
-        thresh_s = format_threshold(min_vol)
-
-        alarm_rows = filter_new_alarms(all_rows)
-        if not alarm_rows:
-            return
-
-        ts_now = time.time()
-        for r in alarm_rows:
-            mark_alarm_sent((r.get("ticker") or "").strip(), ts_now)
-        save_last_alarm_ts()
-
-        # --- Watchlist ---
-        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
-        watch = (watch or [])[:WATCHLIST_MAX]
-        w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
-        if w_rows:
-            _apply_signals_with_threshold(w_rows, xu_change, min_vol)
 
         # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
         tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
