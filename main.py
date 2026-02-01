@@ -2330,147 +2330,6 @@ async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # =========================================================
 # Scheduled jobs
 # =========================================================
-async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
-        return
-    if (not force) and (not within_alarm_window(now_tr())):
-        return
-
-    bist200_list = env_csv("BIST200_TICKERS")
-    if not bist200_list:
-        return
-
-    try:
-        # XU100
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
-        global LAST_REGIME
-        LAST_REGIME = reg
-
-        if REJIM_GATE_ALARM and reg.get("block"):
-            return
-
-        # --- Ana liste (BIST200) ---
-        all_rows = await build_rows_from_is_list(bist200_list, xu_change)
-        update_history_from_rows(all_rows)
-        min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
-        thresh_s = format_threshold(min_vol)
-
-        alarm_rows = filter_new_alarms(all_rows)
-        if not alarm_rows:
-            return
-
-        ts_now = time.time()
-        for r in alarm_rows:
-            mark_alarm_sent((r.get("ticker") or "").strip(), ts_now)
-        save_last_alarm_ts()
-
-        # --- Watchlist ---
-        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
-        watch = (watch or [])[:WATCHLIST_MAX]
-        w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
-        if w_rows:
-            _apply_signals_with_threshold(w_rows, xu_change, min_vol)
-
-        # =========================================================
-        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek) + EMOJI
-        # =========================================================
-        tomorrow_perf_section = ""
-        try:
-            all_map = {
-                (r.get("ticker") or "").strip(): r
-                for r in (all_rows or [])
-                if (r.get("ticker") or "").strip()
-            }
-
-            if TOMORROW_CHAINS:
-                active_key = today_key_tradingday()
-                if active_key not in TOMORROW_CHAINS:
-                    active_key = max(
-                        TOMORROW_CHAINS.keys(),
-                        key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
-                    )
-                chain = TOMORROW_CHAINS.get(active_key, {}) or {}
-            else:
-                chain = {}
-
-            altin_tickers = []
-            t_rows = chain.get("rows", []) or []
-            for rr in t_rows:
-                t = (rr.get("ticker") or rr.get("symbol") or "").strip()
-                if not t:
-                    continue
-                kind = (rr.get("kind") or rr.get("list") or rr.get("bucket") or "").strip().upper()
-                if "ALTIN" in kind:
-                    altin_tickers.append(t)
-
-            ref_close_map = chain.get("ref_close", {}) or {}
-            if not altin_tickers:
-                altin_tickers = list(ref_close_map.keys())[:6]
-
-            perf_lines = []
-            for t in altin_tickers[:6]:
-                ref_close = safe_float(ref_close_map.get(t))
-                now_row = all_map.get(t) or {}
-                now_close = safe_float(now_row.get("close"))
-                dd = pct_change(now_close, ref_close)
-
-                if dd == dd:
-                    if dd > 0:
-                        mark = "🟢"
-                    elif dd < 0:
-                        mark = "🔴"
-                    else:
-                        mark = "⚪"
-                    dd_s = f"{mark} {dd:+.2f}%"
-                else:
-                    dd_s = "⚪ n/a"
-
-                now_s = f"{now_close:.2f}" if now_close == now_close else "n/a"
-                ref_s = f"{ref_close:.2f}" if ref_close == ref_close else "n/a"
-
-                perf_lines.append((t, dd_s, now_s, ref_s))
-
-            if perf_lines:
-                header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
-                lines = []
-                lines.append("HIS   Δ%          NOW      REF")
-                lines.append("-------------------------------")
-                for (t, dd_s, now_s, ref_s) in perf_lines:
-                    lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
-                tomorrow_perf_section = header + "<pre>" + "\n".join(lines) + "</pre>"
-
-        except Exception as e:
-            logger.exception("ALARM -> Tomorrow performans ekleme hatası: %s", e)
-            tomorrow_perf_section = ""
-
-        # --- Alarm mesajını üret ---
-        text = build_alarm_message(
-            alarm_rows=alarm_rows,
-            watch_rows=w_rows,
-            xu_close=xu_close,
-            xu_change=xu_change,
-            thresh_s=thresh_s,
-            top_n=VOLUME_TOP_N,
-            reg=reg,
-        )
-
-        if tomorrow_perf_section:
-            text = text + tomorrow_perf_section
-
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=text,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-
-    except Exception as e:
-        logger.exception("Alarm job error: %s", e)
-        return
-
 
 async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
@@ -2517,7 +2376,8 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
 
         # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
-        tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
+        tomorrow_perf_section =
+        build_tomorrow_altin_perf_section(all_rows)
 
         # --- Alarm mesajını üret ---
         text = build_alarm_message(
