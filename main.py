@@ -2506,7 +2506,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         return
 
         # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
-        tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
+        tomorrow_perf_section = build_tomorrow_altin_perf_section(all_rows)
 
         # --- Alarm mesajını üret ---
         text = build_alarm_message(
