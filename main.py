@@ -2932,21 +2932,27 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
     if jq is None:
-        logger.warning("JobQueue yok → otomatik alarm/tomorrow/whale ÇALIŞMAZ. Komutlar çalışır.")
+        logger.warning(
+            "JobQueue yok -> otomatik alarm/tomorrow/whale/altin/momo CALISMAZ. Komutlar calisir."
+        )
         return
 
+    # -------------------------
+    # ALARM scan repeating + Tomorrow daily
+    # -------------------------
     if ALARM_ENABLED and ALARM_CHAT_ID:
-        first = next_aligned_run(ALARM_INTERVAL_MIN)
+        first_alarm = next_aligned_run(ALARM_INTERVAL_MIN)
+
         jq.run_repeating(
             job_alarm_scan,
             interval=ALARM_INTERVAL_MIN * 60,
-            first=first,
+            first=first_alarm,
             name="alarm_scan_repeating",
         )
         logger.info(
             "Alarm scan scheduled every %d min. First=%s",
             ALARM_INTERVAL_MIN,
-            first.isoformat(),
+            first_alarm.isoformat(),
         )
 
         jq.run_daily(
@@ -2955,51 +2961,66 @@ def schedule_jobs(app: Application) -> None:
             name="tomorrow_daily_at_eod_time",
         )
         logger.info(
-            "Tomorrow scheduled daily at %02d:%02d (+%dmin delay)",
+            "Tomorrow scheduled daily at %02d:%02d",
             EOD_HOUR,
             EOD_MINUTE,
-            TOMORROW_DELAY_MIN,
         )
     else:
-        logger.info("ALARM kapalı veya ALARM_CHAT_ID yok → otomatik alarm/tomorrow gönderilmeyecek.")
+        logger.info(
+            "ALARM kapali veya ALARM_CHAT_ID yok -> otomatik alarm/tomorrow gonderilmeyecek."
+        )
 
+    # -------------------------
+    # WHALE follow repeating
+    # -------------------------
     if WHALE_ENABLED and ALARM_CHAT_ID:
-        first_w = next_aligned_run(WHALE_INTERVAL_MIN)
+        first_whale = next_aligned_run(WHALE_INTERVAL_MIN)
+
         jq.run_repeating(
             job_whale_follow,
             interval=WHALE_INTERVAL_MIN * 60,
-            first=first_w,
+            first=first_whale,
             name="whale_follow_repeating",
         )
         logger.info(
             "Whale follow scheduled every %d min. First=%s",
             WHALE_INTERVAL_MIN,
-            first_w.isoformat(),
+            first_whale.isoformat(),
         )
     else:
-        logger.info("WHALE kapalı veya ALARM_CHAT_ID yok → whale gönderilmeyecek.")
+        logger.info("WHALE kapali veya ALARM_CHAT_ID yok -> whale gonderilmeyecek.")
 
-    # ✅ ALTIN live follow (Tomorrow ALTIN listesi canlı takip)
-    if os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip().lower() not in ("0", "false") and ALARM_CHAT_ID:
+    # -------------------------
+    # ALTIN live follow repeating
+    # -------------------------
+    altin_follow_enabled = os.getenv("ALTIN_FOLLOW_ENABLED", "1").strip().lower() not in (
+        "0",
+        "false",
+    )
+    if altin_follow_enabled and ALARM_CHAT_ID:
         interval_min = int(os.getenv("ALTIN_FOLLOW_INTERVAL_MIN", "15"))
-        first_af = next_aligned_run(interval_min)
+        first_altin = next_aligned_run(interval_min)
 
         jq.run_repeating(
             job_altin_live_follow,
             interval=interval_min * 60,
-            first=first_af,
+            first=first_altin,
             name="altin_live_follow_repeating",
         )
-
         logger.info(
             "ALTIN live follow scheduled every %d min. First=%s",
             interval_min,
-            first_af.isoformat(),
+            first_altin.isoformat(),
         )
-        
-    # ✅ Tomorrow follow (chain tracking)
+    else:
+        logger.info("ALTIN live follow kapali veya ALARM_CHAT_ID yok -> calismayacak.")
+
+    # -------------------------
+    # Tomorrow follow (chain tracking) repeating
+    # -------------------------
     if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID:
         first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
+
         jq.run_repeating(
             job_tomorrow_follow,
             interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
@@ -3011,6 +3032,33 @@ def schedule_jobs(app: Application) -> None:
             TOMORROW_FOLLOW_INTERVAL_MIN,
             first_tf.isoformat(),
         )
+    else:
+        logger.info("Tomorrow follow kapali veya ALARM_CHAT_ID yok -> calismayacak.")
+
+    # -------------------------
+    # MOMO scan repeating (opsiyonel)
+    # Not: MOMO_ENABLED ve MOMO_INTERVAL_MIN projenizde varsa acin.
+    # -------------------------
+    try:
+        if MOMO_ENABLED and ALARM_CHAT_ID:
+            first_m = next_aligned_run(MOMO_INTERVAL_MIN)
+
+            jq.run_repeating(
+                job_momo_scan,
+                interval=MOMO_INTERVAL_MIN * 60,
+                first=first_m,
+                name="momo_scan_repeating",
+            )
+            logger.info(
+                "MOMO scan scheduled every %d min. First=%s",
+                MOMO_INTERVAL_MIN,
+                first_m.isoformat(),
+            )
+        else:
+            logger.info("MOMO kapali veya ALARM_CHAT_ID yok -> momo calismayacak.")
+    except NameError:
+        # MOMO_* degiskenleri projede yoksa patlamasin diye
+        logger.info("MOMO degiskenleri tanimli degil -> momo schedule atlandi.")
 
 # =========================================================
 # Global error handler
