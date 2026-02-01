@@ -2340,6 +2340,7 @@ async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
+
     if (not force) and (not within_alarm_window(now_tr())):
         return
 
@@ -2348,7 +2349,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         return
 
     try:
-        # XU100
+        # --- XU100 ---
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
@@ -2362,6 +2363,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         # --- Ana liste (BIST200) ---
         all_rows = await build_rows_from_is_list(bist200_list, xu_change)
         update_history_from_rows(all_rows)
+
         min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
 
@@ -2381,9 +2383,12 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         if w_rows:
             _apply_signals_with_threshold(w_rows, xu_change, min_vol)
 
-        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
-        tomorrow_perf_section =
-        build_tomorrow_altin_perf_section(all_rows)
+        # ✅ Tomorrow ALTIN call performs bloğu (Alarm'a ek)
+        try:
+            tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
+        except Exception as e:
+            logger.exception("Tomorrow perf section hata: %s", e)
+            tomorrow_perf_section = ""
 
         # --- Alarm mesajını üret ---
         text = build_alarm_message(
