@@ -2307,6 +2307,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+        await maybe_send_rejim_transition(context, reg)
 
         global LAST_REGIME
         LAST_REGIME = reg
@@ -3107,6 +3108,47 @@ def schedule_jobs(app: Application) -> None:
     except NameError:
         # MOMO_* degiskenleri projede yoksa patlamasin diye
         logger.info("MOMO degiskenleri tanimli degil -> momo schedule atlandi.")
+        
+# =============================
+# REJIM TRANSITION (R1 → R2 → R3 mesaj)
+# =============================
+
+LAST_REJIM_NAME = None
+LAST_REJIM_TS = 0
+
+async def maybe_send_rejim_transition(context, reg: dict):
+    global LAST_REJIM_NAME, LAST_REJIM_TS
+
+    if not reg or not ALARM_CHAT_ID:
+        return
+
+    name = reg.get("name")
+    if not name:
+        return
+
+    now = time.time()
+
+    # aynı rejim tekrar spam olmasın (5 dk)
+    if name == LAST_REJIM_NAME and (now - LAST_REJIM_TS) < 300:
+        return
+
+    if name != LAST_REJIM_NAME:
+        msg = (
+            f"🚦 <b>REJİM DEĞİŞTİ</b>\n\n"
+            f"{format_regime_line(reg)}\n\n"
+            f"⏱ {datetime.now().strftime('%H:%M')}"
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=ALARM_CHAT_ID,
+                text=msg,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error("Rejim transition mesaj hatası: %s", e)
+
+        LAST_REJIM_NAME = name
+        LAST_REJIM_TS = now
 
 # =========================================================
 # Global error handler
