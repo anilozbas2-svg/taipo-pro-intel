@@ -1877,7 +1877,7 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     f"• 🥇 <b>ALTIN</b>\n"
     f"  Band ≥ <b>%{TOMORROW_MAX_BAND:.0f}</b>\n"
     f"  VolRatio ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b>\n"
-    f"  Max: <b>{TOMORROW_MAX_PICK}</b>\n"
+    f"  Max: <b>{TOMORROW_MAX_BAND}</b>\n"
     f"\n"
     f"• 🧪 <b>ADAY</b>\n"
     f"  Band ≥ <b>%{CANDIDATE_MAX_BAND:.0f}</b>\n"
