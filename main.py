@@ -3187,6 +3187,7 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
+    app.add_handler(MessageHandler(filters.COMMAND, log_any_command), group=-1)
     
     app.add_error_handler(on_error)
 
