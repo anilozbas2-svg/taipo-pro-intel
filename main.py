@@ -3049,27 +3049,40 @@ def schedule_jobs(app: Application) -> None:
         )
     else:
         logger.info("ALTIN live follow kapali veya ALARM_CHAT_ID yok -> calismayacak.")
+    
+    # ----------------------------
+    # Tomorrow follow / flow (chain tracking) repeating
+    # ----------------------------
 
-    # -------------------------
-    # Tomorrow follow (chain tracking) repeating
-    # -------------------------
     if TOMORROW_FOLLOW_ENABLED and ALARM_CHAT_ID:
         first_tf = next_aligned_run(TOMORROW_FOLLOW_INTERVAL_MIN)
 
-        jq.run_repeating(
-            job_tomorrow_follow,
-            interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
-            first=first_tf,
-            name="tomorrow_follow_repeating",
-        )
-        logger.info(
-            "Tomorrow follow scheduled every %d min. First=%s",
-            TOMORROW_FOLLOW_INTERVAL_MIN,
-            first_tf.isoformat(),
-        )
+        job_fn = None
+        if "job_tomorrow_follow" in globals():
+            job_fn = globals()["job_tomorrow_follow"]
+        elif "job_tomorrow_flow" in globals():
+            job_fn = globals()["job_tomorrow_flow"]
+
+        if job_fn is None:
+            logger.error(
+                "Tomorrow follow/flow job missing: define job_tomorrow_follow or job_tomorrow_flow"
+            )
+        else:
+            jq.run_repeating(
+                job_fn,
+                interval=TOMORROW_FOLLOW_INTERVAL_MIN * 60,
+                first=first_tf,
+                name="tomorrow_follow_repeating",
+            )
+            logger.info(
+                "Tomorrow follow scheduled every %d min. First=%s (job=%s)",
+                TOMORROW_FOLLOW_INTERVAL_MIN,
+                first_tf.isoformat(),
+                getattr(job_fn, "__name__", str(job_fn)),
+            )
     else:
         logger.info("Tomorrow follow kapali veya ALARM_CHAT_ID yok -> calismayacak.")
-
+    
     # -------------------------
     # MOMO scan repeating (opsiyonel)
     # Not: MOMO_ENABLED ve MOMO_INTERVAL_MIN projenizde varsa acin.
