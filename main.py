@@ -3171,6 +3171,8 @@ def main() -> None:
     load_tomorrow_chains()
 
     app = Application.builder().token(token).build()
+    
+    logger.info("CMD logger handler loading...")
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
