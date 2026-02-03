@@ -355,13 +355,20 @@ def _format_prime_message(
     p3: Optional[float],
     p6: Optional[float]
 ) -> str:
+    if phase == "CORE":
+        header = "🔵🐳 <b>CORE PRIME – MOMO BALİNA</b>"
+        mentor = "🧠 <i>Mentor notu:</i> Erken faz. Balina yeni girdi → radar aç."
+    else:
+        header = "🟠⚠️ <b>LATE PRIME – MOMO BALİNA</b>"
+        mentor = "🧠 <i>Mentor notu:</i> Geç faz. Teyit ve takip önemli → dikkatli."
+
     msg = (
-        "🐳🔥 <b>MOMO PRIME BALİNA</b>\n\n"
+        f"{header}\n\n"
         f"<b>HİSSE:</b> {ticker}\n"
         f"<b>İLK SİNYAL:</b> {pct:+.2f}%  <b>({phase})</b>\n"
         f"<b>HACİM:</b> {r20:.2f}x (20g) | {r400:.2f}x (400g)\n"
-        f"<b>DİP-TEPE KONUM:</b> 1A { _fmt_pos(p1) } | 3A { _fmt_pos(p3) } | 6A { _fmt_pos(p6) }\n\n"
-        "🧠 <i>Mentor notu:</i> Erken faz PRIME alarm. Takip modunda.\n"
+        f"<b>DİP-TEPE KONUM:</b> 1A {_fmt_pos(p1)} | 3A {_fmt_pos(p3)} | 6A {_fmt_pos(p6)}\n\n"
+        f"{mentor}\n"
         f"⏱ {datetime.now().strftime('%H:%M')}"
     )
     return msg
