@@ -14,6 +14,14 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
+from momo_prime import (
+    register_momo_prime,
+    job_momo_prime_scan,
+    MOMO_PRIME_ENABLED,
+    MOMO_PRIME_CHAT_ID,
+    MOMO_PRIME_INTERVAL_MIN,
+)
+
 # ==============================
 # Trade Log (Altın Log)
 # ==============================
@@ -640,7 +648,7 @@ def prev_business_day(d: date) -> date:
         if dd.weekday() < 5:
             return dd
 
-def trading_day_for_snapshot(dt: datetime) -> date:
+def trading_day_for_(dt: datetime) -> date:
     if dt.weekday() == 5:  # Sat
         return (dt.date() - timedelta(days=1))
     if dt.weekday() == 6:  # Sun
@@ -650,10 +658,10 @@ def trading_day_for_snapshot(dt: datetime) -> date:
     return dt.date()
 
 def today_key_tradingday() -> str:
-    return trading_day_for_snapshot(now_tr()).strftime("%Y-%m-%d")
+    return trading_day_for_(now_tr()).strftime("%Y-%m-%d")
 
 def yesterday_key_tradingday() -> str:
-    td = trading_day_for_snapshot(now_tr())
+    td = trading_day_for_(now_tr())
     y = prev_business_day(td)
     return y.strftime("%Y-%m-%d")
 
@@ -678,7 +686,7 @@ PRICE_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "price_history.json")
 VOLUME_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "volume_history.json")
 INDEX_HISTORY_FILE = os.path.join(EFFECTIVE_DATA_DIR, "index_history.json")
 LAST_ALARM_FILE = os.path.join(EFFECTIVE_DATA_DIR, "last_alarm_ts.json")
-TOMORROW_SNAPSHOT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "tomorrow_snapshot.json")
+TOMORROW__FILE = os.path.join(EFFECTIVE_DATA_DIR, "tomorrow_.json")
 WHALE_SENT_FILE = os.path.join(EFFECTIVE_DATA_DIR, "whale_sent_day.json")
 TOMORROW_CHAIN_FILE = os.path.join(EFFECTIVE_DATA_DIR, "tomorrow_chains.json")
 
@@ -1593,14 +1601,14 @@ def build_tomorrow_message(
     return head + "\n" + gold_table + "\n\n" + cand_table + "\n" + notes + foot
 
 
-def save_tomorrow_snapshot(
+def save_tomorrow_(
     tom_rows: List[Dict[str, Any]],
     cand_rows: List[Dict[str, Any]],
     xu_change: float,
 ) -> None:
     try:
         day_key = today_key_tradingday()
-        snap = _load_json(TOMORROW_SNAPSHOT_FILE)
+        snap = _load_json(TOMORROW__FILE)
         if not isinstance(snap, dict):
             snap = {}
 
@@ -1627,14 +1635,14 @@ def save_tomorrow_snapshot(
             )
 
         snap[day_key] = items
-        _atomic_write_json(TOMORROW_SNAPSHOT_FILE, snap)
+        _atomic_write_json(TOMORROW__FILE, snap)
 
     except Exception as e:
-        logger.warning("save_tomorrow_snapshot failed: %s", e)
+        logger.warning("save_tomorrow_ failed: %s", e)
 
 
-def load_yesterday_tomorrow_snapshot() -> List[Dict[str, Any]]:
-    snap = _load_json(TOMORROW_SNAPSHOT_FILE)
+def load_yesterday_tomorrow_() -> List[Dict[str, Any]]:
+    snap = _load_json(TOMORROW__FILE)
     if not isinstance(snap, dict):
         return []
     yk = yesterday_key_tradingday()
@@ -2008,7 +2016,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     tom_rows = build_tomorrow_rows(rows)
     cand_rows = build_candidate_rows(rows, tom_rows)
-    save_tomorrow_snapshot(tom_rows, cand_rows, xu_change)
+    save_tomorrow_(tom_rows, cand_rows, xu_change)
     
     # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard)
     try:
@@ -2229,9 +2237,9 @@ async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WHALE_ENABLED:
         await update.message.reply_text("🐋 Whale kapalı (WHALE_ENABLED=0).")
         return
-    y_items = load_yesterday_tomorrow_snapshot()
+    y_items = load_yesterday_tomorrow_()
     if not y_items:
-        await update.message.reply_text("🐋 Dün için ALTIN snapshot yok. Önce /tomorrow çalıştır (EOD’de otomatik de kaydeder).")
+        await update.message.reply_text("🐋 Dün için ALTIN  yok. Önce /tomorrow çalıştır (EOD’de otomatik de kaydeder).")
         return
 
     tickers = [it.get("ticker") for it in y_items if it.get("ticker")]
@@ -2466,7 +2474,7 @@ async def job_alarm_scan(
         return
     if (not force) and (not within_alarm_window(now_tr())):
         return
-    # MOMO snapshot (ALARM çalışırken MOMO cache var mı?)
+    # MOMO  (ALARM çalışırken MOMO cache var mı?)
     try:
         momo_count = len(MOMO_CACHE) if isinstance(MOMO_CACHE, dict) else -1
     except Exception:
@@ -2609,7 +2617,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         tom_rows = build_tomorrow_rows(rows)
         cand_rows = build_candidate_rows(rows, tom_rows)
-        save_tomorrow_snapshot(tom_rows, cand_rows, xu_change)
+        save_tomorrow_(tom_rows, cand_rows, xu_change)
 
         # ==============================
         # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
@@ -2876,7 +2884,7 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
     if whale_already_sent_today():
         return
 
-    y_items = load_yesterday_tomorrow_snapshot()
+    y_items = load_yesterday_tomorrow_()
     if not y_items:
         return
 
@@ -3094,7 +3102,7 @@ def schedule_jobs(app: Application) -> None:
 
             jq.run_repeating(
                 job_momo_scan,
-                interval=MOMO_INTERVAL_MIN * 60,
+                interval=MOMO_INTERVAL_MIN * 3,
                 first=first_m,
                 name="momo_scan_repeating",
             )
@@ -3108,6 +3116,30 @@ def schedule_jobs(app: Application) -> None:
     except NameError:
         # MOMO_* degiskenleri projede yoksa patlamasin diye
         logger.info("MOMO degiskenleri tanimli degil -> momo schedule atlandi.")
+        
+    # ----------------------------
+    # MOMO PRIME BALİNA scan repeating (isolated)
+    # ----------------------------
+    try:
+        if MOMO_PRIME_ENABLED and MOMO_PRIME_CHAT_ID:
+            first_p = next_aligned_run(MOMO_PRIME_INTERVAL_MIN)
+            jq.run_repeating(
+                job_momo_prime_scan,
+                interval=MOMO_PRIME_INTERVAL_MIN * 60,
+                first=first_p,
+                name="momo_prime_scan_repeating",
+            )
+            logger.info(
+                "MOMO PRIME scan scheduled every %d min. First=%s",
+                MOMO_PRIME_INTERVAL_MIN,
+                first_p.isoformat(),
+            )
+        else:
+            logger.info("MOMO PRIME kapali veya MOMO_PRIME_CHAT_ID yok -> prime calismayacak.")
+    except NameError:
+        logger.info("MOMO PRIME degiskenleri tanimli degil -> prime schedule atlandi.")
+    except Exception as e:
+        logger.error("MOMO PRIME schedule error: %s", e)
         
 # =============================
 # REJIM TRANSITION (R1 → R2 → R3 mesaj)
@@ -3207,6 +3239,7 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
+    register_momo_prime(app)
     app.add_handler(
     MessageHandler(filters.COMMAND, log_any_command),
     group=99 
