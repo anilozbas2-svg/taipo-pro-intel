@@ -3155,6 +3155,24 @@ async def maybe_send_rejim_transition(context, reg: dict):
 # =========================================================
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled error: %s", context.error)
+    
+async def log_any_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+
+        text = msg.text or ""
+
+        logger.info(
+            "CMD | chat_id=%s | chat_type=%s | user=%s | text=%s",
+            getattr(chat, "id", None),
+            getattr(chat, "type", None),
+            getattr(user, "username", None),
+            text
+        )
+    except Exception as e:
+        logger.exception("CMD logger failed: %s", e)
 
 
 # =========================================================
