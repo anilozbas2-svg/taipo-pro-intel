@@ -37,6 +37,10 @@ TV_TIMEOUT = int(os.getenv("MOMO_PRIME_TV_TIMEOUT", "12"))
 YAHOO_TIMEOUT = int(os.getenv("MOMO_PRIME_YAHOO_TIMEOUT", "12"))
 YAHOO_SUFFIX = os.getenv("MOMO_PRIME_YAHOO_SUFFIX", ".IS").strip()  # BIST
 
+# Rate-limit protections
+MOMO_PRIME_YAHOO_MAX_PER_SCAN = int(os.getenv("MOMO_PRIME_YAHOO_MAX_PER_SCAN", "3"))
+MOMO_PRIME_YAHOO_BLOCK_SEC = int(os.getenv("MOMO_PRIME_YAHOO_BLOCK_SEC", "900"))  # 15 min
+
 # State files (isolated)
 DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 PRIME_STATE_FILE = os.path.join(DATA_DIR, "momo_prime_state.json")
@@ -45,6 +49,9 @@ PRIME_LAST_ALERT_FILE = os.path.join(DATA_DIR, "momo_prime_last_alert.json")
 # Small caches (RAM)
 _YAHOO_CACHE: Dict[str, Dict[str, Any]] = {}  # {sym: {ts, data}}
 _YAHOO_CACHE_TTL = int(os.getenv("MOMO_PRIME_YAHOO_CACHE_TTL", "1800"))  # 30 min
+
+# Global Yahoo backoff (in-memory)
+YAHOO_BLOCKED_UNTIL_TS = 0.0
 
 
 # ==========================
@@ -107,7 +114,9 @@ def _default_prime_state() -> dict:
             "vol_ratio_min": PRIME_VOL_RATIO_MIN,
             "cooldown_seconds": PRIME_COOLDOWN_SEC,
             "reference_windows_days": [20, 400],
-            "position_windows_days": [30, 90, 180]
+            "position_windows_days": [30, 90, 180],
+            "yahoo_max_per_scan": MOMO_PRIME_YAHOO_MAX_PER_SCAN,
+            "yahoo_block_sec": MOMO_PRIME_YAHOO_BLOCK_SEC
         }
     }
 
@@ -157,7 +166,6 @@ def _pct_position(close: float, low: float, high: float) -> Optional[float]:
 # TradingView scan (fast filter)
 # ==========================
 def _tv_scan_rows() -> List[dict]:
-    # We keep it lightweight: ask for symbol, change, volume
     payload = {
         "filter": [
             {"left": "market_cap_basic", "operation": "nempty"},
@@ -194,7 +202,20 @@ def _tv_scan_rows() -> List[dict]:
 # ==========================
 # Yahoo chart (averages & position)
 # ==========================
+def _yahoo_allowed_now() -> bool:
+    global YAHOO_BLOCKED_UNTIL_TS
+    return time.time() >= YAHOO_BLOCKED_UNTIL_TS
+
+
+def _yahoo_block_now() -> None:
+    global YAHOO_BLOCKED_UNTIL_TS
+    YAHOO_BLOCKED_UNTIL_TS = time.time() + float(MOMO_PRIME_YAHOO_BLOCK_SEC)
+
+
 def _yahoo_chart(symbol: str) -> Optional[dict]:
+    if not _yahoo_allowed_now():
+        return None
+
     now = time.time()
     cached = _YAHOO_CACHE.get(symbol)
     if cached and (now - cached.get("ts", 0)) < _YAHOO_CACHE_TTL:
@@ -209,11 +230,28 @@ def _yahoo_chart(symbol: str) -> Optional[dict]:
     }
     try:
         r = requests.get(url, params=params, timeout=YAHOO_TIMEOUT)
+
+        # Handle 429 explicitly (rate limit)
+        if r.status_code == 429:
+            _yahoo_block_now()
+            logger.error("PRIME Yahoo 429 -> blocked for %ss", MOMO_PRIME_YAHOO_BLOCK_SEC)
+            return None
+
         r.raise_for_status()
         js = r.json() or {}
         _YAHOO_CACHE[symbol] = {"ts": now, "data": js}
         return js
     except Exception as e:
+        # If error looks like 429, also block
+        try:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status == 429:
+                _yahoo_block_now()
+                logger.error("PRIME Yahoo 429 (exception) -> blocked for %ss", MOMO_PRIME_YAHOO_BLOCK_SEC)
+                return None
+        except Exception:
+            pass
+
         logger.error("PRIME Yahoo error %s: %s", symbol, e)
         return None
 
@@ -317,7 +355,6 @@ def _format_prime_message(
     p3: Optional[float],
     p6: Optional[float]
 ) -> str:
-    # No heavy indicators; keep it clean.
     msg = (
         "🐳🔥 <b>MOMO PRIME BALİNA</b>\n\n"
         f"<b>HİSSE:</b> {ticker}\n"
@@ -348,15 +385,12 @@ def _should_alert(
     if not _cooldown_ok(last_ts, now_ts):
         return False
 
-    # Volume condition (>= min on max(20,400))
     if max(r20, r400) < PRIME_VOL_RATIO_MIN:
         return False
 
-    # Same-message guard (same scan duplication)
     if entry.get("last_message_hash") == message_hash:
         return False
 
-    # Pct already checked before, but keep safe:
     if pct < PRIME_PCT_MIN or pct > PRIME_PCT_MAX:
         return False
     if phase not in ("CORE", "LATE"):
@@ -379,7 +413,8 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Komutlar:\n"
             "• /prime status  → PRIME durum\n"
             "• /prime test    → test mesajı\n\n"
-            "Not: PRIME tarama 3 dk; koşullar: %0.30–%0.80 + hacim ≥1.8x (20g/400g) + 4 saat cooldown."
+            "Not: PRIME tarama 3 dk; koşullar: %0.30–%0.80 + hacim ≥1.8x (20g/400g) + 4 saat cooldown.\n"
+            f"Yahoo max/scan: {MOMO_PRIME_YAHOO_MAX_PER_SCAN} | Yahoo block: {int(MOMO_PRIME_YAHOO_BLOCK_SEC / 60)} dk"
         )
         await update.effective_message.reply_text(txt)
         return
@@ -389,6 +424,7 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         la = _load_json(PRIME_LAST_ALERT_FILE, _default_last_alert())
         last_scan = ((st.get("scan") or {}).get("last_scan_utc")) or "n/a"
         n_alerts = len((la.get("last_alert_by_symbol") or {}))
+        blocked_left = max(0, int(YAHOO_BLOCKED_UNTIL_TS - time.time()))
         txt = (
             "🐳🔥 PRIME STATUS\n\n"
             f"enabled: {int(MOMO_PRIME_ENABLED)}\n"
@@ -396,6 +432,9 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"last_scan_utc: {last_scan}\n"
             f"tracked_alerts: {n_alerts}\n"
             f"cooldown(h): {PRIME_COOLDOWN_SEC / 3600:.0f}\n"
+            f"yahoo_allowed: {int(_yahoo_allowed_now())}\n"
+            f"yahoo_block_left_sec: {blocked_left}\n"
+            f"yahoo_max_per_scan: {MOMO_PRIME_YAHOO_MAX_PER_SCAN}\n"
         )
         await update.effective_message.reply_text(txt)
         return
@@ -433,21 +472,19 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     now_ts = time.time()
 
-    # Ensure state files exist
     st = _load_json(PRIME_STATE_FILE, _default_prime_state())
     la = _load_json(PRIME_LAST_ALERT_FILE, _default_last_alert())
-
     last_alert_by_symbol = la.get("last_alert_by_symbol") or {}
 
-    # Fast candidates from TradingView
     rows = _tv_scan_rows()
+    st["scan"]["last_scan_utc"] = _utc_now_iso()
+    _save_json(PRIME_STATE_FILE, st)
+
     if not rows:
-        st["scan"]["last_scan_utc"] = _utc_now_iso()
-        _save_json(PRIME_STATE_FILE, st)
         return
 
-    # Filter by pct band first
-    candidates = []
+    # 1) Pct band + volume existence
+    pre_candidates = []
     for r in rows:
         ticker = (r.get("symbol") or "").strip().upper()
         pct = float(r.get("change_pct") or 0.0)
@@ -459,16 +496,34 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         if vol <= 0:
             continue
 
-        candidates.append((ticker, pct, phase, vol))
+        # 2) Cooldown check BEFORE Yahoo (big savings)
+        entry = last_alert_by_symbol.get(ticker) or {}
+        last_ts = _parse_utc_iso(entry.get("last_alert_utc"))
+        if not _cooldown_ok(last_ts, now_ts):
+            continue
 
-    # Hard cap to avoid burst
-    candidates = candidates[:25]
+        pre_candidates.append((ticker, pct, phase, vol))
+
+    # Keep it tight: top by volume (TV already sorted by volume desc)
+    pre_candidates = pre_candidates[:25]
 
     sent_any = False
+    yahoo_used = 0
 
-    for (ticker, pct, phase, today_vol) in candidates:
+    for (ticker, pct, phase, today_vol) in pre_candidates:
+        if yahoo_used >= MOMO_PRIME_YAHOO_MAX_PER_SCAN:
+            break
+
+        if not _yahoo_allowed_now():
+            break
+
         metrics = _compute_prime_metrics(ticker, today_vol)
+        yahoo_used += 1  # count attempt to protect rate limit
+
         if not metrics:
+            # OPTIONAL FALLBACK (if you want to still alert without Yahoo):
+            # - Remove "continue" and send a simpler message here.
+            # For now we keep strict: no Yahoo => no alert.
             continue
 
         r20 = float(metrics["vol_ratio_20d"])
@@ -495,7 +550,6 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error("PRIME send error: %s", e)
             continue
 
-        # Update last-alert authority
         last_alert_by_symbol[ticker] = {
             "last_alert_utc": _utc_now_iso(),
             "last_alert_pct": pct,
@@ -511,8 +565,7 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     la["last_alert_by_symbol"] = last_alert_by_symbol
     _save_json(PRIME_LAST_ALERT_FILE, la)
 
-    st["scan"]["last_scan_utc"] = _utc_now_iso()
-    _save_json(PRIME_STATE_FILE, st)
-
     if sent_any:
-        logger.info("PRIME: sent alerts")
+        logger.info("PRIME: sent alerts (yahoo_used=%d)", yahoo_used)
+    else:
+        logger.info("PRIME: no alerts (yahoo_used=%d)", yahoo_used)
