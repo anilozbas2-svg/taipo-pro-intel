@@ -22,6 +22,14 @@ from momo_prime import (
     MOMO_PRIME_INTERVAL_MIN,
 )
 
+from momo_flow import (
+    register_momo_flow,
+    job_momo_flow_scan,
+    MOMO_FLOW_ENABLED,
+    MOMO_FLOW_CHAT_ID,
+    MOMO_FLOW_INTERVAL_MIN,
+)
+
 # ==============================
 # Trade Log (Altın Log)
 # ==============================
@@ -3154,6 +3162,34 @@ def schedule_jobs(app: Application) -> None:
     except Exception as e:
         logger.error("MOMO PRIME schedule error: %s", e)
         
+    # ==========================
+    # MOMO FLOW (ROCKET)
+    # ==========================
+    try:
+        if MOMO_FLOW_ENABLED and MOMO_FLOW_CHAT_ID:
+            first_f = next_aligned_run(MOMO_FLOW_INTERVAL_MIN)
+
+            jq.run_repeating(
+                job_momo_flow_scan,
+                interval=MOMO_FLOW_INTERVAL_MIN * 60,
+                first=first_f,
+                name="momo_flow_scan_repeating",
+            )
+
+            logger.info(
+                "FLOW scan scheduled every %d min. First=%s",
+                MOMO_FLOW_INTERVAL_MIN,
+                first_f.isoformat(),
+            )
+        else:
+            logger.info(
+                "FLOW kapali veya MOMO_FLOW_CHAT_ID yok -> flow calismayacak."
+            )
+    except NameError:
+        logger.info(
+            "FLOW degiskenleri tanimli degil -> flow schedule atlandi."
+        )
+        
 # =============================
 # REJIM TRANSITION (R1 → R2 → R3 mesaj)
 # =============================
@@ -3253,6 +3289,7 @@ def main() -> None:
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     register_momo_prime(app)
+    register_momo_flow(app)
     app.add_handler(
     MessageHandler(filters.COMMAND, log_any_command),
     group=99 
