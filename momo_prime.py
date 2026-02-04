@@ -47,7 +47,7 @@ PRIME_STATE_FILE = os.path.join(DATA_DIR, "momo_prime_state.json")
 PRIME_LAST_ALERT_FILE = os.path.join(DATA_DIR, "momo_prime_last_alert.json")
 
 # Small caches (RAM)
-_YAHOO_CACHE: Dict[str, Dict[str, Any]] = {}  # {sym: {ts, data}}
+_YAHOO_CACHE: Dict[str, Dict[str, Any]] = {}
 _YAHOO_CACHE_TTL = int(os.getenv("MOMO_PRIME_YAHOO_CACHE_TTL", "1800"))  # 30 min
 
 # Global Yahoo backoff (in-memory)
@@ -93,12 +93,24 @@ def _parse_utc_iso(s: Optional[str]) -> Optional[float]:
         return None
 
 
+def _safe_float(x: Any) -> Optional[float]:
+    try:
+        if x is None:
+            return None
+        v = float(x)
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+    except Exception:
+        return None
+
+
 # ==========================
 # PRIME state defaults
 # ==========================
 def _default_prime_state() -> dict:
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "system": "momo_prime_balina",
         "telegram": {
             "momo_prime_chat_id": int(MOMO_PRIME_CHAT_ID) if MOMO_PRIME_CHAT_ID else None
@@ -113,7 +125,7 @@ def _default_prime_state() -> dict:
             "pct_max": PRIME_PCT_MAX,
             "vol_ratio_min": PRIME_VOL_RATIO_MIN,
             "cooldown_seconds": PRIME_COOLDOWN_SEC,
-            "reference_windows_days": [20, 400],
+            "reference_windows_days": [10, 20, 400],
             "position_windows_days": [30, 90, 180],
             "yahoo_max_per_scan": MOMO_PRIME_YAHOO_MAX_PER_SCAN,
             "yahoo_block_sec": MOMO_PRIME_YAHOO_BLOCK_SEC
@@ -153,7 +165,7 @@ def _cooldown_ok(last_alert_ts: Optional[float], now_ts: float) -> bool:
 
 def _pct_position(close: float, low: float, high: float) -> Optional[float]:
     try:
-        if any(map(lambda v: v is None or isinstance(v, float) and math.isnan(v), [close, low, high])):
+        if any(map(lambda v: v is None or (isinstance(v, float) and math.isnan(v)), [close, low, high])):
             return None
         if high <= low:
             return None
@@ -164,6 +176,7 @@ def _pct_position(close: float, low: float, high: float) -> Optional[float]:
 
 # ==========================
 # TradingView scan (fast filter)
+# Adds avg_volume_10d_calc => r10 fallback
 # ==========================
 def _tv_scan_rows() -> List[dict]:
     payload = {
@@ -174,7 +187,7 @@ def _tv_scan_rows() -> List[dict]:
         ],
         "options": {"lang": "tr"},
         "symbols": {"query": {"types": []}, "tickers": []},
-        "columns": ["name", "change", "volume", "close"],
+        "columns": ["name", "change", "volume", "close", "average_volume_10d_calc"],
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
         "range": [0, 200]
     }
@@ -182,16 +195,28 @@ def _tv_scan_rows() -> List[dict]:
         r = requests.post(TV_SCAN_URL, json=payload, timeout=TV_TIMEOUT)
         r.raise_for_status()
         data = r.json() or {}
-        out = []
+
+        out: List[dict] = []
         for row in data.get("data", []) or []:
             d = row.get("d") or []
             if len(d) < 4:
                 continue
+
+            sym = str(d[0]).strip().upper()
+            chg = _safe_float(d[1])
+            vol = _safe_float(d[2])
+            cls = _safe_float(d[3])
+            av10 = _safe_float(d[4]) if len(d) >= 5 else None
+
+            if not sym or chg is None or vol is None or cls is None:
+                continue
+
             out.append({
-                "symbol": str(d[0]).strip().upper(),
-                "change_pct": float(d[1]),
-                "volume": float(d[2]),
-                "close": float(d[3])
+                "symbol": sym,
+                "change_pct": chg,
+                "volume": vol,
+                "close": cls,
+                "avg10": av10
             })
         return out
     except Exception as e:
@@ -231,7 +256,6 @@ def _yahoo_chart(symbol: str) -> Optional[dict]:
     try:
         r = requests.get(url, params=params, timeout=YAHOO_TIMEOUT)
 
-        # Handle 429 explicitly (rate limit)
         if r.status_code == 429:
             _yahoo_block_now()
             logger.error("PRIME Yahoo 429 -> blocked for %ss", MOMO_PRIME_YAHOO_BLOCK_SEC)
@@ -242,7 +266,6 @@ def _yahoo_chart(symbol: str) -> Optional[dict]:
         _YAHOO_CACHE[symbol] = {"ts": now, "data": js}
         return js
     except Exception as e:
-        # If error looks like 429, also block
         try:
             status = getattr(getattr(e, "response", None), "status_code", None)
             if status == 429:
@@ -252,7 +275,7 @@ def _yahoo_chart(symbol: str) -> Optional[dict]:
         except Exception:
             pass
 
-        logger.error("PRIME Yahoo error %s: %s", symbol, e)
+        logger.warning("PRIME Yahoo error %s: %s", symbol, e)
         return None
 
 
@@ -327,8 +350,8 @@ def _compute_prime_metrics(ticker: str, today_volume: float) -> Optional[dict]:
     p6 = _pct_position(c6, lo6, hi6)
 
     return {
-        "vol_ratio_20d": r20,
-        "vol_ratio_400d": r400,
+        "vol_ratio_20d": float(r20),
+        "vol_ratio_400d": float(r400),
         "pos_1m": p1,
         "pos_3m": p3,
         "pos_6m": p6
@@ -348,12 +371,13 @@ def _format_prime_message(
     ticker: str,
     pct: float,
     phase: str,
-    today_volume: float,
-    r20: float,
-    r400: float,
+    r10: Optional[float],
+    r20: Optional[float],
+    r400: Optional[float],
     p1: Optional[float],
     p3: Optional[float],
-    p6: Optional[float]
+    p6: Optional[float],
+    yahoo_ok: bool
 ) -> str:
     if phase == "CORE":
         header = "🔵🐳 <b>CORE PRIME – MOMO BALİNA</b>"
@@ -362,28 +386,54 @@ def _format_prime_message(
         header = "🟠⚠️ <b>LATE PRIME – MOMO BALİNA</b>"
         mentor = "🧠 <i>Mentor notu:</i> Geç faz. Teyit ve takip önemli → dikkatli."
 
-    msg = (
-        f"{header}\n\n"
-        f"<b>HİSSE:</b> {ticker}\n"
-        f"<b>İLK SİNYAL:</b> {pct:+.2f}%  <b>({phase})</b>\n"
-        f"<b>HACİM:</b> {r20:.2f}x (20g) | {r400:.2f}x (400g)\n"
-        f"<b>DİP-TEPE KONUM:</b> 1A {_fmt_pos(p1)} | 3A {_fmt_pos(p3)} | 6A {_fmt_pos(p6)}\n\n"
-        f"{mentor}\n"
-        f"⏱ {datetime.now().strftime('%H:%M')}"
-    )
-    return msg
+    if yahoo_ok:
+        yline = ""
+    else:
+        yline = "⚠️ <b>PRIME-LITE:</b> Yahoo teyidi yok (429/erişim/limit). TV avg10 ile gönderildi.\n"
+
+    parts = []
+    parts.append(f"{header}\n\n")
+    parts.append(f"<b>HİSSE:</b> {ticker}\n")
+    parts.append(f"<b>İLK SİNYAL:</b> {pct:+.2f}%  <b>({phase})</b>\n")
+
+    vol_line = "<b>HACİM:</b> "
+    vol_bits = []
+    if r10 is not None:
+        vol_bits.append(f"{r10:.2f}x (10g-TV)")
+    if r20 is not None:
+        vol_bits.append(f"{r20:.2f}x (20g)")
+    if r400 is not None:
+        vol_bits.append(f"{r400:.2f}x (400g)")
+    if not vol_bits:
+        vol_bits.append("n/a")
+    vol_line += " | ".join(vol_bits) + "\n"
+    parts.append(vol_line)
+
+    parts.append(f"{yline}")
+
+    if yahoo_ok:
+        parts.append(f"<b>DİP-TEPE KONUM:</b> 1A {_fmt_pos(p1)} | 3A {_fmt_pos(p3)} | 6A {_fmt_pos(p6)}\n\n")
+    else:
+        parts.append("<b>DİP-TEPE KONUM:</b> n/a (Yahoo yok)\n\n")
+
+    parts.append(f"{mentor}\n")
+    parts.append(f"⏱ {datetime.now().strftime('%H:%M')}")
+
+    return "".join(parts)
 
 
 # ==========================
 # PRIME decision
+# Uses max(r10, r20, r400) for volume rule
 # ==========================
 def _should_alert(
     last_alert_map: dict,
     ticker: str,
     pct: float,
     phase: str,
-    r20: float,
-    r400: float,
+    r10: Optional[float],
+    r20: Optional[float],
+    r400: Optional[float],
     now_ts: float,
     message_hash: str
 ) -> bool:
@@ -392,7 +442,10 @@ def _should_alert(
     if not _cooldown_ok(last_ts, now_ts):
         return False
 
-    if max(r20, r400) < PRIME_VOL_RATIO_MIN:
+    ratios = [v for v in [r10, r20, r400] if isinstance(v, (int, float)) and v is not None]
+    if not ratios:
+        return False
+    if max(ratios) < PRIME_VOL_RATIO_MIN:
         return False
 
     if entry.get("last_message_hash") == message_hash:
@@ -420,7 +473,7 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Komutlar:\n"
             "• /prime status  → PRIME durum\n"
             "• /prime test    → test mesajı\n\n"
-            "Not: PRIME tarama 3 dk; koşullar: %0.30–%0.80 + hacim ≥1.8x (20g/400g) + 4 saat cooldown.\n"
+            "Not: PRIME tarama 3 dk; koşullar: %0.30–%0.80 + hacim ≥1.8x (10g-TV / 20g / 400g) + 4 saat cooldown.\n"
             f"Yahoo max/scan: {MOMO_PRIME_YAHOO_MAX_PER_SCAN} | Yahoo block: {int(MOMO_PRIME_YAHOO_BLOCK_SEC / 60)} dk"
         )
         await update.effective_message.reply_text(txt)
@@ -490,12 +543,12 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not rows:
         return
 
-    # 1) Pct band + volume existence
-    pre_candidates = []
+    pre_candidates: List[Tuple[str, float, str, float, Optional[float]]] = []
     for r in rows:
         ticker = (r.get("symbol") or "").strip().upper()
         pct = float(r.get("change_pct") or 0.0)
         vol = float(r.get("volume") or 0.0)
+        av10 = _safe_float(r.get("avg10"))
 
         phase = _phase_from_pct(pct)
         if not phase:
@@ -503,46 +556,56 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         if vol <= 0:
             continue
 
-        # 2) Cooldown check BEFORE Yahoo (big savings)
         entry = last_alert_by_symbol.get(ticker) or {}
         last_ts = _parse_utc_iso(entry.get("last_alert_utc"))
         if not _cooldown_ok(last_ts, now_ts):
             continue
 
-        pre_candidates.append((ticker, pct, phase, vol))
+        pre_candidates.append((ticker, pct, phase, vol, av10))
 
-    # Keep it tight: top by volume (TV already sorted by volume desc)
     pre_candidates = pre_candidates[:25]
 
     sent_any = False
     yahoo_used = 0
 
-    for (ticker, pct, phase, today_vol) in pre_candidates:
-        if yahoo_used >= MOMO_PRIME_YAHOO_MAX_PER_SCAN:
-            break
+    for (ticker, pct, phase, today_vol, av10) in pre_candidates:
+        r10 = None
+        if av10 is not None and av10 > 0:
+            r10 = today_vol / av10
 
-        if not _yahoo_allowed_now():
-            break
+        yahoo_ok = False
+        r20 = None
+        r400 = None
+        p1 = None
+        p3 = None
+        p6 = None
 
-        metrics = _compute_prime_metrics(ticker, today_vol)
-        yahoo_used += 1  # count attempt to protect rate limit
+        if _yahoo_allowed_now() and yahoo_used < MOMO_PRIME_YAHOO_MAX_PER_SCAN:
+            metrics = _compute_prime_metrics(ticker, today_vol)
+            yahoo_used += 1
+            if metrics:
+                yahoo_ok = True
+                r20 = float(metrics.get("vol_ratio_20d")) if metrics.get("vol_ratio_20d") is not None else None
+                r400 = float(metrics.get("vol_ratio_400d")) if metrics.get("vol_ratio_400d") is not None else None
+                p1 = metrics.get("pos_1m")
+                p3 = metrics.get("pos_3m")
+                p6 = metrics.get("pos_6m")
 
-        if not metrics:
-            # OPTIONAL FALLBACK (if you want to still alert without Yahoo):
-            # - Remove "continue" and send a simpler message here.
-            # For now we keep strict: no Yahoo => no alert.
-            continue
-
-        r20 = float(metrics["vol_ratio_20d"])
-        r400 = float(metrics["vol_ratio_400d"])
-        p1 = metrics.get("pos_1m")
-        p3 = metrics.get("pos_3m")
-        p6 = metrics.get("pos_6m")
-
-        msg = _format_prime_message(ticker, pct, phase, today_vol, r20, r400, p1, p3, p6)
+        msg = _format_prime_message(
+            ticker=ticker,
+            pct=pct,
+            phase=phase,
+            r10=r10,
+            r20=r20,
+            r400=r400,
+            p1=p1,
+            p3=p3,
+            p6=p6,
+            yahoo_ok=yahoo_ok
+        )
         mh = _hash_message(msg)
 
-        if not _should_alert(last_alert_by_symbol, ticker, pct, phase, r20, r400, now_ts, mh):
+        if not _should_alert(last_alert_by_symbol, ticker, pct, phase, r10, r20, r400, now_ts, mh):
             continue
 
         try:
@@ -561,11 +624,13 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
             "last_alert_utc": _utc_now_iso(),
             "last_alert_pct": pct,
             "last_phase": phase,
+            "last_vol_ratio_10d_tv": r10,
             "last_vol_ratio_20d": r20,
             "last_vol_ratio_400d": r400,
             "last_position_1m": p1,
             "last_position_3m": p3,
             "last_position_6m": p6,
+            "yahoo_ok": int(yahoo_ok),
             "last_message_hash": mh
         }
 
@@ -573,6 +638,6 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     _save_json(PRIME_LAST_ALERT_FILE, la)
 
     if sent_any:
-        logger.info("PRIME: sent alerts (yahoo_used=%d)", yahoo_used)
+        logger.info("PRIME: sent alerts (yahoo_used=%d, yahoo_allowed=%d)", yahoo_used, int(_yahoo_allowed_now()))
     else:
-        logger.info("PRIME: no alerts (yahoo_used=%d)", yahoo_used)
+        logger.info("PRIME: no alerts (yahoo_used=%d, yahoo_allowed=%d)", yahoo_used, int(_yahoo_allowed_now()))
