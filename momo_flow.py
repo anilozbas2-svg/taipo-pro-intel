@@ -4,7 +4,7 @@ import time
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 
 import requests
 from telegram import Update
@@ -19,14 +19,24 @@ logger = logging.getLogger("MOMO_FLOW")
 MOMO_FLOW_ENABLED = os.getenv("MOMO_FLOW_ENABLED", "1").strip() == "1"
 MOMO_FLOW_CHAT_ID = os.getenv("MOMO_FLOW_CHAT_ID", "").strip()
 
-MOMO_FLOW_INTERVAL_MIN = int(os.getenv("MOMO_FLOW_INTERVAL_MIN", "2"))
+MOMO_FLOW_INTERVAL_MIN = int(os.getenv("MOMO_FLOW_INTERVAL_MIN", "1"))
 
-FLOW_PCT_MIN = float(os.getenv("MOMO_FLOW_PCT_MIN", "2.50"))
-FLOW_PCT_ROCKET_MIN = float(os.getenv("MOMO_FLOW_PCT_ROCKET_MIN", "4.00"))
+# EARLY RADAR + ROCKET thresholds
+FLOW_PCT_MIN = float(os.getenv("MOMO_FLOW_PCT_MIN", "1.20"))  # ERKEN RADAR
+FLOW_PCT_ROCKET_MIN = float(os.getenv("MOMO_FLOW_PCT_ROCKET_MIN", "2.50"))  # ROCKET
 
-FLOW_COOLDOWN_SEC = int(os.getenv("MOMO_FLOW_COOLDOWN_SEC", "1800"))  # 30 min
+FLOW_RADAR_DELTA_MIN = float(os.getenv("MOMO_FLOW_RADAR_DELTA_MIN", "0.35"))
+FLOW_ROCKET_DELTA_MIN = float(os.getenv("MOMO_FLOW_ROCKET_DELTA_MIN", "0.60"))
+
+FLOW_VOL_SPIKE_MIN = float(os.getenv("MOMO_FLOW_VOL_SPIKE_MIN", "1.20"))
+FLOW_VOL_SPIKE_ROCKET_MIN = float(os.getenv("MOMO_FLOW_VOL_SPIKE_ROCKET_MIN", "1.60"))
+
+# Anti-spam: cooldown + step-up (same symbol can alert again if it stepped up enough)
+FLOW_COOLDOWN_SEC = int(os.getenv("MOMO_FLOW_COOLDOWN_SEC", "900"))  # 15 min
+FLOW_STEPUP_PCT = float(os.getenv("MOMO_FLOW_STEPUP_PCT", "0.70"))  # within cooldown, allow if pct increased by this
+
 FLOW_TOP_N = int(os.getenv("MOMO_FLOW_TOP_N", "200"))
-FLOW_MAX_ALERTS_PER_SCAN = int(os.getenv("MOMO_FLOW_MAX_ALERTS_PER_SCAN", "5"))
+FLOW_MAX_ALERTS_PER_SCAN = int(os.getenv("MOMO_FLOW_MAX_ALERTS_PER_SCAN", "6"))
 
 TV_SCAN_URL = os.getenv("MOMO_FLOW_TV_SCAN_URL", "https://scanner.tradingview.com/turkey/scan").strip()
 TV_TIMEOUT = int(os.getenv("MOMO_FLOW_TV_TIMEOUT", "12"))
@@ -35,19 +45,31 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 FLOW_STATE_FILE = os.path.join(DATA_DIR, "momo_flow_state.json")
 FLOW_LAST_ALERT_FILE = os.path.join(DATA_DIR, "momo_flow_last_alert.json")
 
+# Rolling volume memory (per symbol)
+FLOW_VOL_ROLL_N = int(os.getenv("MOMO_FLOW_VOL_ROLL_N", "10"))  # last N scans
+
 # ======================
 # SESSION HELPERS
 # ======================
-from datetime import datetime
+def _istanbul_now() -> datetime:
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Europe/Istanbul"))
+    except Exception:
+        # Fallback: if server is already TR time, this is fine; otherwise user should add TZ
+        return datetime.now()
+
 
 def _bist_session_open() -> bool:
-    now = datetime.now()  # Render TR saatinde
-    wd = now.weekday()    # 0=Pzt ... 6=Paz
+    now = _istanbul_now()
+    wd = now.weekday()  # 0=Pzt ... 6=Paz
     if wd >= 5:
         return False
 
     hm = now.hour * 60 + now.minute
+    # 10:00 - 18:10 (TR)
     return (10 * 60) <= hm <= (18 * 60 + 10)
+
 
 # ==========================
 # JSON helpers
@@ -103,7 +125,7 @@ def _cooldown_ok(last_alert_ts: Optional[float], now_ts: float) -> bool:
 # ==========================
 def _default_flow_state() -> dict:
     return {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "system": "momo_flow_rocket",
         "telegram": {
             "momo_flow_chat_id": int(MOMO_FLOW_CHAT_ID) if MOMO_FLOW_CHAT_ID else None
@@ -115,16 +137,25 @@ def _default_flow_state() -> dict:
         "rules": {
             "pct_min": FLOW_PCT_MIN,
             "pct_rocket_min": FLOW_PCT_ROCKET_MIN,
+            "radar_delta_min": FLOW_RADAR_DELTA_MIN,
+            "rocket_delta_min": FLOW_ROCKET_DELTA_MIN,
+            "vol_spike_min": FLOW_VOL_SPIKE_MIN,
+            "vol_spike_rocket_min": FLOW_VOL_SPIKE_ROCKET_MIN,
             "cooldown_seconds": FLOW_COOLDOWN_SEC,
+            "stepup_pct": FLOW_STEPUP_PCT,
             "top_n": FLOW_TOP_N,
-            "max_alerts_per_scan": FLOW_MAX_ALERTS_PER_SCAN
+            "max_alerts_per_scan": FLOW_MAX_ALERTS_PER_SCAN,
+            "vol_roll_n": FLOW_VOL_ROLL_N
+        },
+        "recent": {
+            "by_symbol": {}
         }
     }
 
 
 def _default_last_alert() -> dict:
     return {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "system": "momo_flow_rocket",
         "cooldown_seconds": FLOW_COOLDOWN_SEC,
         "last_alert_by_symbol": {}
@@ -136,7 +167,6 @@ def _default_last_alert() -> dict:
 # ==========================
 def _normalize_symbol(raw: str) -> str:
     s = (raw or "").strip().upper()
-    # TradingView sometimes returns "BIST:ALFAS"
     if ":" in s:
         s = s.split(":")[-1].strip()
     return s
@@ -181,39 +211,107 @@ def _tv_scan_rows() -> List[dict]:
 
 
 # ==========================
+# Rolling volume + delta helpers
+# ==========================
+def _safe_float(x: Any) -> Optional[float]:
+    try:
+        if x is None:
+            return None
+        return float(x)
+    except Exception:
+        return None
+
+
+def _roll_append(vals: List[float], v: float, n: int) -> List[float]:
+    vals = list(vals or [])
+    vals.append(float(v))
+    if len(vals) > n:
+        vals = vals[-n:]
+    return vals
+
+
+def _avg(vals: List[float]) -> Optional[float]:
+    v = [x for x in (vals or []) if isinstance(x, (int, float))]
+    if len(v) < 3:
+        return None
+    return sum(v) / float(len(v))
+
+
+def _compute_vol_spike(recent_vols: List[float], current_vol: float) -> Optional[float]:
+    av = _avg(recent_vols)
+    if not av or av <= 0:
+        return None
+    return current_vol / av
+
+
+def _level_from_metrics(pct: float, pct_delta: float, vol_spike: Optional[float]) -> Optional[str]:
+    vs = vol_spike if vol_spike is not None else 0.0
+
+    # ROCKET first
+    if pct >= FLOW_PCT_ROCKET_MIN and pct_delta >= FLOW_ROCKET_DELTA_MIN and vs >= FLOW_VOL_SPIKE_ROCKET_MIN:
+        return "ROCKET"
+
+    # EARLY RADAR
+    if pct >= FLOW_PCT_MIN and pct_delta >= FLOW_RADAR_DELTA_MIN and vs >= FLOW_VOL_SPIKE_MIN:
+        return "RADAR"
+
+    return None
+
+
+# ==========================
 # Message formatting
 # ==========================
-def _flow_tag(pct: float) -> str:
-    if pct >= FLOW_PCT_ROCKET_MIN:
-        return "🚀 ROCKET"
-    return "⚡️ FLOW"
+def _format_flow_message(
+    ticker: str,
+    pct: float,
+    pct_delta: float,
+    volume: float,
+    close: float,
+    level: str,
+    vol_spike: Optional[float]
+) -> str:
+    if level == "ROCKET":
+        head = "🚀 <b>MOMO FLOW – ROCKET</b>"
+        note = "🧠 <i>Mentor notu:</i> Hızlanma teyitli. Takip + disiplin."
+    else:
+        head = "🟡 <b>MOMO FLOW – ERKEN RADAR</b>"
+        note = "🧠 <i>Mentor notu:</i> Kıvılcım yakalandı. İzleme listesi aç."
 
-
-def _format_flow_message(ticker: str, pct: float, volume: float, close: float) -> str:
-    tag = _flow_tag(pct)
+    vs_txt = "n/a" if vol_spike is None else f"{vol_spike:.2f}x"
     msg = (
-        "⚡️ <b>MOMO FLOW ROCKET</b> 🚀\n\n"
+        f"{head}\n\n"
         f"<b>HİSSE:</b> {ticker}\n"
-        f"<b>AKIŞ:</b> {pct:+.2f}%  <b>({tag})</b>\n"
+        f"<b>AKIŞ:</b> {pct:+.2f}%  <b>({level})</b>\n"
+        f"<b>İVME:</b> {pct_delta:+.2f}% (son taramaya göre)\n"
+        f"<b>VOL SPIKE:</b> {vs_txt} (son {FLOW_VOL_ROLL_N} tarama ort)\n"
         f"<b>TV HACİM:</b> {volume:,.0f}\n"
         f"<b>FİYAT:</b> {close:.2f}\n\n"
-        "🧠 <i>Mentor notu:</i> Bu sinyal PRIME değil; momentum/akış takibidir.\n"
-        f"⏱ {datetime.now().strftime('%H:%M')}"
+        f"{note}\n"
+        f"⏱ {_istanbul_now().strftime('%H:%M')}"
     )
     return msg
 
 
 # ==========================
-# Decision
+# Decision (cooldown + step-up)
 # ==========================
-def _should_alert(last_alert_map: dict, ticker: str, message_hash: str, now_ts: float) -> bool:
+def _should_alert(last_alert_map: dict, ticker: str, pct: float, message_hash: str, now_ts: float) -> bool:
     entry = (last_alert_map.get(ticker) or {})
     last_ts = _parse_utc_iso(entry.get("last_alert_utc"))
-    if not _cooldown_ok(last_ts, now_ts):
-        return False
+    last_pct = _safe_float(entry.get("last_alert_pct"))
+
     if entry.get("last_message_hash") == message_hash:
         return False
-    return True
+
+    # Cooldown ok -> allow
+    if _cooldown_ok(last_ts, now_ts):
+        return True
+
+    # Still in cooldown -> allow ONLY if stepped up enough
+    if last_pct is not None and (pct - last_pct) >= FLOW_STEPUP_PCT:
+        return True
+
+    return False
 
 
 # ==========================
@@ -226,13 +324,15 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if sub in ("help", ""):
         txt = (
-            "⚡️ MOMO FLOW ROCKET 🚀\n\n"
+            "⚡️ MOMO FLOW – ERKEN YAKALAMA\n\n"
             "Komutlar:\n"
             "• /flow status  → FLOW durum\n"
             "• /flow test    → test mesajı\n\n"
-            f"Not: Tarama {MOMO_FLOW_INTERVAL_MIN} dk; koşullar: +%{FLOW_PCT_MIN:.2f} ve üstü. "
-            f"ROCKET: +%{FLOW_PCT_ROCKET_MIN:.2f} ve üstü. "
-            f"Cooldown: {int(FLOW_COOLDOWN_SEC / 60)} dk. Max/scan: {FLOW_MAX_ALERTS_PER_SCAN}."
+            f"Tarama: {MOMO_FLOW_INTERVAL_MIN} dk\n"
+            f"ERKEN RADAR: pct≥{FLOW_PCT_MIN:.2f} | delta≥{FLOW_RADAR_DELTA_MIN:.2f} | vol_spike≥{FLOW_VOL_SPIKE_MIN:.2f}\n"
+            f"ROCKET: pct≥{FLOW_PCT_ROCKET_MIN:.2f} | delta≥{FLOW_ROCKET_DELTA_MIN:.2f} | vol_spike≥{FLOW_VOL_SPIKE_ROCKET_MIN:.2f}\n"
+            f"Cooldown: {int(FLOW_COOLDOWN_SEC / 60)} dk | Step-up: +{FLOW_STEPUP_PCT:.2f} | Max/scan: {FLOW_MAX_ALERTS_PER_SCAN}\n"
+            "BIST kapalıysa FLOW susar."
         )
         await update.effective_message.reply_text(txt)
         return
@@ -243,12 +343,14 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         last_scan = ((st.get("scan") or {}).get("last_scan_utc")) or "n/a"
         n_alerts = len((la.get("last_alert_by_symbol") or {}))
         txt = (
-            "⚡️ FLOW STATUS 🚀\n\n"
+            "⚡️ FLOW STATUS\n\n"
             f"enabled: {int(MOMO_FLOW_ENABLED)}\n"
             f"chat_id: {MOMO_FLOW_CHAT_ID or 'n/a'}\n"
+            f"session_open: {int(_bist_session_open())}\n"
             f"last_scan_utc: {last_scan}\n"
             f"tracked_alerts: {n_alerts}\n"
             f"cooldown(min): {int(FLOW_COOLDOWN_SEC / 60)}\n"
+            f"interval(min): {MOMO_FLOW_INTERVAL_MIN}\n"
         )
         await update.effective_message.reply_text(txt)
         return
@@ -260,7 +362,7 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             await context.bot.send_message(
                 chat_id=MOMO_FLOW_CHAT_ID,
-                text="⚡️ <b>MOMO FLOW ROCKET</b> 🚀\n\nTest mesajı ✅",
+                text="⚡️ <b>MOMO FLOW</b>\n\nTest mesajı ✅",
                 parse_mode=ParseMode.HTML
             )
             await update.effective_message.reply_text("Test gönderildi ✅")
@@ -282,14 +384,6 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     # 🔒 BIST kapalıysa FLOW tamamen durur
     if not _bist_session_open():
         return
-
-    if not MOMO_FLOW_ENABLED:
-        return
-
-    if not MOMO_FLOW_CHAT_ID:
-        return
-
-    now_ts = time.time()
     if not MOMO_FLOW_ENABLED:
         return
     if not MOMO_FLOW_CHAT_ID:
@@ -299,7 +393,9 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     st = _load_json(FLOW_STATE_FILE, _default_flow_state())
     la = _load_json(FLOW_LAST_ALERT_FILE, _default_last_alert())
+
     last_alert_by_symbol = la.get("last_alert_by_symbol") or {}
+    recent = (st.get("recent") or {}).get("by_symbol") or {}
 
     rows = _tv_scan_rows()
     st["scan"]["last_scan_utc"] = _utc_now_iso()
@@ -309,34 +405,75 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("FLOW: no rows")
         return
 
-    candidates = []
+    candidates: List[Tuple[str, float, float, float, float, Optional[float], str]] = []
+
+    # Build candidates with pct_delta + vol_spike
     for r in rows:
         ticker = (r.get("symbol") or "").strip().upper()
         pct = float(r.get("change_pct") or 0.0)
         vol = float(r.get("volume") or 0.0)
         close = float(r.get("close") or 0.0)
 
-        if not ticker:
-            continue
-        if pct < FLOW_PCT_MIN:
-            continue
-        if vol <= 0:
+        if not ticker or vol <= 0:
             continue
 
-        candidates.append((ticker, pct, vol, close))
+        prev = recent.get(ticker) or {}
+        prev_pct = _safe_float(prev.get("last_pct"))
+        prev_vols = prev.get("vols") or []
 
-    # Higher pct first (true "uçan" öncelik)
-    candidates.sort(key=lambda x: x[1], reverse=True)
+        pct_delta = pct - (prev_pct if prev_pct is not None else pct)
+        vol_spike = _compute_vol_spike(prev_vols, vol)
+
+        level = _level_from_metrics(pct, pct_delta, vol_spike)
+        if not level:
+            # Still update memory, but no alert candidate
+            recent[ticker] = {
+                "last_pct": pct,
+                "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
+                "last_seen_utc": _utc_now_iso()
+            }
+            continue
+
+        # Candidate -> keep; update memory after
+        candidates.append((ticker, pct, pct_delta, vol, close, vol_spike, level))
+
+        recent[ticker] = {
+            "last_pct": pct,
+            "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
+            "last_seen_utc": _utc_now_iso()
+        }
+
+    # Persist recent memory
+    st.setdefault("recent", {})
+    st["recent"]["by_symbol"] = recent
+    _save_json(FLOW_STATE_FILE, st)
+
+    if not candidates:
+        logger.info("FLOW: no candidates")
+        return
+
+    # Priority:
+    # 1) ROCKET first
+    # 2) Higher pct_delta
+    # 3) Higher vol_spike
+    # 4) Higher pct
+    def _prio(x: Tuple[str, float, float, float, float, Optional[float], str]) -> Tuple[int, float, float, float]:
+        _ticker, _pct, _delta, _vol, _close, _vsp, _lvl = x
+        lvl_rank = 2 if _lvl == "ROCKET" else 1
+        vsp = _vsp if _vsp is not None else 0.0
+        return (lvl_rank, _delta, vsp, _pct)
+
+    candidates.sort(key=_prio, reverse=True)
 
     sent = 0
-    for (ticker, pct, vol, close) in candidates:
+    for (ticker, pct, pct_delta, vol, close, vol_spike, level) in candidates:
         if sent >= FLOW_MAX_ALERTS_PER_SCAN:
             break
 
-        msg = _format_flow_message(ticker, pct, vol, close)
+        msg = _format_flow_message(ticker, pct, pct_delta, vol, close, level, vol_spike)
         mh = _hash_message(msg)
 
-        if not _should_alert(last_alert_by_symbol, ticker, mh, now_ts):
+        if not _should_alert(last_alert_by_symbol, ticker, pct, mh, now_ts):
             continue
 
         try:
@@ -354,6 +491,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         last_alert_by_symbol[ticker] = {
             "last_alert_utc": _utc_now_iso(),
             "last_alert_pct": pct,
+            "last_level": level,
             "last_volume": vol,
             "last_close": close,
             "last_message_hash": mh
