@@ -35,6 +35,20 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 FLOW_STATE_FILE = os.path.join(DATA_DIR, "momo_flow_state.json")
 FLOW_LAST_ALERT_FILE = os.path.join(DATA_DIR, "momo_flow_last_alert.json")
 
+# ======================
+# SESSION HELPERS
+# ======================
+from datetime import datetime
+
+def _bist_session_open() -> bool:
+    now = datetime.now()  # Render TR saatinde
+    wd = now.weekday()    # 0=Pzt ... 6=Paz
+    if wd >= 5:
+        return False
+
+    hm = now.hour * 60 + now.minute
+    return (10 * 60) <= hm <= (18 * 60 + 10)
+
 # ==========================
 # JSON helpers
 # ==========================
@@ -265,6 +279,17 @@ def register_momo_flow(app: Application) -> None:
 # Scheduled job
 # ==========================
 async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
+    # 🔒 BIST kapalıysa FLOW tamamen durur
+    if not _bist_session_open():
+        return
+
+    if not MOMO_FLOW_ENABLED:
+        return
+
+    if not MOMO_FLOW_CHAT_ID:
+        return
+
+    now_ts = time.time()
     if not MOMO_FLOW_ENABLED:
         return
     if not MOMO_FLOW_CHAT_ID:
