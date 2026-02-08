@@ -30,6 +30,11 @@ from momo_flow import (
     MOMO_FLOW_INTERVAL_MIN,
 )
 
+from momo_kilit import (
+    register_momo_kilit,
+    job_momo_kilit_scan,
+)
+
 # ==============================
 # Trade Log (Altın Log)
 # ==============================
@@ -3290,6 +3295,8 @@ def main() -> None:
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     register_momo_prime(app)
     register_momo_flow(app)
+    register_momo_kilit(app)
+    
     app.add_handler(
     MessageHandler(filters.COMMAND, log_any_command),
     group=99 
