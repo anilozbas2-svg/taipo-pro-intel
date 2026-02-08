@@ -3015,19 +3015,13 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
-    def safe_run_repeating(jq, callback, *, interval_sec: int, first, name: str):
-    try:
-        existing = jq.get_jobs_by_name(name) if jq else []
-        if existing:
-            logger.info("SAFE_SCHEDULE | job already exists: %s (skip)", name)
-            return
-        jq.run_repeating(
-            callback,
-            interval=interval_sec,
-            first=first,
-            name=name,
+
+    if jq is None:
+        logger.warning(
+            "JobQueue yok -> otomatik alarm/tomorrow/whale/altin/momo CALISMAZ. Komutlar calisir."
         )
-        logger.info("SAFE_SCHEDULE | scheduled: %s", name)
+        return
+        
     except Exception as e:
         logger.exception("SAFE_SCHEDULE | FAILED: %s | %s", name, e)
     if jq is None:
