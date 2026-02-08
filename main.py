@@ -3021,14 +3021,6 @@ def schedule_jobs(app: Application) -> None:
             "JobQueue yok -> otomatik alarm/tomorrow/whale/altin/momo CALISMAZ. Komutlar calisir."
         )
         return
-        
-    except Exception as e:
-        logger.exception("SAFE_SCHEDULE | FAILED: %s | %s", name, e)
-    if jq is None:
-        logger.warning(
-            "JobQueue yok -> otomatik alarm/tomorrow/whale/altin/momo CALISMAZ. Komutlar calisir."
-        )
-        return
 
     # -------------------------
     # ALARM scan repeating + Tomorrow daily
