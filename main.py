@@ -14,13 +14,24 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from momo_prime import (
-    register_momo_prime,
-    job_momo_prime_scan,
-    MOMO_PRIME_ENABLED,
-    MOMO_PRIME_CHAT_ID,
-    MOMO_PRIME_INTERVAL_MIN,
-)
+# ==========================
+# MOMO PRIME BALİNA (SAFE IMPORT)
+# ==========================
+try:
+    from momo_prime import (
+        register_momo_prime,
+        job_momo_prime_scan,
+        MOMO_PRIME_ENABLED,
+        MOMO_PRIME_CHAT_ID,
+        MOMO_PRIME_INTERVAL_MIN,
+    )
+except Exception as e:
+    register_momo_prime = None
+    job_momo_prime_scan = None
+    MOMO_PRIME_ENABLED = False
+    MOMO_PRIME_CHAT_ID = None
+    MOMO_PRIME_INTERVAL_MIN = None
+    logger.warning("MOMO PRIME disabled (import error): %s", e)
 
 from momo_flow import (
     register_momo_flow,
@@ -3004,6 +3015,21 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
+    def safe_run_repeating(jq, callback, *, interval_sec: int, first, name: str):
+    try:
+        existing = jq.get_jobs_by_name(name) if jq else []
+        if existing:
+            logger.info("SAFE_SCHEDULE | job already exists: %s (skip)", name)
+            return
+        jq.run_repeating(
+            callback,
+            interval=interval_sec,
+            first=first,
+            name=name,
+        )
+        logger.info("SAFE_SCHEDULE | scheduled: %s", name)
+    except Exception as e:
+        logger.exception("SAFE_SCHEDULE | FAILED: %s | %s", name, e)
     if jq is None:
         logger.warning(
             "JobQueue yok -> otomatik alarm/tomorrow/whale/altin/momo CALISMAZ. Komutlar calisir."
@@ -3042,6 +3068,54 @@ def schedule_jobs(app: Application) -> None:
         logger.info(
             "ALARM kapali veya ALARM_CHAT_ID yok -> otomatik alarm/tomorrow gonderilmeyecek."
         )
+        
+    # --------------------------
+    # MOMO MODÜLLERİNİ UYGULAMAYA REGISTER ET (SAFE)
+    # --------------------------
+    try:
+        register_momo_prime(app)
+        logger.info("register_momo_prime OK")
+    except Exception as e:
+        logger.exception("register_momo_prime FAILED (safe-skip): %s", e)
+
+    try:
+        register_momo_flow(app)
+        logger.info("register_momo_flow OK")
+    except Exception as e:
+        logger.exception("register_momo_flow FAILED (safe-skip): %s", e)
+
+    try:
+        register_momo_kilit(app)
+        logger.info("register_momo_kilit OK")
+    except Exception as e:
+        logger.exception("register_momo_kilit FAILED (safe-skip): %s", e)
+        
+    # --------------------------
+    # MOMO PRIME BALİNA (SAFE SCHEDULE)
+    # --------------------------
+    try:
+        if MOMO_PRIME_ENABLED and MOMO_PRIME_CHAT_ID and job_momo_prime_scan:
+            first_prime = next_aligned_run(MOMO_PRIME_INTERVAL_MIN)
+            jq.run_repeating(
+                job_momo_prime_scan,
+                interval=MOMO_PRIME_INTERVAL_MIN * 60,
+                first=first_prime,
+                name="momo_prime_scan_repeating",
+            )
+            logger.info(
+                "MOMO PRIME scheduled every %d min. First=%s",
+                MOMO_PRIME_INTERVAL_MIN,
+                first_prime.isoformat(),
+            )
+        else:
+            logger.info(
+                "MOMO PRIME not scheduled (enabled=%s chat_id=%s job=%s)",
+                MOMO_PRIME_ENABLED,
+                bool(MOMO_PRIME_CHAT_ID),
+                bool(job_momo_prime_scan),
+            )
+    except Exception as e:
+        logger.exception("MOMO PRIME schedule failed (safe-skip): %s", e)
 
     # -------------------------
     # WHALE follow repeating
