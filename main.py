@@ -33,6 +33,9 @@ from momo_flow import (
 from momo_kilit import (
     register_momo_kilit,
     job_momo_kilit_scan,
+    MOMO_KILIT_ENABLED,
+    MOMO_KILIT_CHAT_ID,
+    MOMO_KILIT_INTERVAL_MIN,
 )
 
 # ==============================
@@ -3194,7 +3197,40 @@ def schedule_jobs(app: Application) -> None:
         logger.info(
             "FLOW degiskenleri tanimli degil -> flow schedule atlandi."
         )
-        
+    
+    # ==========================
+    # MOMO KİLİT (isolated)
+    # ==========================
+    try:
+        if MOMO_KILIT_ENABLED and MOMO_KILIT_CHAT_ID:
+            first_kilit = next_aligned_run(MOMO_KILIT_INTERVAL_MIN)
+
+            jq.run_repeating(
+                job_momo_kilit_scan,
+                interval=MOMO_KILIT_INTERVAL_MIN * 60,
+                first=first_kilit,
+                name="momo_kilit_scan_repeating"
+            )
+
+            logger.info(
+                "KILIT scan scheduled every %d min. First=%s",
+                MOMO_KILIT_INTERVAL_MIN,
+                first_kilit.isoformat()
+            )
+        else:
+            logger.info(
+                "KILIT kapali veya MOMO_KILIT_CHAT_ID yok -> kilit calismayacak."
+            )
+    except NameError:
+        logger.info(
+            "KILIT degiskenleri tanimli degil -> kilit schedule atlandi."
+        )
+    except Exception as e:
+        logger.exception(
+            "KILIT schedule error: %s",
+            e
+        )
+    
 # =============================
 # REJIM TRANSITION (R1 → R2 → R3 mesaj)
 # =============================
