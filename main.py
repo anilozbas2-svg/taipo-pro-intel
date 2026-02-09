@@ -3092,27 +3092,30 @@ def schedule_jobs(app: Application) -> None:
     except Exception as e:
         logger.exception("register_momo_kilit FAILED (safe-skip): %s", e)
         
-    # --------------------------
-    # MOMO PRIME BALİNA (SAFE SCHEDULE)
-    # --------------------------
+    # -----------------------------
+    # MOMO PRIME BALINA (SAFE SCHEDULE) - isolated
+    # -----------------------------
     try:
         if MOMO_PRIME_ENABLED and MOMO_PRIME_CHAT_ID and job_momo_prime_scan:
             first_prime = next_aligned_run(MOMO_PRIME_INTERVAL_MIN)
-            jq.run_repeating(
+
+            safe_run_repeating(
+                jq,
                 job_momo_prime_scan,
-                interval=MOMO_PRIME_INTERVAL_MIN * 60,
+                interval_sec=int(MOMO_PRIME_INTERVAL_MIN) * 60,
                 first=first_prime,
                 name="momo_prime_scan_repeating",
             )
+
             logger.info(
-                "MOMO PRIME scheduled every %d min. First=%s",
-                MOMO_PRIME_INTERVAL_MIN,
+                "MOMO PRIME scan scheduled every %d min. First=%s",
+                int(MOMO_PRIME_INTERVAL_MIN),
                 first_prime.isoformat(),
             )
         else:
             logger.info(
                 "MOMO PRIME not scheduled (enabled=%s chat_id=%s job=%s)",
-                MOMO_PRIME_ENABLED,
+                bool(MOMO_PRIME_ENABLED),
                 bool(MOMO_PRIME_CHAT_ID),
                 bool(job_momo_prime_scan),
             )
