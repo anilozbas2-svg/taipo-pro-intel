@@ -22,6 +22,10 @@ MOMO_FLOW_CHAT_ID = os.getenv("MOMO_FLOW_CHAT_ID", "").strip()
 MOMO_FLOW_INTERVAL_MIN = int(os.getenv("MOMO_FLOW_INTERVAL_MIN", "1"))
 
 # EARLY RADAR + ROCKET thresholds
+# EARLY thresholds (PRIME EARLY)
+FLOW_PCT_EARLY_MIN = float(os.getenv("MOMO_FLOW_PCT_EARLY_MIN", "0.80"))
+FLOW_EARLY_DELTA_MIN = float(os.getenv("MOMO_FLOW_EARLY_DELTA_MIN", "0.15"))
+FLOW_VOL_SPIKE_EARLY_MIN = float(os.getenv("MOMO_FLOW_VOL_SPIKE_EARLY_MIN", "1.05"))
 FLOW_PCT_MIN = float(os.getenv("MOMO_FLOW_PCT_MIN", "1.20"))  # ERKEN RADAR
 FLOW_PCT_ROCKET_MIN = float(os.getenv("MOMO_FLOW_PCT_ROCKET_MIN", "2.50"))  # ROCKET
 
@@ -263,7 +267,11 @@ def _level_from_metrics(pct: float, pct_delta: float, vol_spike: Optional[float]
     if pct >= FLOW_PCT_ROCKET_MIN and pct_delta >= FLOW_ROCKET_DELTA_MIN and vs >= FLOW_VOL_SPIKE_ROCKET_MIN:
         return "ROCKET"
 
-    # EARLY RADAR
+    # PRIME EARLY
+    if pct >= FLOW_PCT_EARLY_MIN and pct_delta >= FLOW_EARLY_DELTA_MIN and vs >= FLOW_VOL_SPIKE_EARLY_MIN:
+        return "EARLY"
+
+    # RADAR
     if pct >= FLOW_PCT_MIN and pct_delta >= FLOW_RADAR_DELTA_MIN and vs >= FLOW_VOL_SPIKE_MIN:
         return "RADAR"
 
