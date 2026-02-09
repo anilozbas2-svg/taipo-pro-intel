@@ -463,15 +463,12 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         if not recent:
             await update.effective_message.reply_text(
-            "📌 FLOW WATCH\n\nListe boş (henüz tarama yok)."
+                "📌 FLOW WATCH\n\nListe boş (henüz tarama yok)."
             )
             return
 
         is_open = _bist_session_open()
-        if is_open:
-            session_txt = "🟢 Canlı seans – anlık izleme"
-        else:
-            session_txt = "⏸️ Borsa kapalı (son snapshot)"
+        session_txt = "🟢 Canlı seans – anlık izleme" if is_open else "⏸️ Borsa kapalı (son snapshot)"
 
         items = []
         for sym, v in recent.items():
@@ -479,19 +476,20 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             lvl = (v.get("last_level") or "IZLE").upper()
             items.append((sym, pct, lvl))
 
+        # yüzdeye göre sırala, top 5
         items = sorted(items, key=lambda x: x[1], reverse=True)[:5]
+
+        tag_map = {
+            "RADAR": "RADAR",
+            "EARLY": "EARLY",
+            "PRIME": "PRIME",
+            "ROCKET": "ROCKET",
+            "IZLE": "IZLE",
+        }
 
         lines = []
         for sym, pct, lvl in items:
-            if lvl == "RADAR":
-                tag = "RADAR"
-            elif lvl == "PRIME":
-                tag = "PRIME"
-            elif lvl == "ROCKET":
-                tag = "ROCKET"
-            else:
-                tag = "IZLE"
-
+            tag = tag_map.get(lvl, "IZLE")
             lines.append(f"• {sym:<6} {pct:+.2f}%  [{tag}]")
 
         txt = (
