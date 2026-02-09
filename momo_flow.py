@@ -389,76 +389,72 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # CHECK
-if sub == "check":
-    if len(context.args) < 2:
-        await update.effective_message.reply_text(
-            "Kullanım: /flow check VAKFN"
+    if sub == "check":
+        if len(context.args) < 2:
+            await update.effective_message.reply_text("Kullanım: /flow check VAKFN")
+            return
+
+        ticker = (context.args[1] or "").strip().upper()
+
+        st = _load_json(FLOW_STATE_FILE, _default_flow_state())
+        recent = (st.get("recent") or {}).get("by_symbol") or {}
+        r = recent.get(ticker)
+
+        if not r:
+            await update.effective_message.reply_text(f"{ticker}: son taramalarda bulunamadı.")
+            return
+
+        pct = _safe_float(r.get("last_pct")) or 0.0
+        delta = _safe_float(r.get("last_delta")) or 0.0
+        vsp = _safe_float(r.get("last_vol_spike"))
+        vol = _safe_float(r.get("last_volume")) or 0.0
+        close = _safe_float(r.get("last_close")) or 0.0
+        lvl = r.get("last_level") or "n/a"
+        seen = r.get("last_seen_utc") or "n/a"
+
+        pct_ok = pct >= FLOW_PCT_MIN
+        delta_ok = delta >= FLOW_RADAR_DELTA_MIN
+        vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_MIN)
+        cap_ok = pct <= FLOW_PCT_CAP
+
+        vsp_txt = "n/a" if vsp is None else f"{vsp:.2f}x"
+
+        badge = "⚡"
+        title = "MOMO FLOW"
+        if lvl == "ROCKET":
+            badge = "🚀"
+        elif lvl == "RADAR":
+            badge = "📡"
+        elif lvl == "PRIME":
+            badge = "🧠🐳"
+            title = "MOMO PRIME (EARLY)"
+
+        extra = ""
+        if lvl == "PRIME":
+            extra = (
+                f"Δsum({FLOW_PRIME_ROLL_N}): {delta_sum:+.2f} | "
+                f"VSP: {vsp_txt}\n"
+            )
+
+        txt = (
+            f"{badge} {title}\n"
+            f"{ticker} {pct:+.2f}%\n\n"
+            f"AKIŞ: {pct:+.2f}%\n"
+            f"İVME: {delta:+.2f}%\n"
+            f"{extra}"
+            f"VOL SPIKE: {vsp_txt}\n"
+            f"HACİM: {vol:,.0f}\n"
+            f"FİYAT: {close:.2f}\n"
+            f"SEVİYE: {lvl}\n"
+            f"last_seen_utc: {seen}\n\n"
+            f"pct_ok: {int(pct_ok)}\n"
+            f"delta_ok: {int(delta_ok)}\n"
+            f"vol_ok: {int(vsp_ok)}\n"
+            f"cap_ok: {int(cap_ok)}"
         )
+
+        await update.effective_message.reply_text(txt)
         return
-
-    ticker = (context.args[1] or "").strip().upper()
-
-    st = _load_json(FLOW_STATE_FILE, _default_flow_state())
-    recent = (st.get("recent") or {}).get("by_symbol") or {}
-    r = recent.get(ticker)
-
-    if not r:
-        await update.effective_message.reply_text(
-            f"{ticker}: son taramalarda bulunamadı."
-        )
-        return
-
-    pct = _safe_float(r.get("last_pct")) or 0.0
-    delta = _safe_float(r.get("last_delta")) or 0.0
-    vsp = _safe_float(r.get("last_vol_spike"))
-    vol = _safe_float(r.get("last_volume")) or 0.0
-    close = _safe_float(r.get("last_close")) or 0.0
-    lvl = r.get("last_level") or "n/a"
-    seen = r.get("last_seen_utc") or "n/a"
-
-    pct_ok = pct >= FLOW_PCT_MIN
-    delta_ok = delta >= FLOW_RADAR_DELTA_MIN
-    vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_MIN)
-    cap_ok = pct <= FLOW_PCT_CAP
-
-    vsp_txt = "n/a" if vsp is None else f"{vsp:.2f}x"
-
-    # ---- HEADER / BADGE ----
-    badge = (
-        "🚀" if lvl == "ROCKET"
-        else "📡" if lvl == "RADAR"
-        else "🧠🐳" if lvl == "PRIME"
-        else "⚡"
-    )
-
-    title = "MOMO PRIME (EARLY)" if lvl == "PRIME" else "MOMO FLOW"
-
-    extra = (
-        f"Δsum({FLOW_PRIME_ROLL_N}): {r.get('delta_sum', 0):+.2f} | "
-        f"VSP: {vsp_txt}\n"
-        if lvl == "PRIME"
-        else ""
-    )
-
-    txt = (
-        f"{badge} {title}\n"
-        f"{ticker} {pct:+.2f}%\n\n"
-        f"AKIŞ: {pct:+.2f}%\n"
-        f"İVME: {delta:+.2f}%\n"
-        f"{extra}"
-        f"VOL SPIKE: {vsp_txt}\n"
-        f"HACİM: {vol:,.0f}\n"
-        f"FİYAT: {close:.2f}\n"
-        f"SEVİYE: {lvl}\n"
-        f"last_seen_utc: {seen}\n\n"
-        f"pct_ok: {int(pct_ok)}\n"
-        f"delta_ok: {int(delta_ok)}\n"
-        f"vol_ok: {int(vsp_ok)}\n"
-        f"cap_ok: {int(cap_ok)}"
-    )
-
-    await update.effective_message.reply_text(txt)
-    return
     
     # WATCH
     if sub == "watch":
