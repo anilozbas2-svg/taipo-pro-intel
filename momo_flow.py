@@ -31,6 +31,9 @@ FLOW_ROCKET_DELTA_MIN = float(os.getenv("MOMO_FLOW_ROCKET_DELTA_MIN", "0.60"))
 FLOW_VOL_SPIKE_MIN = float(os.getenv("MOMO_FLOW_VOL_SPIKE_MIN", "1.20"))
 FLOW_VOL_SPIKE_ROCKET_MIN = float(os.getenv("MOMO_FLOW_VOL_SPIKE_ROCKET_MIN", "1.60"))
 
+# Hard cap (anti-spam): pct > cap ise mesaj atma
+FLOW_PCT_CAP = float(os.getenv("MOMO_FLOW_PCT_CAP", "3.00"))
+
 # Anti-spam: cooldown + step-up (same symbol can alert again if it stepped up enough)
 FLOW_COOLDOWN_SEC = int(os.getenv("MOMO_FLOW_COOLDOWN_SEC", "900"))  # 15 min
 FLOW_STEPUP_PCT = float(os.getenv("MOMO_FLOW_STEPUP_PCT", "0.70"))  # within cooldown, allow if pct increased by this
@@ -416,7 +419,18 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         if not ticker or vol <= 0:
             continue
-
+        
+        # HARD CAP: %3 üzeri FLOW mesajı kes (ama hafızayı güncelle)
+        if pct > FLOW_PCT_CAP:
+            prev = recent.get(ticker) or {}
+            prev_vols = prev.get("vols") or []
+            recent[ticker] = {
+                "last_pct": pct,
+                "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
+                "last_seen_utc": _utc_now_iso()
+            }
+            continue
+        
         prev = recent.get(ticker) or {}
         prev_pct = _safe_float(prev.get("last_pct"))
         prev_vols = prev.get("vols") or []
