@@ -329,21 +329,25 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.args:
         sub = (context.args[0] or "").strip().lower()
 
+    # HELP
     if sub in ("help", ""):
         txt = (
             "⚡️ MOMO FLOW – ERKEN YAKALAMA\n\n"
             "Komutlar:\n"
-            "• /flow status  → FLOW durum\n"
-            "• /flow test    → test mesajı\n\n"
+            "• /flow status        → FLOW durum\n"
+            "• /flow test          → test mesajı\n"
+            "• /flow check X       → tek hisse sağlık kontrolü\n"
+            "• /flow watch         → son taramalardan izleme listesi\n\n"
             f"Tarama: {MOMO_FLOW_INTERVAL_MIN} dk\n"
             f"ERKEN RADAR: pct≥{FLOW_PCT_MIN:.2f} | delta≥{FLOW_RADAR_DELTA_MIN:.2f} | vol_spike≥{FLOW_VOL_SPIKE_MIN:.2f}\n"
             f"ROCKET: pct≥{FLOW_PCT_ROCKET_MIN:.2f} | delta≥{FLOW_ROCKET_DELTA_MIN:.2f} | vol_spike≥{FLOW_VOL_SPIKE_ROCKET_MIN:.2f}\n"
-            f"Cooldown: {int(FLOW_COOLDOWN_SEC / 60)} dk | Step-up: +{FLOW_STEPUP_PCT:.2f} | Max/scan: {FLOW_MAX_ALERTS_PER_SCAN}\n"
+            f"Cooldown: {int(FLOW_COOLDOWN_SEC / 60)} dk | Max/scan: {FLOW_MAX_ALERTS_PER_SCAN}\n"
             "BIST kapalıysa FLOW susar."
         )
         await update.effective_message.reply_text(txt)
         return
 
+    # STATUS
     if sub == "status":
         st = _load_json(FLOW_STATE_FILE, _default_flow_state())
         la = _load_json(FLOW_LAST_ALERT_FILE, _default_last_alert())
@@ -362,6 +366,7 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(txt)
         return
 
+    # TEST
     if sub == "test":
         if not MOMO_FLOW_CHAT_ID:
             await update.effective_message.reply_text("MOMO_FLOW_CHAT_ID yok. Env ayarla.")
@@ -377,12 +382,87 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.effective_message.reply_text(f"Test hata: {e}")
         return
 
+    # CHECK
+    if sub == "check":
+        if len(context.args) < 2:
+            await update.effective_message.reply_text("Kullanım: /flow check VAKFN")
+            return
+
+        ticker = (context.args[1] or "").strip().upper()
+        st = _load_json(FLOW_STATE_FILE, _default_flow_state())
+        recent = (st.get("recent") or {}).get("by_symbol") or {}
+        r = recent.get(ticker)
+
+        if not r:
+            await update.effective_message.reply_text(f"{ticker}: son taramalarda bulunamadı.")
+            return
+
+        pct = _safe_float(r.get("last_pct")) or 0.0
+        delta = _safe_float(r.get("last_delta")) or 0.0
+        vsp = _safe_float(r.get("last_vol_spike"))
+        vol = _safe_float(r.get("last_volume")) or 0.0
+        close = _safe_float(r.get("last_close")) or 0.0
+        lvl = r.get("last_level") or "n/a"
+        seen = r.get("last_seen_utc") or "n/a"
+
+        pct_ok = pct >= FLOW_PCT_MIN
+        delta_ok = delta >= FLOW_RADAR_DELTA_MIN
+        vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_MIN)
+        cap_ok = pct <= FLOW_PCT_CAP
+
+        vsp_txt = "n/a" if vsp is None else f"{vsp:.2f}x"
+
+        txt = (
+            f"⚡️ FLOW CHECK – {ticker}\n\n"
+            f"AKIŞ: {pct:+.2f}%\n"
+            f"İVME: {delta:+.2f}%\n"
+            f"VOL SPIKE: {vsp_txt}\n"
+            f"HACİM: {vol:,.0f}\n"
+            f"FİYAT: {close:.2f}\n"
+            f"SEVİYE: {lvl}\n"
+            f"last_seen_utc: {seen}\n\n"
+            f"pct_ok: {int(pct_ok)}\n"
+            f"delta_ok: {int(delta_ok)}\n"
+            f"vol_ok: {int(vsp_ok)}\n"
+            f"cap_ok: {int(cap_ok)}"
+        )
+        await update.effective_message.reply_text(txt)
+        return
+
+    # WATCH
+    if sub == "watch":
+        st = _load_json(FLOW_STATE_FILE, _default_flow_state())
+        recent = (st.get("recent") or {}).get("by_symbol") or {}
+
+        items = []
+        for sym, v in recent.items():
+            ts = _parse_utc_iso(v.get("last_seen_utc"))
+            if ts is None:
+                continue
+            items.append((ts, sym, v))
+
+        if not items:
+            await update.effective_message.reply_text("Watch list boş (state yok).")
+            return
+
+        items.sort(reverse=True)
+        top = items[:15]
+
+        lines = []
+        for _, sym, v in top:
+            pct = _safe_float(v.get("last_pct")) or 0.0
+            lvl = v.get("last_level") or "-"
+            lines.append(f"• {sym}  {pct:+.2f}%  [{lvl}]")
+
+        txt = "📌 FLOW WATCH (son taramalar)\n\n" + "\n".join(lines)
+        await update.effective_message.reply_text(txt)
+        return
+
     await update.effective_message.reply_text("Bilinmeyen alt komut. /flow help")
 
 
 def register_momo_flow(app: Application) -> None:
     app.add_handler(CommandHandler("flow", cmd_flow))
-
 
 # ==========================
 # Scheduled job
