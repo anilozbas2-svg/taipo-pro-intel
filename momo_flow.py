@@ -461,32 +461,50 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         st = _load_json(FLOW_STATE_FILE, _default_flow_state())
         recent = (st.get("recent") or {}).get("by_symbol") or {}
 
-        items = []
-        for sym, v in recent.items():
-            ts = _parse_utc_iso(v.get("last_seen_utc"))
-            if ts is None:
-                continue
-            items.append((ts, sym, v))
-
-        if not items:
-            await update.effective_message.reply_text("Watch list boş (state yok).")
+        if not recent:
+            await update.effective_message.reply_text(
+            "📌 FLOW WATCH\n\nListe boş (henüz tarama yok)."
+            )
             return
 
-        items.sort(reverse=True)
-        top = items[:15]
+        is_open = _bist_session_open()
+        if is_open:
+            session_txt = "🟢 Canlı seans – anlık izleme"
+        else:
+            session_txt = "⏸️ Borsa kapalı (son snapshot)"
+
+        items = []
+        for sym, v in recent.items():
+            pct = _safe_float(v.get("last_pct")) or 0.0
+            lvl = (v.get("last_level") or "IZLE").upper()
+            items.append((sym, pct, lvl))
+
+        items = sorted(items, key=lambda x: x[1], reverse=True)[:5]
 
         lines = []
-        for _, sym, v in top:
-            pct = _safe_float(v.get("last_pct")) or 0.0
-            lvl = v.get("last_level") or "-"
-            lines.append(f"• {sym}  {pct:+.2f}%  [{lvl}]")
+        for sym, pct, lvl in items:
+            if lvl == "RADAR":
+                tag = "RADAR"
+            elif lvl == "PRIME":
+                tag = "PRIME"
+            elif lvl == "ROCKET":
+                tag = "ROCKET"
+            else:
+                tag = "IZLE"
 
-        txt = "📌 FLOW WATCH (son taramalar)\n\n" + "\n".join(lines)
+            lines.append(f"• {sym:<6} {pct:+.2f}%  [{tag}]")
+
+        txt = (
+            "📌 FLOW WATCH – RADAR HAVUZU\n"
+            f"{session_txt}\n\n"
+            + "\n".join(lines)
+            + "\n\nℹ️ Not:\n"
+            "Bu liste AL sinyali değildir.\n"
+            "PRIME / ROCKET için seans içi teyit gerekir."
+        )
+
         await update.effective_message.reply_text(txt)
         return
-
-    await update.effective_message.reply_text("Bilinmeyen alt komut. /flow help")
-
 
 def register_momo_flow(app: Application) -> None:
     app.add_handler(CommandHandler("flow", cmd_flow))
