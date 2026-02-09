@@ -248,6 +248,10 @@ def _compute_vol_spike(recent_vols: List[float], current_vol: float) -> Optional
 
 
 def _level_from_metrics(pct: float, pct_delta: float, vol_spike: Optional[float]) -> Optional[str]:
+    # 🔒 Hard cap: % cap üstündeyse hiç sinyal üretme (anti-spam)
+    if pct > FLOW_PCT_CAP:
+        return None
+
     vs = vol_spike if vol_spike is not None else 0.0
 
     # ROCKET first
@@ -443,6 +447,11 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
             # Still update memory, but no alert candidate
             recent[ticker] = {
                 "last_pct": pct,
+                "last_delta": pct_delta,
+                "last_vol_spike": vol_spike,
+                "last_volume": vol,
+                "last_close": close,
+                "last_level": None,
                 "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
                 "last_seen_utc": _utc_now_iso()
             }
@@ -453,6 +462,11 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         recent[ticker] = {
             "last_pct": pct,
+            "last_delta": pct_delta,
+            "last_vol_spike": vol_spike,
+            "last_volume": vol,
+            "last_close": close,
+            "last_level": level,
             "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
             "last_seen_utc": _utc_now_iso()
         }
