@@ -117,10 +117,15 @@ def _hash_message(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:32]
 
 
-def _cooldown_ok(last_alert_ts: Optional[float], now_ts: float) -> bool:
+def _cooldown_ok(
+    last_alert_ts: Optional[float],
+    now_ts: float,
+    cooldown_sec: Optional[int] = None
+) -> bool:
     if last_alert_ts is None:
         return True
-    return (now_ts - last_alert_ts) >= FLOW_COOLDOWN_SEC
+    cd = int(cooldown_sec) if cooldown_sec is not None else int(FLOW_COOLDOWN_SEC)
+    return (now_ts - last_alert_ts) >= cd
 
 
 # ==========================
@@ -311,7 +316,8 @@ def _should_alert(last_alert_map: dict, ticker: str, pct: float, message_hash: s
         return False
 
     # Cooldown ok -> allow
-    if _cooldown_ok(last_ts, now_ts):
+    cooldown_sec = FLOW_PRIME_COOLDOWN_SEC if level == "PRIME" else FLOW_COOLDOWN_SEC
+    if _cooldown_ok(last_ts, now_ts, cooldown_sec=cooldown_sec):
         return True
 
     # Still in cooldown -> allow ONLY if stepped up enough
@@ -508,6 +514,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         if pct > FLOW_PCT_CAP:
             prev = recent.get(ticker) or {}
             prev_vols = prev.get("vols") or []
+            prev_deltas = prev_r.get("delta_hist") or []
             recent[ticker] = {
                 "last_pct": pct,
                 "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
@@ -533,6 +540,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
                 "last_close": close,
                 "last_level": None,
                 "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
+                "delta_hist": _roll_append(prev_deltas, pct_delta, FLOW_PRIME_ROLL_N),
                 "last_seen_utc": _utc_now_iso()
             }
             continue
