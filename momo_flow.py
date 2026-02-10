@@ -590,7 +590,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
                 "last_close": close,
                 "last_level": None,
                 "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
-                "delta_hist": _roll_append(prev_deltas, pct_delta, FLOW_PRIME_ROLL_N),
+                "delta_hist": _roll_append(prev_deltas, pct_delta, 10 ),
                 "last_seen_utc": _utc_now_iso()
             }
             continue
