@@ -559,7 +559,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         if pct > FLOW_PCT_CAP:
             prev = recent.get(ticker) or {}
             prev_vols = prev.get("vols") or []
-            prev_deltas = prev_r.get("delta_hist") or []
+            prev_deltas = prev.get("delta_hist") or []
             recent[ticker] = {
                 "last_pct": pct,
                 "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
@@ -570,6 +570,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         prev = recent.get(ticker) or {}
         prev_pct = _safe_float(prev.get("last_pct"))
         prev_vols = prev.get("vols") or []
+        prev_deltas = prev.get("delta_hist") or []
 
         pct_delta = pct - (prev_pct if prev_pct is not None else pct)
         vol_spike = _compute_vol_spike(prev_vols, vol)
