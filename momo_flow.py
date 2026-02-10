@@ -22,10 +22,6 @@ MOMO_FLOW_CHAT_ID = os.getenv("MOMO_FLOW_CHAT_ID", "").strip()
 MOMO_FLOW_INTERVAL_MIN = int(os.getenv("MOMO_FLOW_INTERVAL_MIN", "1"))
 
 # EARLY RADAR + ROCKET thresholds
-# EARLY thresholds (PRIME EARLY)
-FLOW_PCT_EARLY_MIN = float(os.getenv("MOMO_FLOW_PCT_EARLY_MIN", "0.80"))
-FLOW_EARLY_DELTA_MIN = float(os.getenv("MOMO_FLOW_EARLY_DELTA_MIN", "0.15"))
-FLOW_VOL_SPIKE_EARLY_MIN = float(os.getenv("MOMO_FLOW_VOL_SPIKE_EARLY_MIN", "1.05"))
 FLOW_PCT_MIN = float(os.getenv("MOMO_FLOW_PCT_MIN", "1.20"))  # ERKEN RADAR
 FLOW_PCT_ROCKET_MIN = float(os.getenv("MOMO_FLOW_PCT_ROCKET_MIN", "2.50"))  # ROCKET
 
@@ -121,15 +117,10 @@ def _hash_message(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:32]
 
 
-def _cooldown_ok(
-    last_alert_ts: Optional[float],
-    now_ts: float,
-    cooldown_sec: Optional[int] = None
-) -> bool:
+def _cooldown_ok(last_alert_ts: Optional[float], now_ts: float) -> bool:
     if last_alert_ts is None:
         return True
-    cd = int(cooldown_sec) if cooldown_sec is not None else int(FLOW_COOLDOWN_SEC)
-    return (now_ts - last_alert_ts) >= cd
+    return (now_ts - last_alert_ts) >= FLOW_COOLDOWN_SEC
 
 
 # ==========================
@@ -267,11 +258,7 @@ def _level_from_metrics(pct: float, pct_delta: float, vol_spike: Optional[float]
     if pct >= FLOW_PCT_ROCKET_MIN and pct_delta >= FLOW_ROCKET_DELTA_MIN and vs >= FLOW_VOL_SPIKE_ROCKET_MIN:
         return "ROCKET"
 
-    # PRIME EARLY
-    if pct >= FLOW_PCT_EARLY_MIN and pct_delta >= FLOW_EARLY_DELTA_MIN and vs >= FLOW_VOL_SPIKE_EARLY_MIN:
-        return "EARLY"
-
-    # RADAR
+    # EARLY RADAR
     if pct >= FLOW_PCT_MIN and pct_delta >= FLOW_RADAR_DELTA_MIN and vs >= FLOW_VOL_SPIKE_MIN:
         return "RADAR"
 
@@ -324,8 +311,7 @@ def _should_alert(last_alert_map: dict, ticker: str, pct: float, message_hash: s
         return False
 
     # Cooldown ok -> allow
-    cooldown_sec = FLOW_PRIME_COOLDOWN_SEC if level == "PRIME" else FLOW_COOLDOWN_SEC
-    if _cooldown_ok(last_ts, now_ts, cooldown_sec=cooldown_sec):
+    if _cooldown_ok(last_ts, now_ts):
         return True
 
     # Still in cooldown -> allow ONLY if stepped up enough
@@ -403,7 +389,6 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         ticker = (context.args[1] or "").strip().upper()
-
         st = _load_json(FLOW_STATE_FILE, _default_flow_state())
         recent = (st.get("recent") or {}).get("by_symbol") or {}
         r = recent.get(ticker)
@@ -417,104 +402,64 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         vsp = _safe_float(r.get("last_vol_spike"))
         vol = _safe_float(r.get("last_volume")) or 0.0
         close = _safe_float(r.get("last_close")) or 0.0
-        lvl = (r.get("last_level") or "n/a").upper()
+        lvl = r.get("last_level") or "n/a"
         seen = r.get("last_seen_utc") or "n/a"
 
-        # ---- LEVEL BASED THRESHOLDS ----
-        if lvl == "ROCKET":
-            pct_ok = pct >= FLOW_PCT_ROCKET_MIN
-            delta_ok = delta >= FLOW_ROCKET_DELTA_MIN
-            vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_ROCKET_MIN)
-        elif lvl == "EARLY" or lvl == "PRIME":
-            pct_ok = pct >= FLOW_PCT_EARLY_MIN
-            delta_ok = delta >= FLOW_EARLY_DELTA_MIN
-            vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_EARLY_MIN)
-        else:
-            pct_ok = pct >= FLOW_PCT_MIN
-            delta_ok = delta >= FLOW_RADAR_DELTA_MIN
-            vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_MIN)
-
+        pct_ok = pct >= FLOW_PCT_MIN
+        delta_ok = delta >= FLOW_RADAR_DELTA_MIN
+        vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_MIN)
         cap_ok = pct <= FLOW_PCT_CAP
 
         vsp_txt = "n/a" if vsp is None else f"{vsp:.2f}x"
 
-        badge = "⚡"
-        title = "MOMO FLOW"
-
-        if lvl == "ROCKET":
-            badge = "🚀"
-        elif lvl == "RADAR":
-            badge = "📡"
-        elif lvl == "EARLY" or lvl == "PRIME":
-            badge = "🧠🐳"
-            title = "MOMO PRIME (EARLY)"
-
         txt = (
-            f"{badge} {title}\n"
-            f"{ticker} {pct:+.2f}%\n\n"
+            f"⚡️ FLOW CHECK – {ticker}\n\n"
             f"AKIŞ: {pct:+.2f}%\n"
             f"İVME: {delta:+.2f}%\n"
             f"VOL SPIKE: {vsp_txt}\n"
-            f"HACİM: {vol:.0f}\n"
+            f"HACİM: {vol:,.0f}\n"
             f"FİYAT: {close:.2f}\n"
             f"SEVİYE: {lvl}\n"
-            f"last_seen_utc:\n{seen}\n\n"
+            f"last_seen_utc: {seen}\n\n"
             f"pct_ok: {int(pct_ok)}\n"
             f"delta_ok: {int(delta_ok)}\n"
             f"vol_ok: {int(vsp_ok)}\n"
             f"cap_ok: {int(cap_ok)}"
         )
-
         await update.effective_message.reply_text(txt)
         return
-    
+
     # WATCH
     if sub == "watch":
         st = _load_json(FLOW_STATE_FILE, _default_flow_state())
         recent = (st.get("recent") or {}).get("by_symbol") or {}
 
-        if not recent:
-            await update.effective_message.reply_text(
-                "📌 FLOW WATCH\n\nListe boş (henüz tarama yok)."
-            )
-            return
-
-        is_open = _bist_session_open()
-        session_txt = "🟢 Canlı seans – anlık izleme" if is_open else "⏸️ Borsa kapalı (son snapshot)"
-
         items = []
         for sym, v in recent.items():
-            pct = _safe_float(v.get("last_pct")) or 0.0
-            lvl = (v.get("last_level") or "IZLE").upper()
-            items.append((sym, pct, lvl))
+            ts = _parse_utc_iso(v.get("last_seen_utc"))
+            if ts is None:
+                continue
+            items.append((ts, sym, v))
 
-        # yüzdeye göre sırala, top 5
-        items = sorted(items, key=lambda x: x[1], reverse=True)[:5]
+        if not items:
+            await update.effective_message.reply_text("Watch list boş (state yok).")
+            return
 
-        tag_map = {
-            "RADAR": "RADAR",
-            "EARLY": "EARLY",
-            "PRIME": "PRIME",
-            "ROCKET": "ROCKET",
-            "IZLE": "IZLE",
-        }
+        items.sort(reverse=True)
+        top = items[:15]
 
         lines = []
-        for sym, pct, lvl in items:
-            tag = tag_map.get(lvl, "IZLE")
-            lines.append(f"• {sym:<6} {pct:+.2f}%  [{tag}]")
+        for _, sym, v in top:
+            pct = _safe_float(v.get("last_pct")) or 0.0
+            lvl = v.get("last_level") or "-"
+            lines.append(f"• {sym}  {pct:+.2f}%  [{lvl}]")
 
-        txt = (
-            "📌 FLOW WATCH – RADAR HAVUZU\n"
-            f"{session_txt}\n\n"
-            + "\n".join(lines)
-            + "\n\nℹ️ Not:\n"
-            "Bu liste AL sinyali değildir.\n"
-            "PRIME / ROCKET için seans içi teyit gerekir."
-        )
-
+        txt = "📌 FLOW WATCH (son taramalar)\n\n" + "\n".join(lines)
         await update.effective_message.reply_text(txt)
         return
+
+    await update.effective_message.reply_text("Bilinmeyen alt komut. /flow help")
+
 
 def register_momo_flow(app: Application) -> None:
     app.add_handler(CommandHandler("flow", cmd_flow))
@@ -563,7 +508,6 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         if pct > FLOW_PCT_CAP:
             prev = recent.get(ticker) or {}
             prev_vols = prev.get("vols") or []
-            prev_deltas = prev.get("delta_hist") or []
             recent[ticker] = {
                 "last_pct": pct,
                 "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
@@ -574,7 +518,6 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         prev = recent.get(ticker) or {}
         prev_pct = _safe_float(prev.get("last_pct"))
         prev_vols = prev.get("vols") or []
-        prev_deltas = prev.get("delta_hist") or []
 
         pct_delta = pct - (prev_pct if prev_pct is not None else pct)
         vol_spike = _compute_vol_spike(prev_vols, vol)
@@ -590,7 +533,6 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
                 "last_close": close,
                 "last_level": None,
                 "vols": _roll_append(prev_vols, vol, FLOW_VOL_ROLL_N),
-                "delta_hist": _roll_append(prev_deltas, pct_delta, 10 ),
                 "last_seen_utc": _utc_now_iso()
             }
             continue
