@@ -417,44 +417,48 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         vsp = _safe_float(r.get("last_vol_spike"))
         vol = _safe_float(r.get("last_volume")) or 0.0
         close = _safe_float(r.get("last_close")) or 0.0
-        lvl = r.get("last_level") or "n/a"
+        lvl = (r.get("last_level") or "n/a").upper()
         seen = r.get("last_seen_utc") or "n/a"
 
-        pct_ok = pct >= FLOW_PCT_MIN
-        delta_ok = delta >= FLOW_RADAR_DELTA_MIN
-        vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_MIN)
+        # ---- LEVEL BASED THRESHOLDS ----
+        if lvl == "ROCKET":
+            pct_ok = pct >= FLOW_PCT_ROCKET_MIN
+            delta_ok = delta >= FLOW_ROCKET_DELTA_MIN
+            vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_ROCKET_MIN)
+        elif lvl == "EARLY" or lvl == "PRIME":
+            pct_ok = pct >= FLOW_PCT_EARLY_MIN
+            delta_ok = delta >= FLOW_EARLY_DELTA_MIN
+            vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_EARLY_MIN)
+        else:
+            pct_ok = pct >= FLOW_PCT_MIN
+            delta_ok = delta >= FLOW_RADAR_DELTA_MIN
+            vsp_ok = (vsp is not None and vsp >= FLOW_VOL_SPIKE_MIN)
+
         cap_ok = pct <= FLOW_PCT_CAP
 
         vsp_txt = "n/a" if vsp is None else f"{vsp:.2f}x"
 
         badge = "⚡"
         title = "MOMO FLOW"
+
         if lvl == "ROCKET":
             badge = "🚀"
         elif lvl == "RADAR":
             badge = "📡"
-        elif lvl == "PRIME":
+        elif lvl == "EARLY" or lvl == "PRIME":
             badge = "🧠🐳"
             title = "MOMO PRIME (EARLY)"
-
-        extra = ""
-        if lvl == "PRIME":
-            extra = (
-                f"Δsum({FLOW_PRIME_ROLL_N}): {delta_sum:+.2f} | "
-                f"VSP: {vsp_txt}\n"
-            )
 
         txt = (
             f"{badge} {title}\n"
             f"{ticker} {pct:+.2f}%\n\n"
             f"AKIŞ: {pct:+.2f}%\n"
             f"İVME: {delta:+.2f}%\n"
-            f"{extra}"
             f"VOL SPIKE: {vsp_txt}\n"
-            f"HACİM: {vol:,.0f}\n"
+            f"HACİM: {vol:.0f}\n"
             f"FİYAT: {close:.2f}\n"
             f"SEVİYE: {lvl}\n"
-            f"last_seen_utc: {seen}\n\n"
+            f"last_seen_utc:\n{seen}\n\n"
             f"pct_ok: {int(pct_ok)}\n"
             f"delta_ok: {int(delta_ok)}\n"
             f"vol_ok: {int(vsp_ok)}\n"
