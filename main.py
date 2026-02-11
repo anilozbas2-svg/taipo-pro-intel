@@ -51,14 +51,17 @@ from momo_kilit import (
 
 try:
     from steady_trend import (
-        register_steady_trend,
         job_steady_trend_scan,
         STEADY_TREND_ENABLED,
+        STEADY_TREND_CHAT_ID,
+        STEADY_TREND_INTERVAL_MIN,
     )
-except Exception:
-    register_steady_trend = None
+except Exception as e:
     job_steady_trend_scan = None
     STEADY_TREND_ENABLED = False
+    STEADY_TREND_CHAT_ID = ""
+    STEADY_TREND_INTERVAL_MIN = 0
+    logger.warning("STEADY_TREND disabled (import error): %s", e)
 
 # ==============================
 # Trade Log (Altın Log)
@@ -3287,6 +3290,30 @@ def schedule_jobs(app: Application) -> None:
         logger.info(
             "FLOW degiskenleri tanimli degil -> flow schedule atlandi."
         )
+    
+    # =========================
+    # STEADY TREND (AĞIR TREN)
+    # =========================
+    try:
+        if STEADY_TREND_ENABLED and STEADY_TREND_CHAT_ID and job_steady_trend_scan:
+            first_st = next_aligned_run(STEADY_TREND_INTERVAL_MIN)
+            jq.run_repeating(
+                job_steady_trend_scan,
+                interval=STEADY_TREND_INTERVAL_MIN * 60,
+                first=first_st,
+                name="steady_trend_scan_repeating",
+            )
+            logger.info(
+                "STEADY scan scheduled every %d min. First=%s",
+                STEADY_TREND_INTERVAL_MIN,
+                first_st.isoformat(),
+            )
+        else:
+            logger.info("STEADY kapali veya chat_id yok -> steady calismayacak.")
+    except NameError:
+        logger.info("STEADY degiskenleri tanimli degil -> steady schedule atlandi.")
+    except Exception as e:
+        logger.warning("STEADY schedule error: %s", e)
     
     # ==========================
     # MOMO KİLİT (isolated)
