@@ -62,6 +62,20 @@ except Exception as e:
     STEADY_TREND_CHAT_ID = ""
     STEADY_TREND_INTERVAL_MIN = 0
     logger.warning("STEADY_TREND disabled (import error): %s", e)
+    
+try:
+    from steady_trend import (
+        job_steady_trend_scan as steady_trend_job,
+        STEADY_TREND_ENABLED,
+        STEADY_TREND_CHAT_ID,
+        STEADY_TREND_INTERVAL_MIN,
+    )
+except Exception as e:
+    steady_trend_job = None
+    STEADY_TREND_ENABLED = False
+    STEADY_TREND_CHAT_ID = ""
+    STEADY_TREND_INTERVAL_MIN = 0
+    logger.warning("STEADY_TREND disabled (import error): %s", e)
 
 # ==============================
 # Trade Log (Altın Log)
@@ -3294,15 +3308,27 @@ def schedule_jobs(app: Application) -> None:
     # =========================
     # STEADY TREND (AĞIR TREN)
     # =========================
+    async def job_steady_trend_scan(ctx):
+        # ctx: PTB job context
+        return await steady_trend_job(
+            ctx,
+            bist_session_open,
+            fetch_universe_rows,
+            telegram_send,
+        )
+
     try:
-        if STEADY_TREND_ENABLED and STEADY_TREND_CHAT_ID and job_steady_trend_scan:
+        if STEADY_TREND_ENABLED and STEADY_TREND_CHAT_ID and steady_trend_job:
             first_st = next_aligned_run(STEADY_TREND_INTERVAL_MIN)
-            jq.run_repeating(
+
+            safe_run_repeating(
+                jq,
                 job_steady_trend_scan,
-                interval=STEADY_TREND_INTERVAL_MIN * 60,
+                interval_sec=int(STEADY_TREND_INTERVAL_MIN) * 60,
                 first=first_st,
                 name="steady_trend_scan_repeating",
             )
+
             logger.info(
                 "STEADY scan scheduled every %d min. First=%s",
                 STEADY_TREND_INTERVAL_MIN,
@@ -3310,10 +3336,8 @@ def schedule_jobs(app: Application) -> None:
             )
         else:
             logger.info("STEADY kapali veya chat_id yok -> steady calismayacak.")
-    except NameError:
-        logger.info("STEADY degiskenleri tanimli degil -> steady schedule atlandi.")
     except Exception as e:
-        logger.warning("STEADY schedule error: %s", e)
+        logger.exception("STEADY schedule failed (safe-skip): %s", e)
     
     # ==========================
     # MOMO KİLİT (isolated)
@@ -3449,7 +3473,6 @@ def main() -> None:
     register_momo_prime(app)
     register_momo_flow(app)
     register_momo_kilit(app)
-    if STEADY_TREND_ENABLED and register_steady_trend: register_steady_trend(scheduler, make_job_wrapper)
     
     app.add_handler(
     MessageHandler(filters.COMMAND, log_any_command),
