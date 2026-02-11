@@ -554,7 +554,6 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
     """
     Dünkü /tomorrow zincirinden ADAY tickers + ref_close_map döner.
     """
-
     if not TOMORROW_CHAINS:
         return [], {}
 
@@ -565,32 +564,41 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
         active_key = today_key_tradingday()
 
         if active_key not in TOMORROW_CHAINS:
-            active_key = sorted(TOMORROW_CHAINS.keys())[-1]
+            try:
+                active_key = sorted(TOMORROW_CHAINS.keys())[-1]
+            except Exception:
+                active_key = None
 
-        chain_obj = TOMORROW_CHAINS.get(active_key)
+        chain_obj = TOMORROW_CHAINS.get(active_key) if active_key else None
 
         if isinstance(chain_obj, dict):
-            rows = chain_obj.get("rows", []) or {}
+            rows = chain_obj.get("rows", []) or []
             ref_close_map = chain_obj.get("ref_close", {}) or {}
         elif isinstance(chain_obj, list):
             rows = chain_obj
+            # ref_close yoksa boş bırak
+            ref_close_map = {}
+
+    elif isinstance(TOMORROW_CHAINS, list):
+        rows = TOMORROW_CHAINS
+        ref_close_map = {}
 
     aday_tickers: list[str] = []
 
-for r in rows:
-    if not isinstance(r, dict):
-        continue
+    for r in (rows or []):
+        if not isinstance(r, dict):
+            continue
 
-    kind = (
-        (r.get("kind") or r.get("list") or r.get("bucket") or r.get("kategori") or r.get("K") or r.get("status") or "")
-        .strip()
-        .upper()
-    )
+        kind = (
+            (r.get("kind") or r.get("list") or r.get("bucket") or r.get("kategori") or r.get("K") or r.get("status") or "")
+            .strip()
+            .upper()
+        )
 
-    if kind == "ADAY":
-        t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
-        if t:
-            aday_tickers.append(t)
+        if kind == "ADAY":
+            t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
+            if t:
+                aday_tickers.append(t)
 
     return aday_tickers, ref_close_map
 
