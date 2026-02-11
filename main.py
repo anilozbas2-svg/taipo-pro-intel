@@ -3308,11 +3308,17 @@ def schedule_jobs(app: Application) -> None:
     # =========================
     # STEADY TREND (AĞIR TREN)
     # =========================
+
+    def _bist_open_safe() -> bool:
+        try:
+            return bist_session_open()
+        except Exception:
+            return True  # bist_session_open yoksa "acik" kabul et
+
     async def job_steady_trend_scan(ctx):
-        # ctx: PTB job context
         return await steady_trend_job(
             ctx,
-            bist_session_open,
+            _bist_open_safe,
             fetch_universe_rows,
             telegram_send,
         )
@@ -3331,7 +3337,7 @@ def schedule_jobs(app: Application) -> None:
 
             logger.info(
                 "STEADY scan scheduled every %d min. First=%s",
-                STEADY_TREND_INTERVAL_MIN,
+                int(STEADY_TREND_INTERVAL_MIN),
                 first_st.isoformat(),
             )
         else:
