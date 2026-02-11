@@ -3449,8 +3449,7 @@ def main() -> None:
     register_momo_prime(app)
     register_momo_flow(app)
     register_momo_kilit(app)
-    if STEADY_TREND_ENABLED and register_steady_trend:
-    register_steady_trend(scheduler, make_job_wrapper)
+    if STEADY_TREND_ENABLED and register_steady_trend: register_steady_trend(scheduler, make_job_wrapper)
     
     app.add_handler(
     MessageHandler(filters.COMMAND, log_any_command),
