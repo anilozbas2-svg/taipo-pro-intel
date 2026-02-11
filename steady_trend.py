@@ -1,12 +1,12 @@
 import os
 import time
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple
 
 logger = logging.getLogger(__name__)
 
 # -------------------------
-# ENV
+# ENV helpers
 # -------------------------
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.getenv(name, "")
@@ -26,14 +26,17 @@ def _env_float(name: str, default: float) -> float:
     except Exception:
         return default
 
+# -------------------------
+# ENV
+# -------------------------
 STEADY_TREND_ENABLED = _env_bool("STEADY_TREND_ENABLED", False)
 STEADY_TREND_CHAT_ID = os.getenv("STEADY_TREND_CHAT_ID", "").strip()
 STEADY_TREND_INTERVAL_MIN = _env_int("STEADY_TREND_INTERVAL_MIN", 2)
 
 # Ağır tren filtreleri
-STEADY_TREND_MIN_PCT = _env_float("STEADY_TREND_MIN_PCT", 0.60)      # intraday toplam %
-STEADY_TREND_MAX_PCT = _env_float("STEADY_TREND_MAX_PCT", 2.20)      # çok kaçtıysa artık “tren” değil
-STEADY_TREND_MIN_DELTA = _env_float("STEADY_TREND_MIN_DELTA", 0.10)  # son 15dk / bar artış %
+STEADY_TREND_MIN_PCT = _env_float("STEADY_TREND_MIN_PCT", 0.60)            # intraday toplam %
+STEADY_TREND_MAX_PCT = _env_float("STEADY_TREND_MAX_PCT", 2.20)            # çok kaçtıysa artık “tren” değil
+STEADY_TREND_MIN_DELTA = _env_float("STEADY_TREND_MIN_DELTA", 0.10)        # son 15dk artış %
 STEADY_TREND_MIN_VOL_SPIKE = _env_float("STEADY_TREND_MIN_VOL_SPIKE", 1.05)  # vol/avg10
 STEADY_TREND_MIN_CONSISTENCY = _env_float("STEADY_TREND_MIN_CONSISTENCY", 0.62)  # +bar oranı
 
@@ -54,14 +57,8 @@ def _cooldown_ok(symbol: str) -> bool:
     return True
 
 # -------------------------
-# Helpers (adapter pattern)
-# main.py içinden sağlanacak fonksiyonlar:
-# - bist_session_open() -> bool
-# - fetch_universe_rows() -> List[Dict[str, Any]]
-#   (her satır: symbol, last, day_open, pct_day, delta_15m, vol_spike_10g, bars_up_ratio, score vb.)
-# - telegram_send(chat_id, text)
+# Formatting / filters
 # -------------------------
-
 def _format_msg(row: Dict[str, Any]) -> str:
     sym = row.get("symbol", "?")
     last = row.get("last", None)
@@ -119,16 +116,11 @@ def _passes_filters(row: Dict[str, Any]) -> Tuple[bool, str]:
     return (True, "ok")
 
 def _steady_score(row: Dict[str, Any]) -> float:
-    """
-    Ağır tren skoru: düzen + küçük delta + yeterli hacim + günlük band içinde
-    """
     pct_day = float(row.get("pct_day", 0.0))
     delta_15m = float(row.get("delta_15m", 0.0))
     vol_spike = float(row.get("vol_spike_10g", 0.0))
     cons = float(row.get("bars_up_ratio", 0.0))
 
-    # normalize / ağırlıklar
-    # Not: bu skor “trend” için; spike gibi 3-5x vol istemiyoruz.
     s = 0.0
     s += cons * 3.0
     s += min(delta_15m, 1.0) * 2.0
@@ -136,17 +128,14 @@ def _steady_score(row: Dict[str, Any]) -> float:
     s += min(max((pct_day - STEADY_TREND_MIN_PCT), 0.0), 2.0) * 0.8
     return s
 
-async def job_steady_trend_scan(context, bist_session_open, fetch_universe_rows, telegram_send) -> None:
-    """
-    context: PTB Context
-    bist_session_open: callable -> bool
-    fetch_universe_rows: callable -> List[Dict]
-    telegram_send: async callable(chat_id, text)
-    """
-    if not bist_session_open():
-        logger.info("STEADY_TREND: session_closed -> return")
-        return
-
+# -------------------------
+# JOB (PTB JobQueue uyumlu: sadece context alır)
+# main.py bu adapter'ları app.bot_data içine koyacak:
+#   app.bot_data["bist_session_open"] = bist_session_open
+#   app.bot_data["fetch_universe_rows"] = fetch_universe_rows
+#   app.bot_data["telegram_send"] = telegram_send
+# -------------------------
+async def job_steady_trend_scan(context) -> None:
     if not STEADY_TREND_ENABLED:
         logger.info("STEADY_TREND: disabled -> return")
         return
@@ -155,14 +144,35 @@ async def job_steady_trend_scan(context, bist_session_open, fetch_universe_rows,
         logger.warning("STEADY_TREND: missing STEADY_TREND_CHAT_ID -> return")
         return
 
-    rows = fetch_universe_rows()
+    bist_session_open = context.application.bot_data.get("bist_session_open")
+    fetch_universe_rows = context.application.bot_data.get("fetch_universe_rows")
+    telegram_send = context.application.bot_data.get("telegram_send")
+
+    if not bist_session_open or not fetch_universe_rows or not telegram_send:
+        logger.warning("STEADY_TREND: missing adapters in bot_data -> return")
+        return
+
+    try:
+        if not bist_session_open():
+            logger.info("STEADY_TREND: session_closed -> return")
+            return
+    except Exception as e:
+        logger.warning("STEADY_TREND: bist_session_open error: %s", e)
+        return
+
+    try:
+        rows = fetch_universe_rows()
+    except Exception as e:
+        logger.warning("STEADY_TREND: fetch_universe_rows error: %s", e)
+        return
+
     if not rows:
         logger.info("STEADY_TREND: no rows")
         return
 
     picks: List[Dict[str, Any]] = []
     for r in rows:
-        ok, reason = _passes_filters(r)
+        ok, _reason = _passes_filters(r)
         if not ok:
             continue
         r["steady_score"] = _steady_score(r)
@@ -172,7 +182,6 @@ async def job_steady_trend_scan(context, bist_session_open, fetch_universe_rows,
         logger.info("STEADY_TREND: no alerts")
         return
 
-    # En iyi 1-3 taneyi seç (spam olmasın)
     picks.sort(key=lambda x: float(x.get("steady_score", 0.0)), reverse=True)
     top = picks[:3]
 
@@ -183,27 +192,12 @@ async def job_steady_trend_scan(context, bist_session_open, fetch_universe_rows,
             continue
         if not _cooldown_ok(sym):
             continue
+
         msg = _format_msg(r)
-        await telegram_send(STEADY_TREND_CHAT_ID, msg)
-        sent_any += 1
+        try:
+            await telegram_send(STEADY_TREND_CHAT_ID, msg)
+            sent_any += 1
+        except Exception as e:
+            logger.warning("STEADY_TREND: telegram_send error for %s: %s", sym, e)
 
     logger.info("STEADY_TREND: sent=%d top=%d", sent_any, len(top))
-
-def register_steady_trend(scheduler, make_job_wrapper):
-    """
-    scheduler: APScheduler instance (senin main.py’de kullandığın)
-    make_job_wrapper: main.py’de var olan wrapper (async job’u çalıştıran)
-    """
-    if not STEADY_TREND_ENABLED:
-        logger.info("STEADY_TREND: register skipped (disabled)")
-        return
-
-    # interval dakikada bir tarama
-    scheduler.add_job(
-        make_job_wrapper("steady_trend_scan"),
-        "interval",
-        minutes=STEADY_TREND_INTERVAL_MIN,
-        id="steady_trend_scan_repeating",
-        replace_existing=True,
-    )
-    logger.info("STEADY_TREND: registered interval=%dmin", STEADY_TREND_INTERVAL_MIN)
