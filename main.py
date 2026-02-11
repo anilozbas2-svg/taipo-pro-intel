@@ -49,14 +49,6 @@ from momo_kilit import (
     MOMO_KILIT_INTERVAL_MIN,
 )
 
-from steady_trend import (
-    register_steady_trend,
-    job_steady_trend_scan,
-    STEADY_TREND_ENABLED,
-    STEADY_TREND_CHAT_ID,
-    STEADY_TREND_INTERVAL_MIN,
-)
-
 # ==============================
 # Trade Log (Altın Log)
 # ==============================
@@ -3419,8 +3411,6 @@ def main() -> None:
     register_momo_prime(app)
     register_momo_flow(app)
     register_momo_kilit(app)
-    if STEADY_TREND_ENABLED and register_steady_trend:
-    register_steady_trend(scheduler, make_job_wrapper)
     
     app.add_handler(
     MessageHandler(filters.COMMAND, log_any_command),
