@@ -2824,9 +2824,9 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             )
             return
 
-        # Tomorrow zincirinden ALTIN tickers al
+        # Tomorrow zincirinden ALTIN + ADAY tickers al
         altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
-        aday_tickers, _ = get_aday_tickers_from_tomorrow_chain()
+        aday_tickers, aday_ref_close_map = get_aday_tickers_from_tomorrow_chain()
 
         # Güvenlik: yanlış dönüş (tuple) gelirse toparla
         if isinstance(ref_close_map, tuple) and len(ref_close_map) == 2:
@@ -2834,6 +2834,9 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
 
         if not isinstance(ref_close_map, dict):
             ref_close_map = {}
+
+        if not isinstance(aday_ref_close_map, dict):
+            aday_ref_close_map = {}
 
         if not altin_tickers:
             altin_tickers = list(ref_close_map.keys())[:6]
@@ -2847,27 +2850,22 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             )
             return
 
-        # ===== BURADAN SONRASI: MEVCUT KODLARIN =====
+        # ===== CANLI: ALTIN + ADAY anlık satırlarını çek =====
         rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
-    now_map = {
-        (r.get("ticker") or "").strip().upper(): r
-        for r in (rows_now or [])
-        if (r.get("ticker") or "").strip()
-    }
-
-    rows_aday_now = await build_rows_from_is_list(aday_tickers, xu_change)
-    now_map_aday = {
-        (r.get("ticker") or "").strip().upper(): r
-        for r in (rows_aday_now or [])
-        if (r.get("ticker") or "").strip()
-    }
-
         now_map = {
             (r.get("ticker") or "").strip().upper(): r
             for r in (rows_now or [])
             if (r.get("ticker") or "").strip()
         }
 
+        rows_aday_now = await build_rows_from_is_list(aday_tickers, xu_change)
+        now_map_aday = {
+            (r.get("ticker") or "").strip().upper(): r
+            for r in (rows_aday_now or [])
+            if (r.get("ticker") or "").strip()
+        }
+
+        # ===== ALTIN performans tablosu =====
         perf = []
         for t in altin_tickers:
             ref_close = safe_float(ref_close_map.get(t))
@@ -2888,101 +2886,57 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
 
             perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
 
+        # ===== ADAY performans tablosu =====
+        perf_aday = []
+        for t in (aday_tickers or []):
+            ref_close = safe_float(aday_ref_close_map.get(t))
+            now_close = safe_float((now_map_aday.get(t) or {}).get("close"))
+            dd = pct_change(now_close, ref_close)
+
+            # dd NaN kontrolü
+            if dd == dd:
+                if dd > 0:
+                    emo = "🟢"
+                elif dd < 0:
+                    emo = "🔴"
+                else:
+                    emo = "⚪"
+                dd_s = f"{emo} {dd:+.2f}%"
+            else:
+                dd_s = "⚪ n/a"
+
+            perf_aday.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
+
         header = (
             "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"<b>{now_tr().strftime('%H:%M')}</b>\n"
+            f"⏱ <b>{now_tr().strftime('%H:%M')}</b>\n"
             f"XU100: <b>{xu_close:.0f}</b> / %{xu_change:+.2f}\n"
         )
 
         lines = []
-        lines.append("HIS     %Δ        NOW       REF")
+        lines.append("HIS    %Δ         NOW      REF")
         lines.append("--------------------------------")
-        # ===== BURADAN SONRASI: ALTIN + ADAY LIVE TAKIP (tek mesaj) =====
 
-    rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
-    now_map = {
-        (r.get("ticker") or "").strip().upper(): r
-        for r in (rows_now or [])
-        if (r.get("ticker") or "").strip()
-    }
-
-    rows_aday_now = await build_rows_from_is_list(aday_tickers, xu_change)
-    now_map_aday = {
-        (r.get("ticker") or "").strip().upper(): r
-        for r in (rows_aday_now or [])
-        if (r.get("ticker") or "").strip()
-    }
-
-    perf = []
-    for t in altin_tickers:
-        ref_close = safe_float(ref_close_map.get(t))
-        now_close = safe_float((now_map.get(t) or {}).get("close"))
-        dd = pct_change(now_close, ref_close)
-
-        # dd NaN kontrolü
-        if dd == dd:
-            if dd > 0:
-                emo = "🟢"
-            elif dd < 0:
-                emo = "🔴"
-            else:
-                emo = "⚪"
-            dd_s = f"{emo} {dd:+.2f}%"
-        else:
-            dd_s = "⚪ n/a"
-
-        perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
-
-    perf_aday = []
-    for t in aday_tickers:
-        ref_close = safe_float(aday_ref_close_map.get(t))
-        now_close = safe_float((now_map_aday.get(t) or {}).get("close"))
-        dd = pct_change(now_close, ref_close)
-
-        # dd NaN kontrolü
-        if dd == dd:
-            if dd > 0:
-                emo = "🟢"
-            elif dd < 0:
-                emo = "🔴"
-            else:
-                emo = "⚪"
-            dd_s = f"{emo} {dd:+.2f}%"
-        else:
-            dd_s = "⚪ n/a"
-
-        perf_aday.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
-
-    header = (
-        "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-        f"⏱ <b>{now_tr().strftime('%H:%M')}</b>\n"
-        f"XU100: <b>{xu_close:.0f}</b> / %{xu_change:+.2f}\n"
-    )
-
-    lines = []
-    lines.append("HIS    %Δ         NOW      REF")
-    lines.append("--------------------------------")
-
-    # ===== ALTIN =====
-    for t, dd_s, now_s, ref_s in perf:
-        lines.append(f"{t:<6} {dd_s:<10} {now_s:>8} {ref_s:>8}")
-
-    # ===== ADAY =====
-    if perf_aday:
-        lines.append("")
-        lines.append("ADAY:")
-        lines.append("--------------------------------")
-        for t, dd_s, now_s, ref_s in perf_aday:
+        # ===== ALTIN =====
+        for t, dd_s, now_s, ref_s in perf:
             lines.append(f"{t:<6} {dd_s:<10} {now_s:>8} {ref_s:>8}")
 
-    msg = header + "<pre>" + "\n".join(lines) + "</pre>"
+        # ===== ADAY =====
+        if perf_aday:
+            lines.append("")
+            lines.append("ADAY:")
+            lines.append("--------------------------------")
+            for t, dd_s, now_s, ref_s in perf_aday:
+                lines.append(f"{t:<6} {dd_s:<10} {now_s:>8} {ref_s:>8}")
 
-    await context.bot.send_message(
-        chat_id=int(ALARM_CHAT_ID),
-        text=msg,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
+        msg = header + "<pre>" + "\n".join(lines) + "</pre>"
+
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     except Exception as e:
         logger.exception("ALTIN live follow error: %s", e)
