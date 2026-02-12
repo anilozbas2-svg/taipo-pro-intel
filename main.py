@@ -3439,18 +3439,23 @@ def schedule_jobs(app: Application) -> None:
             return True  # bist_session_open yoksa "acik" kabul et
     
     async def fetch_universe_rows(ctx):
-    try:
-        tickers_raw = (UNIVERSE_TICKERS or "").strip()
-        if not tickers_raw:
-            return []
+        try:
+            tickers_raw = (UNIVERSE_TICKERS or "").strip()
 
-        parts = [
-            p.strip().upper()
-            for p in tickers_raw.replace("\n", ",").split(",")
-            if p.strip()
-        ]
+            if not tickers_raw:
+                return []
 
-        return [{"ticker": t} for t in parts]
+            parts = [
+                p.strip().upper()
+                for p in tickers_raw.replace("\n", ",").split(",")
+                if p.strip()
+            ]
+
+            rows = []
+            for t in parts:
+                rows.append({"ticker": t})
+
+            return rows
 
     except Exception as e:
         logger.exception("fetch_universe_rows failed: %s", e)
