@@ -3461,27 +3461,17 @@ def schedule_jobs(app: Application) -> None:
             logger.exception("fetch_universe_rows failed: %s", e)
     
     async def telegram_send(ctx, chat_id, text, **kwargs):
-    """
-    Steady/Tomorrow gibi job'ların dışarıdan 'send func' olarak çağırabilmesi için
-    tek tip mesaj gönderici.
-    """
-    try:
-        if not chat_id:
+        try:
+            if not chat_id:
+                return False
+            bot = getattr(ctx, "bot", None)
+            if bot is None:
+                return False
+            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+            return True
+        except Exception as e:
+            logger.exception("telegram_send failed: %s", e)
             return False
-
-        bot = getattr(ctx, "bot", None)
-        if bot is None:
-            return False
-
-        await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            **kwargs
-        )
-        return True
-    except Exception:
-        logger.exception("telegram_send failed")
-        return False
     
     async def job_steady_trend_scan(ctx):
         return await steady_trend_job(
