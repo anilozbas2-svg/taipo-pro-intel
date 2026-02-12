@@ -1302,13 +1302,31 @@ async def build_rows_from_is_list(is_list: List[str], xu100_change: float = floa
 # Signal logic (TopN threshold)
 # =========================================================
 def compute_volume_threshold(rows: List[Dict[str, Any]], top_n: int) -> float:
-    rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
+    rows_with_vol = [
+        r for r in rows
+        if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])
+    ]
     if not rows_with_vol:
         return float("inf")
+
     n = max(1, int(top_n))
-    ranked = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)
+    ranked = sorted(
+        rows_with_vol,
+        key=lambda x: x.get("volume", 0) or 0,
+        reverse=True
+    )
     top = ranked[:n]
-    return float(top[-1]["volume"]) if top else float("inf")
+    base = float(top[-1]["volume"]) if top else float("inf")
+
+    try:
+        factor = float(os.getenv("TOPN_THRESHOLD_FACTOR", "1.00"))
+    except Exception:
+        factor = 1.00
+
+    if factor <= 0:
+        factor = 1.00
+
+    return base * factor
 
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float, top_n: int) -> float:
     threshold = compute_volume_threshold(rows, top_n)
