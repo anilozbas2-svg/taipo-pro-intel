@@ -3437,7 +3437,25 @@ def schedule_jobs(app: Application) -> None:
             return bist_session_open()
         except Exception:
             return True  # bist_session_open yoksa "acik" kabul et
+    
+    async def fetch_universe_rows(ctx):
+    try:
+        tickers_raw = (UNIVERSE_TICKERS or "").strip()
+        if not tickers_raw:
+            return []
 
+        parts = [
+            p.strip().upper()
+            for p in tickers_raw.replace("\n", ",").split(",")
+            if p.strip()
+        ]
+
+        return [{"ticker": t} for t in parts]
+
+    except Exception as e:
+        logger.exception("fetch_universe_rows failed: %s", e)
+        return []
+    
     async def job_steady_trend_scan(ctx):
         return await steady_trend_job(
             ctx,
