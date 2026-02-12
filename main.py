@@ -2682,6 +2682,16 @@ async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode=ParseMode.HTML,
         )
 
+async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        await update.message.reply_text("⏳ ALTIN LIVE manuel tetikleniyor...")
+        await job_altin_live_follow(context, force=True)
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ ALTIN takip manuel hata:\n<code>{e}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
@@ -3574,6 +3584,7 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
+    app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     register_momo_prime(app)
     register_momo_flow(app)
     register_momo_kilit(app)
