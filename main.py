@@ -589,13 +589,18 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
         if not isinstance(r, dict):
             continue
 
-        kind = (
-            (r.get("kind") or r.get("list") or r.get("bucket") or r.get("kategori") or r.get("K") or r.get("status") or "")
-            .strip()
-            .upper()
-        )
+        status = (
+            r.get("status")
+            or r.get("kind")
+            or r.get("list")
+            or r.get("bucket")
+            or r.get("kategori")
+            or r.get("K")
+            or ""
+        ).strip().upper()
 
-        if kind == "ADAY":
+        # ADAY satırlarını yakala (esnek)
+        if status == "ADAY":
             t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
             if t:
                 aday_tickers.append(t)
