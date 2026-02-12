@@ -3473,7 +3473,7 @@ def schedule_jobs(app: Application) -> None:
             logger.exception("telegram_send failed: %s", e)
             return False
     
-    async def job_steady_trend_scan(ctx):
+    async def job_steady_trend_scan(ctx, *args, **kwargs):
         return await steady_trend_job(
             ctx,
             _bist_open_safe,
