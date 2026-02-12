@@ -604,6 +604,37 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
             t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
             if t:
                 aday_tickers.append(t)
+                
+    # DEBUG: ADAY yakalanmadıysa status örneklerini logla
+        if not aday_tickers:
+            try:
+                sample = []
+                for r in (rows or [])[:30]:
+                    if not isinstance(r, dict):
+                        continue
+
+                    s = (
+                        r.get("status")
+                        or r.get("kind")
+                        or r.get("list")
+                        or r.get("bucket")
+                        or r.get("kategori")
+                        or r.get("K")
+                        or ""
+                    )
+
+                    s = str(s).strip()
+                    if s:
+                        sample.append(s)
+
+                logger.info(
+                    "ADAY_DEBUG | rows=%s | status_samples=%s",
+                    len(rows or []),
+                    sample[:10],
+                )
+
+            except Exception as e:
+                logger.warning("ADAY_DEBUG failed: %s", e)
 
     return aday_tickers, ref_close_map
 
