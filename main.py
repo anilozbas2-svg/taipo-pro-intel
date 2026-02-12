@@ -600,7 +600,7 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
         ).strip().upper()
 
         # ADAY satırlarını yakala (esnek)
-        if status == "ADAY":
+        if ("ADAY" in status) or ("RADAR" in status):
             t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
             if t:
                 aday_tickers.append(t)
