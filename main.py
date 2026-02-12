@@ -2851,19 +2851,29 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
         aday_tickers, aday_ref_close_map = get_aday_tickers_from_tomorrow_chain()
 
-        # Güvenlik: yanlış dönüş (tuple) gelirse toparla
+        # Güvenlik: yanlış dönüş (tuple) gelirse toparla (ALTIN)
         if isinstance(ref_close_map, tuple) and len(ref_close_map) == 2:
             altin_tickers, ref_close_map = ref_close_map
 
+        # Güvenlik: yanlış dönüş (tuple) gelirse toparla (ADAY)
+        if isinstance(aday_ref_close_map, tuple) and len(aday_ref_close_map) == 2:
+            aday_tickers, aday_ref_close_map = aday_ref_close_map
+
+        # Güvenlik: map dict değilse boşla
         if not isinstance(ref_close_map, dict):
             ref_close_map = {}
-
         if not isinstance(aday_ref_close_map, dict):
             aday_ref_close_map = {}
 
+        # ALTIN tickers yoksa ref map'ten üret
         if not altin_tickers:
             altin_tickers = list(ref_close_map.keys())[:6]
 
+        # ADAY tickers yoksa aday_ref map'ten üret
+        if not aday_tickers:
+            aday_tickers = list(aday_ref_close_map.keys())[:6]
+
+        # ALTIN hâlâ yoksa uyar ve çık (ADAY boş olabilir ama ALTIN zorunlu)
         if not altin_tickers:
             await context.bot.send_message(
                 chat_id=int(ALARM_CHAT_ID),
