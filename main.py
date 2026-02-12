@@ -3457,9 +3457,9 @@ def schedule_jobs(app: Application) -> None:
 
             return rows
 
-    except Exception as e:
-        logger.exception("fetch_universe_rows failed: %s", e)
-        return []
+        except Exception as e:
+            logger.exception("fetch_universe_rows failed: %s", e)
+            return []
     
     async def job_steady_trend_scan(ctx):
         return await steady_trend_job(
