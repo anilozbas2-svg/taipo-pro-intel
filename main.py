@@ -2891,16 +2891,16 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
         if not aday_tickers:
             aday_tickers = list(aday_ref_close_map.keys())[:6]
 
-        # ALTIN hâlâ yoksa uyar ve çık (ADAY boş olabilir ama ALTIN zorunlu)
-        if not altin_tickers:
+        # ALTIN ve ADAY ikisi de boşsa uyar ve çık
+        if not altin_tickers and not aday_tickers:
             await context.bot.send_message(
                 chat_id=int(ALARM_CHAT_ID),
-                text="⚠️ ALTIN follow: Tomorrow zincirinde ALTIN tickers yok. Önce /tomorrow çalıştır.",
+                text="⚠ ALTIN follow: Tomorrow zincirinde ALTIN veya ADAY tickers yok.",
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
             )
             return
-
+        
         # ===== CANLI: ALTIN + ADAY anlık satırlarını çek =====
         rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
         now_map = {
