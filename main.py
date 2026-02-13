@@ -14,6 +14,20 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
+# ================================
+# LOGGING SETUP
+# ================================
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+
+logger = logging.getLogger("TAIPO_PRO_INTEL")
+
+
 # ==========================
 # MOMO PRIME BALİNA (SAFE IMPORT)
 # ==========================
@@ -31,7 +45,11 @@ except Exception as e:
     MOMO_PRIME_ENABLED = False
     MOMO_PRIME_CHAT_ID = None
     MOMO_PRIME_INTERVAL_MIN = None
-    logger.warning("MOMO PRIME disabled (import error): %s", e)
+
+    try:
+        logger.exception("MOMO PRIME import failed; feature disabled: %s", e)
+    except Exception:
+        pass
 
 from momo_flow import (
     register_momo_flow,
@@ -58,20 +76,6 @@ try:
     )
 except Exception as e:
     job_steady_trend_scan = None
-    STEADY_TREND_ENABLED = False
-    STEADY_TREND_CHAT_ID = ""
-    STEADY_TREND_INTERVAL_MIN = 0
-    logger.warning("STEADY_TREND disabled (import error): %s", e)
-    
-try:
-    from steady_trend import (
-        job_steady_trend_scan as steady_trend_job,
-        STEADY_TREND_ENABLED,
-        STEADY_TREND_CHAT_ID,
-        STEADY_TREND_INTERVAL_MIN,
-    )
-except Exception as e:
-    steady_trend_job = None
     STEADY_TREND_ENABLED = False
     STEADY_TREND_CHAT_ID = ""
     STEADY_TREND_INTERVAL_MIN = 0
@@ -277,24 +281,16 @@ def write_trade_log(record: dict) -> None:
 def open_or_update_tomorrow_chain(day_key: str, tom_rows: List[Dict[str, Any]]) -> None:
     try:
         global TOMORROW_CHAINS
-
         if not isinstance(TOMORROW_CHAINS, dict):
             TOMORROW_CHAINS = {}
 
-        # zinciri güncelle (dict formatına geçir)
-        TOMORROW_CHAINS[day_key] = {
-            "rows": tom_rows or []
-        }
+        # zinciri güncelle
+        TOMORROW_CHAINS[day_key] = tom_rows or []
 
         # kalıcı dosyaya yaz
         _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
 
-        logger.info(
-            "Tomorrow chain updated: day_key=%s rows=%d",
-            day_key,
-            len(tom_rows or []),
-        )
-
+        logger.info("Tomorrow chain updated: day_key=%s rows=%d", day_key, len(tom_rows or []))
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
@@ -581,7 +577,7 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
 
         if isinstance(chain_obj, dict):
             rows = chain_obj.get("rows", []) or []
-            ref_close_map = chain_obj.get("ref_close_aday") or chain_obj.get("ref_close") or {}
+            ref_close_map = chain_obj.get("ref_close", {}) or {}
         elif isinstance(chain_obj, list):
             rows = chain_obj
             # ref_close yoksa boş bırak
@@ -597,57 +593,21 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
         if not isinstance(r, dict):
             continue
 
-        label = " ".join(
-            str(x or "")
-            for x in [
-                r.get("status"),
-                r.get("kind"),
-                r.get("list"),
-                r.get("bucket"),
-                r.get("kategori"),
-                r.get("K"),
-                r.get("title"),
-                r.get("name"),
-            ]
+        status = (
+            r.get("status")
+            or r.get("kind")
+            or r.get("list")
+            or r.get("bucket")
+            or r.get("kategori")
+            or r.get("K")
+            or ""
         ).strip().upper()
 
-        is_aday = (("ADAY" in label) or ("RADAR" in label)) and ("ALTIN" not in label)
-
-        if is_aday:
+        # ADAY satırlarını yakala (esnek)
+        if ("ADAY" in status) or ("RADAR" in status):
             t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
             if t:
                 aday_tickers.append(t)
-                
-    # DEBUG: ADAY yakalanmadıysa status örneklerini logla
-        if not aday_tickers:
-            try:
-                sample = []
-                for r in (rows or [])[:30]:
-                    if not isinstance(r, dict):
-                        continue
-
-                    s = (
-                        r.get("status")
-                        or r.get("kind")
-                        or r.get("list")
-                        or r.get("bucket")
-                        or r.get("kategori")
-                        or r.get("K")
-                        or ""
-                    )
-
-                    s = str(s).strip()
-                    if s:
-                        sample.append(s)
-
-                logger.info(
-                    "ADAY_DEBUG | rows=%s | status_samples=%s",
-                    len(rows or []),
-                    sample[:10],
-                )
-
-            except Exception as e:
-                logger.warning("ADAY_DEBUG failed: %s", e)
 
     return aday_tickers, ref_close_map
 
@@ -744,10 +704,15 @@ def within_alarm_window(dt: datetime) -> bool:
     return start <= t <= end
 
 def within_whale_window(dt: datetime) -> bool:
-    start = dtime(WHALE_START_HOUR, WHHALE_START_MIN) if False else dtime(WHALE_START_HOUR, WHALE_START_MIN)
+    start = dtime(WHALE_START_HOUR, WHALE_START_MIN)
     end = dtime(WHALE_END_HOUR, WHALE_END_MIN)
+
     t = dt.timetz().replace(tzinfo=None)
-    return start <= t <= end
+
+    # Pencere gece yarısını aşıyorsa (örn 23:00–01:00)
+    if start <= end:
+        return start <= t <= end
+    return t >= start or t <= end
 
 def st_short(sig_text: str) -> str:
     if sig_text == "TOPLAMA":
@@ -2223,7 +2188,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ref_day_key = today_key_tradingday()
 
         # tom_rows list ise direkt koy
-        TOMORROW_CHAINS[ref_day_key] = list(tom_rows)
+        TOMORROW_CHAINS[ref_day_key] = list(tom_rows or [])
 
         logger.info(
             "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
@@ -2259,7 +2224,10 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
-        perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
+        perf_section = build_tomorrow_altin_perf_section(
+        tom_rows,
+        TOMORROW_CHAINS,
+    )
     except Exception:
         perf_section = ""
 
@@ -2649,95 +2617,6 @@ async def job_momo_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     except Exception as e:
         logger.exception("MOMO_SCAN error: %s", e)
-
-async def job_alarm_scan(
-    context: ContextTypes.DEFAULT_TYPE,
-    force: bool = False
-) -> None:
-
-    logger.info(
-        "job_alarm_scan tick | force=%s | ALARM_ENABLED=%s | CHAT_ID=%s",
-        force,
-        ALARM_ENABLED,
-        ALARM_CHAT_ID,
-    )
-    if not ALARM_ENABLED or not ALARM_CHAT_ID:
-        return
-    if (not force) and (not within_alarm_window(now_tr())):
-        return
-    # MOMO  (ALARM çalışırken MOMO cache var mı?)
-    try:
-        momo_count = len(MOMO_CACHE) if isinstance(MOMO_CACHE, dict) else -1
-    except Exception:
-        momo_count = -1
-
-    logger.info("job_alarm_scan | MOMO_CACHE count=%s", momo_count)
-
-    bist200_list = env_csv("BIST200_TICKERS")
-    if not bist200_list:
-        return
-
-    try:
-        # XU100
-        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
-        global LAST_REGIME
-        LAST_REGIME = reg
-
-        if REJIM_GATE_ALARM and reg.get("block"):
-            return
-
-        # --- Ana liste (BIST200) ---
-        all_rows = await build_rows_from_is_list(bist200_list, xu_change)
-        update_history_from_rows(all_rows)
-        min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
-        thresh_s = format_threshold(min_vol)
-
-        alarm_rows = filter_new_alarms(all_rows)
-        if not alarm_rows:
-            return
-
-        ts_now = time.time()
-        for r in alarm_rows:
-            mark_alarm_sent((r.get("ticker") or "").strip(), ts_now)
-        save_last_alarm_ts()
-
-        # --- Watchlist ---
-        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
-        watch = (watch or [])[:WATCHLIST_MAX]
-        w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
-        if w_rows:
-            _apply_signals_with_threshold(w_rows, xu_change, min_vol)
-
-        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
-        tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
-
-        # --- Alarm mesajını üret ---
-        text = build_alarm_message(
-            alarm_rows=alarm_rows,
-            watch_rows=w_rows,
-            xu_close=xu_close,
-            xu_change=xu_change,
-            thresh_s=thresh_s,
-            top_n=VOLUME_TOP_N,
-            reg=reg,
-        )
-
-        if tomorrow_perf_section:
-            text = text + tomorrow_perf_section
-
-        await context.bot.send_message(
-            chat_id=int(ALARM_CHAT_ID),
-            text=text,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-
-    except Exception as e:
-        logger.exception("Alarm job error: %s", e)
-        return
 
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
