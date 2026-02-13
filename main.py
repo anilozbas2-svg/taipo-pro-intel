@@ -3317,30 +3317,6 @@ def schedule_jobs(app: Application) -> None:
         # MOMO_* degiskenleri projede yoksa patlamasin diye
         logger.info("MOMO degiskenleri tanimli degil -> momo schedule atlandi.")
         
-    # ----------------------------
-    # MOMO PRIME BALİNA scan repeating (isolated)
-    # ----------------------------
-    try:
-        if MOMO_PRIME_ENABLED and MOMO_PRIME_CHAT_ID:
-            first_p = next_aligned_run(MOMO_PRIME_INTERVAL_MIN)
-            jq.run_repeating(
-                job_momo_prime_scan,
-                interval=MOMO_PRIME_INTERVAL_MIN * 60,
-                first=first_p,
-                name="momo_prime_scan_repeating",
-            )
-            logger.info(
-                "MOMO PRIME scan scheduled every %d min. First=%s",
-                MOMO_PRIME_INTERVAL_MIN,
-                first_p.isoformat(),
-            )
-        else:
-            logger.info("MOMO PRIME kapali veya MOMO_PRIME_CHAT_ID yok -> prime calismayacak.")
-    except NameError:
-        logger.info("MOMO PRIME degiskenleri tanimli degil -> prime schedule atlandi.")
-    except Exception as e:
-        logger.error("MOMO PRIME schedule error: %s", e)
-        
     # ==========================
     # MOMO FLOW (ROCKET)
     # ==========================
