@@ -589,18 +589,23 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
         if not isinstance(r, dict):
             continue
 
-        status = (
-            r.get("status")
-            or r.get("kind")
-            or r.get("list")
-            or r.get("bucket")
-            or r.get("kategori")
-            or r.get("K")
-            or ""
+        label = " ".join(
+            str(x or "")
+            for x in [
+                r.get("status"),
+                r.get("kind"),
+                r.get("list"),
+                r.get("bucket"),
+                r.get("kategori"),
+                r.get("K"),
+                r.get("title"),
+                r.get("name"),
+            ]
         ).strip().upper()
 
-        # ADAY satırlarını yakala (esnek)
-        if ("ADAY" in status) or ("RADAR" in status):
+        is_aday = (("ADAY" in label) or ("RADAR" in label)) and ("ALTIN" not in label)
+
+        if is_aday:
             t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
             if t:
                 aday_tickers.append(t)
