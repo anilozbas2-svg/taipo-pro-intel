@@ -573,7 +573,7 @@ def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
 
         if isinstance(chain_obj, dict):
             rows = chain_obj.get("rows", []) or []
-            ref_close_map = chain_obj.get("ref_close", {}) or {}
+            ref_close_map = chain_obj.get("ref_close_aday") or chain_obj.get("ref_close") or {}
         elif isinstance(chain_obj, list):
             rows = chain_obj
             # ref_close yoksa boş bırak
