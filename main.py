@@ -278,19 +278,19 @@ def write_trade_log(record: dict) -> None:
     except Exception as e:
         logger.exception("Trade log write error: %s", e)
 
-def open_or_update_tomorrow_chain(day_key: str, tom_rows: List[Dict[str, Any]]) -> None:
+def open_or_update_tomorrow_chain(day_key: str, : List[Dict[str, Any]]) -> None:
     try:
         global TOMORROW_CHAINS
         if not isinstance(TOMORROW_CHAINS, dict):
             TOMORROW_CHAINS = {}
 
         # zinciri güncelle
-        TOMORROW_CHAINS[day_key] = tom_rows or []
+        TOMORROW_CHAINS[day_key] =  or []
 
         # kalıcı dosyaya yaz
         _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
 
-        logger.info("Tomorrow chain updated: day_key=%s rows=%d", day_key, len(tom_rows or []))
+        logger.info("Tomorrow chain updated: day_key=%s rows=%d", day_key, len( or []))
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
@@ -1764,11 +1764,12 @@ def save_tomorrow_(
 ) -> None:
     try:
         day_key = today_key_tradingday()
-        snap = _load_json(TOMORROW__FILE)
+        snap = _load_json(TOMORROW_FILE)
         if not isinstance(snap, dict):
             snap = {}
 
         items: List[Dict[str, Any]] = []
+
         for r in (tom_rows + cand_rows):
             t = (r.get("ticker") or "").strip().upper()
             cl = r.get("close", float("nan"))
@@ -1778,20 +1779,25 @@ def save_tomorrow_(
             if (not t) or (cl != cl):
                 continue
 
+            # ✅ ALTIN/ADAY etiketini diske yazarken garanti et
+            kind_val = (r.get("signal_text") or r.get("kind") or "")
+            if r in cand_rows:
+                kind_val = f"ADAY {kind_val}".strip()
+
             items.append(
                 {
                     "ticker": t,
                     "ref_close": float(cl),
                     "change": float(ch) if ch == ch else None,
                     "volume": float(vol) if vol == vol else None,
-                    "kind": (r.get("signal_text") or r.get("kind") or ""),
+                    "kind": kind_val,
                     "saved_at": now_tr().isoformat(),
                     "xu100_change": float(xu_change) if xu_change == xu_change else None,
                 }
             )
 
         snap[day_key] = items
-        _atomic_write_json(TOMORROW__FILE, snap)
+        _atomic_write_json(TOMORROW_FILE, snap)
 
     except Exception as e:
         logger.warning("save_tomorrow_ failed: %s", e)
@@ -2170,9 +2176,9 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         return
 
-    tom_rows = build_tomorrow_rows(rows)
-    cand_rows = build_candidate_rows(rows, tom_rows)
-    save_tomorrow_(tom_rows, cand_rows, xu_change)
+     = build_tomorrow_rows(rows)
+    cand_rows = build_candidate_rows(rows, )
+    save_tomorrow_(, cand_rows, xu_change)
     
     # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard)
     try:
@@ -2187,8 +2193,8 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # En yaygın kullanım: { ref_day_key: [rows...] }
         ref_day_key = today_key_tradingday()
 
-        # tom_rows list ise direkt koy
-        TOMORROW_CHAINS[ref_day_key] = list(tom_rows or [])
+        #  list ise direkt koy
+        TOMORROW_CHAINS[ref_day_key] = list( or [])
 
         logger.info(
             "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
@@ -2207,14 +2213,14 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         if "open_or_update_tomorrow_chain" in globals():
             ref_day_key = today_key_tradingday()
-            open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+            open_or_update_tomorrow_chain(ref_day_key, )
         else:
             logger.info("Tomorrow chain disabled: open_or_update_tomorrow_chain not defined.")
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
     msg = r0_block + build_tomorrow_message(
-        tom_rows,
+        ,
         cand_rows,
         xu_close,
         xu_change,
@@ -2225,7 +2231,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
         perf_section = build_tomorrow_altin_perf_section(
-        tom_rows,
+        ,
         TOMORROW_CHAINS,
     )
     except Exception:
@@ -2695,9 +2701,9 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
                 + "\n\n"
             )
 
-        tom_rows = build_tomorrow_rows(rows)
-        cand_rows = build_candidate_rows(rows, tom_rows)
-        save_tomorrow_(tom_rows, cand_rows, xu_change)
+         = build_tomorrow_rows(rows)
+        cand_rows = build_candidate_rows(rows, )
+        save_tomorrow_(, cand_rows, xu_change)
 
         # ==============================
         # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
@@ -2706,10 +2712,10 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         TOMORROW_CHAINS[key] = {
             "ts": time.time(),
-            "rows": tom_rows,
+            "rows": ,
             "ref_close": {
                 (r.get("symbol") or ""): r.get("ref_close")
-                for r in (tom_rows or [])
+                for r in ( or [])
                 if r.get("symbol")
             },
         }
@@ -2717,11 +2723,11 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info(
             "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
             key,
-            len(tom_rows),
+            len(),
         )
 
         msg = r0_block + build_tomorrow_message(
-            tom_rows,
+            ,
             cand_rows,
             xu_close,
             xu_change,
