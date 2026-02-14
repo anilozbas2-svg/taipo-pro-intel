@@ -290,11 +290,7 @@ def open_or_update_tomorrow_chain(day_key: str, tom_rows: List[Dict[str, Any]]) 
         # kalıcı dosyaya yaz
         _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
 
-        logger.info(
-            "Tomorrow chain updated: day_key=%s rows=%d",
-            day_key,
-            len(tom_rows or []),
-        )
+        logger.info("Tomorrow chain updated: day_key=%s rows=%d", day_key, len(tom_rows or []))
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
@@ -1768,12 +1764,11 @@ def save_tomorrow_(
 ) -> None:
     try:
         day_key = today_key_tradingday()
-        snap = _load_json(TOMORROW_FILE)
+        snap = _load_json(TOMORROW__FILE)
         if not isinstance(snap, dict):
             snap = {}
 
         items: List[Dict[str, Any]] = []
-
         for r in (tom_rows + cand_rows):
             t = (r.get("ticker") or "").strip().upper()
             cl = r.get("close", float("nan"))
@@ -1783,25 +1778,20 @@ def save_tomorrow_(
             if (not t) or (cl != cl):
                 continue
 
-            # ✅ ALTIN/ADAY etiketini diske yazarken garanti et
-            kind_val = (r.get("signal_text") or r.get("kind") or "")
-            if r in cand_rows:
-                kind_val = f"ADAY {kind_val}".strip()
-
             items.append(
                 {
                     "ticker": t,
                     "ref_close": float(cl),
                     "change": float(ch) if ch == ch else None,
                     "volume": float(vol) if vol == vol else None,
-                    "kind": kind_val,
+                    "kind": (r.get("signal_text") or r.get("kind") or ""),
                     "saved_at": now_tr().isoformat(),
                     "xu100_change": float(xu_change) if xu_change == xu_change else None,
                 }
             )
 
         snap[day_key] = items
-        _atomic_write_json(TOMORROW_FILE, snap)
+        _atomic_write_json(TOMORROW__FILE, snap)
 
     except Exception as e:
         logger.warning("save_tomorrow_ failed: %s", e)
@@ -2140,64 +2130,80 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-# ✅ R0 (UÇAN) tespit edilenleri ayrı blokta göster
-    r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (RO)"]
+async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        return
+    await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
+    xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+    update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+    reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+
+    global LAST_REGIME
+    LAST_REGIME = reg
+
+    rows = await build_rows_from_is_list(bist200_list, xu_change)
+    update_history_from_rows(rows)
+    min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+    thresh_s = format_threshold(min_vol)
+
+    # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
+    r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
     r0_block = ""
     if r0_rows:
         r0_rows = sorted(
             r0_rows,
             key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
-            reverse=True,
+            reverse=True
         )[:8]
-        r0_block = make_table(
-            r0_rows,
-            "🚀 <b>RO - UÇANLAR (Erken Yakalananlar)</b>",
-            include_kind=True,
-        ) + "\n\n"
+        r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
 
-    # ✅ Rejim gate (block) ise sadece rapor yaz ve çık
     if REJIM_GATE_TOMORROW and reg.get("block"):
         msg = (
-            f"🧩 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
+            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
             f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
             f"{format_regime_line(reg)}\n\n"
             f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
             f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
         )
-        await update.message.reply_text(
-            msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         return
 
-    # ✅ Tomorrow satırlarını üret
     tom_rows = build_tomorrow_rows(rows)
     cand_rows = build_candidate_rows(rows, tom_rows)
-
-    # ✅ Disk snapshot (Tomorrow / Aday) yaz
     save_tomorrow_(tom_rows, cand_rows, xu_change)
-
-    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard) - SAFE
+    
+    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard)
     try:
-        if "TOMORROW_CHAINS" not in globals() or not isinstance(globals()["TOMORROW_CHAINS"], dict):
-            globals()["TOMORROW_CHAINS"] = {}
+        global TOMORROW_CHAINS
 
+        # Her zaman dict standardına zorla
+        if not isinstance(TOMORROW_CHAINS, dict):
+            TOMORROW_CHAINS = {}
+
+        TOMORROW_CHAINS.clear()
+
+        # En yaygın kullanım: { ref_day_key: [rows...] }
         ref_day_key = today_key_tradingday()
-        globals()["TOMORROW_CHAINS"][ref_day_key] = tom_rows or []
+
+        # tom_rows list ise direkt koy
+        TOMORROW_CHAINS[ref_day_key] = list(tom_rows or [])
 
         logger.info(
             "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
             ref_day_key,
-            len(globals()["TOMORROW_CHAINS"][ref_day_key]),
+            len(TOMORROW_CHAINS[ref_day_key]),
         )
+
     except Exception as e:
         logger.warning(
             "CMD_TOMORROW | Failed to update TOMORROW_CHAINS in-memory: %s",
             e,
         )
-
-    # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir) - TEK BLOK
+    
+    
+# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
     try:
         if "open_or_update_tomorrow_chain" in globals():
             ref_day_key = today_key_tradingday()
@@ -2207,7 +2213,6 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
-    # ✅ Ana mesajı oluştur
     msg = r0_block + build_tomorrow_message(
         tom_rows,
         cand_rows,
@@ -2220,9 +2225,9 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
         perf_section = build_tomorrow_altin_perf_section(
-            tom_rows,
-            globals().get("TOMORROW_CHAINS", {}),
-        )
+        tom_rows,
+        TOMORROW_CHAINS,
+    )
     except Exception:
         perf_section = ""
 
@@ -2234,7 +2239,6 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
-    return
      
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
@@ -2674,57 +2678,47 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         update_history_from_rows(rows)
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
-        
+
         # ✅ R0 bloğu (otomatik gönderimde de üstte görünsün)
-        r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (RO)"]
+        r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
         r0_block = ""
         if r0_rows:
             r0_rows = sorted(
                 r0_rows,
-                key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
+                key=lambda x: (x.get("volume") or 0)
+                if x.get("volume") == x.get("volume")
+                else 0,
                 reverse=True,
             )[:8]
             r0_block = (
-                make_table(
-                    r0_rows,
-                    "🚀 <b>RO - UÇANLAR (Erken Yakalananlar)</b>",
-                    include_kind=True,
-                )
+                make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True)
                 + "\n\n"
             )
 
         tom_rows = build_tomorrow_rows(rows)
         cand_rows = build_candidate_rows(rows, tom_rows)
-
         save_tomorrow_(tom_rows, cand_rows, xu_change)
 
-        # ==========================
+        # ==============================
         # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
-        # ==========================
+        # ==============================
         key = today_key_tradingday()  # follow ile aynı key
 
-        try:
-            global TOMORROW_CHAINS
-            if not isinstance(TOMORROW_CHAINS, dict):
-                TOMORROW_CHAINS = {}
+        TOMORROW_CHAINS[key] = {
+            "ts": time.time(),
+            "rows": tom_rows,
+            "ref_close": {
+                (r.get("symbol") or ""): r.get("ref_close")
+                for r in (tom_rows or [])
+                if r.get("symbol")
+            },
+        }
 
-            TOMORROW_CHAINS[key] = {
-                "ts": time.time(),
-                "rows": tom_rows,
-                "ref_close": {
-                    (r.get("symbol") or ""): r.get("ref_close")
-                    for r in (tom_rows or [])
-                    if r.get("symbol")
-                },
-            }
-
-            logger.info(
-                "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
-                key,
-                len(tom_rows or []),
-            )
-        except Exception as e:
-            logger.warning("Tomorrow zinciri RAM yazma failed: %s", e)
+        logger.info(
+            "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
+            key,
+            len(tom_rows),
+        )
 
         msg = r0_block + build_tomorrow_message(
             tom_rows,
@@ -2734,7 +2728,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
             thresh_s,
             reg,
         )
-        
+
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
             text=msg,
