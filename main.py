@@ -2244,9 +2244,9 @@ except Exception as e:
     # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
         perf_section = build_tomorrow_altin_perf_section(
-        ,
-        TOMORROW_CHAINS,
-    )
+            tom_rows,
+            TOMORROW_CHAINS,
+        )
     except Exception:
         perf_section = ""
 
