@@ -2140,92 +2140,74 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    bist200_list = env_csv("BIST200_TICKERS")
-    if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
-        return
-    await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
-    xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
-    update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
-    reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
-    global LAST_REGIME
-    LAST_REGIME = reg
-
-    rows = await build_rows_from_is_list(bist200_list, xu_change)
-    update_history_from_rows(rows)
-    min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
-    thresh_s = format_threshold(min_vol)
-
-    # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
-    r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
+# ✅ R0 (UÇAN) tespit edilenleri ayrı blokta göster
+    r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (RO)"]
     r0_block = ""
     if r0_rows:
         r0_rows = sorted(
             r0_rows,
             key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
-            reverse=True
+            reverse=True,
         )[:8]
-        r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
+        r0_block = make_table(
+            r0_rows,
+            "🚀 <b>RO - UÇANLAR (Erken Yakalananlar)</b>",
+            include_kind=True,
+        ) + "\n\n"
 
+    # ✅ Rejim gate (block) ise sadece rapor yaz ve çık
     if REJIM_GATE_TOMORROW and reg.get("block"):
         msg = (
-            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
+            f"🧩 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
             f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
             f"{format_regime_line(reg)}\n\n"
             f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
             f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
         )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         return
 
-tom_rows = build_tomorrow_rows(rows)
-cand_rows = build_candidate_rows(rows, tom_rows)
-save_tomorrow_(tom_rows, cand_rows, xu_change)
+    # ✅ Tomorrow satırlarını üret
+    tom_rows = build_tomorrow_rows(rows)
+    cand_rows = build_candidate_rows(rows, tom_rows)
 
-# 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard) - SAFE
-        try:
-            # global kullanma -> "annotated name can't be global" hatasını bitirir
-            if "TOMORROW_CHAINS" not in globals() or not isinstance(globals()["TOMORROW_CHAINS"], dict):
-                globals()["TOMORROW_CHAINS"] = {}
+    # ✅ Disk snapshot (Tomorrow / Aday) yaz
+    save_tomorrow_(tom_rows, cand_rows, xu_change)
 
-            # En yaygın kullanım: { ref_day_key: [rows...] }
-            ref_day_key = today_key_tradingday()
-            globals()["TOMORROW_CHAINS"][ref_day_key] = tom_rows or []
+    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard) - SAFE
+    try:
+        if "TOMORROW_CHAINS" not in globals() or not isinstance(globals()["TOMORROW_CHAINS"], dict):
+            globals()["TOMORROW_CHAINS"] = {}
 
-            logger.info(
-                "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
-                ref_day_key,
-                len(globals()["TOMORROW_CHAINS"][ref_day_key]),
-            )
-        except Exception as e:
-            logger.warning(
-                "CMD_TOMORROW | Failed to update TOMORROW_CHAINS in-memory: %s",
-                e,
-            )
-
-# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
-try:
-    if "open_or_update_tomorrow_chain" in globals():
         ref_day_key = today_key_tradingday()
-        open_or_update_tomorrow_chain(ref_day_key, tom_rows)
-    else:
-        logger.info("Tomorrow chain disabled: open_or_update_tomorrow_chain not defined.")
-except Exception as e:
-    logger.warning("open_or_update_tomorrow_chain failed: %s", e)
-    
-    
-# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
+        globals()["TOMORROW_CHAINS"][ref_day_key] = tom_rows or []
+
+        logger.info(
+            "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
+            ref_day_key,
+            len(globals()["TOMORROW_CHAINS"][ref_day_key]),
+        )
+    except Exception as e:
+        logger.warning(
+            "CMD_TOMORROW | Failed to update TOMORROW_CHAINS in-memory: %s",
+            e,
+        )
+
+    # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir) - TEK BLOK
     try:
         if "open_or_update_tomorrow_chain" in globals():
             ref_day_key = today_key_tradingday()
-            open_or_update_tomorrow_chain(ref_day_key, )
+            open_or_update_tomorrow_chain(ref_day_key, tom_rows)
         else:
             logger.info("Tomorrow chain disabled: open_or_update_tomorrow_chain not defined.")
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
+    # ✅ Ana mesajı oluştur
     msg = r0_block + build_tomorrow_message(
         tom_rows,
         cand_rows,
@@ -2239,7 +2221,7 @@ except Exception as e:
     try:
         perf_section = build_tomorrow_altin_perf_section(
             tom_rows,
-            TOMORROW_CHAINS,
+            globals().get("TOMORROW_CHAINS", {}),
         )
     except Exception:
         perf_section = ""
@@ -2252,6 +2234,7 @@ except Exception as e:
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
+    return
      
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
