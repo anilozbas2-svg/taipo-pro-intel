@@ -2181,8 +2181,9 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
      = build_tomorrow_rows(rows)
-    cand_rows = build_candidate_rows(rows, )
-    save_tomorrow_(, cand_rows, xu_change)
+    tom_rows = build_tomorrow_rows(rows)
+cand_rows = build_candidate_rows(rows, tom_rows)
+save_tomorrow_(tom_rows, cand_rows, xu_change)
     
     # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard)
     try:
