@@ -2184,32 +2184,26 @@ tom_rows = build_tomorrow_rows(rows)
 cand_rows = build_candidate_rows(rows, tom_rows)
 save_tomorrow_(tom_rows, cand_rows, xu_change)
 
-# 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard)
-try:
-    global TOMORROW_CHAINS
+# 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard) - SAFE
+        try:
+            # global kullanma -> "annotated name can't be global" hatasını bitirir
+            if "TOMORROW_CHAINS" not in globals() or not isinstance(globals()["TOMORROW_CHAINS"], dict):
+                globals()["TOMORROW_CHAINS"] = {}
 
-    # Her zaman dict standardına zorla
-    if not isinstance(TOMORROW_CHAINS, dict):
-        TOMORROW_CHAINS = {}
+            # En yaygın kullanım: { ref_day_key: [rows...] }
+            ref_day_key = today_key_tradingday()
+            globals()["TOMORROW_CHAINS"][ref_day_key] = tom_rows or []
 
-    TOMORROW_CHAINS.clear()
-
-    # En yaygın kullanım: { ref_day_key: [rows...] }
-    ref_day_key = today_key_tradingday()
-
-    # list ise direkt koy
-    TOMORROW_CHAINS[ref_day_key] = tom_rows or []
-
-    logger.info(
-        "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
-        ref_day_key,
-        len(TOMORROW_CHAINS[ref_day_key]),
-    )
-except Exception as e:
-    logger.warning(
-        "CMD_TOMORROW | Failed to update TOMORROW_CHAINS in-memory: %s",
-        e,
-    )
+            logger.info(
+                "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
+                ref_day_key,
+                len(globals()["TOMORROW_CHAINS"][ref_day_key]),
+            )
+        except Exception as e:
+            logger.warning(
+                "CMD_TOMORROW | Failed to update TOMORROW_CHAINS in-memory: %s",
+                e,
+            )
 
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
 try:
