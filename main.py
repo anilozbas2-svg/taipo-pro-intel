@@ -2170,47 +2170,56 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
 
     if REJIM_GATE_TOMORROW and reg.get("block"):
-        msg = (
-            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
-            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
-            f"{format_regime_line(reg)}\n\n"
-            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
-            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
-        )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        return
+    msg = (
+        f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
+        f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
+        f"{format_regime_line(reg)}\n\n"
+        f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
+        f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    return
 
-    tom_rows = build_tomorrow_rows(rows)
-    cand_rows = build_candidate_rows(rows, tom_rows)
-    save_tomorrow_(tom_rows, cand_rows, xu_change)
-    
-    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard)
-    try:
-        global TOMORROW_CHAINS
+tom_rows = build_tomorrow_rows(rows)
+cand_rows = build_candidate_rows(rows, tom_rows)
+save_tomorrow_(tom_rows, cand_rows, xu_change)
 
-        # Her zaman dict standardına zorla
-        if not isinstance(TOMORROW_CHAINS, dict):
-            TOMORROW_CHAINS = {}
+# 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard)
+try:
+    global TOMORROW_CHAINS
 
-        TOMORROW_CHAINS.clear()
+    # Her zaman dict standardına zorla
+    if not isinstance(TOMORROW_CHAINS, dict):
+        TOMORROW_CHAINS = {}
 
-        # En yaygın kullanım: { ref_day_key: [rows...] }
+    TOMORROW_CHAINS.clear()
+
+    # En yaygın kullanım: { ref_day_key: [rows...] }
+    ref_day_key = today_key_tradingday()
+
+    # list ise direkt koy
+    TOMORROW_CHAINS[ref_day_key] = tom_rows or []
+
+    logger.info(
+        "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
+        ref_day_key,
+        len(TOMORROW_CHAINS[ref_day_key]),
+    )
+except Exception as e:
+    logger.warning(
+        "CMD_TOMORROW | Failed to update TOMORROW_CHAINS in-memory: %s",
+        e,
+    )
+
+# ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
+try:
+    if "open_or_update_tomorrow_chain" in globals():
         ref_day_key = today_key_tradingday()
-
-        #  list ise direkt koy
-        TOMORROW_CHAINS[ref_day_key] = list( or [])
-
-        logger.info(
-            "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
-            ref_day_key,
-            len(TOMORROW_CHAINS[ref_day_key]),
-        )
-
-    except Exception as e:
-        logger.warning(
-            "CMD_TOMORROW | Failed to update TOMORROW_CHAINS in-memory: %s",
-            e,
-        )
+        open_or_update_tomorrow_chain(ref_day_key, tom_rows)
+    else:
+        logger.info("Tomorrow chain disabled: open_or_update_tomorrow_chain not defined.")
+except Exception as e:
+    logger.warning("open_or_update_tomorrow_chain failed: %s", e)
     
     
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
