@@ -2697,66 +2697,66 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         update_history_from_rows(rows)
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
         thresh_s = format_threshold(min_vol)
-
+        
         # ✅ R0 bloğu (otomatik gönderimde de üstte görünsün)
-                r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (RO)"]
-                r0_block = ""
-                if r0_rows:
-                    r0_rows = sorted(
-                        r0_rows,
-                        key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
-                        reverse=True,
-                    )[:8]
-                    r0_block = (
-                        make_table(
-                            r0_rows,
-                            "🚀 <b>RO - UÇANLAR (Erken Yakalananlar)</b>",
-                            include_kind=True,
-                        )
-                        + "\n\n"
-                    )
+        r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (RO)"]
+        r0_block = ""
+        if r0_rows:
+            r0_rows = sorted(
+                r0_rows,
+                key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
+                reverse=True,
+            )[:8]
+            r0_block = (
+                make_table(
+                    r0_rows,
+                    "🚀 <b>RO - UÇANLAR (Erken Yakalananlar)</b>",
+                    include_kind=True,
+                )
+                + "\n\n"
+            )
 
-                tom_rows = build_tomorrow_rows(rows)
-                cand_rows = build_candidate_rows(rows, tom_rows)
+        tom_rows = build_tomorrow_rows(rows)
+        cand_rows = build_candidate_rows(rows, tom_rows)
 
-                save_tomorrow_(tom_rows, cand_rows, xu_change)
+        save_tomorrow_(tom_rows, cand_rows, xu_change)
 
-    # ==========================
-    # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
-    # ==========================
-    key = today_key_tradingday()  # follow ile aynı key
+        # ==========================
+        # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
+        # ==========================
+        key = today_key_tradingday()  # follow ile aynı key
 
-    try:
-        global TOMORROW_CHAINS
-        if not isinstance(TOMORROW_CHAINS, dict):
-            TOMORROW_CHAINS = {}
+        try:
+            global TOMORROW_CHAINS
+            if not isinstance(TOMORROW_CHAINS, dict):
+                TOMORROW_CHAINS = {}
 
-        TOMORROW_CHAINS[key] = {
-            "ts": time.time(),
-            "rows": tom_rows,
-            "ref_close": {
-                (r.get("symbol") or ""): r.get("ref_close")
-                for r in (tom_rows or [])
-                if r.get("symbol")
-            },
-        }
+            TOMORROW_CHAINS[key] = {
+                "ts": time.time(),
+                "rows": tom_rows,
+                "ref_close": {
+                    (r.get("symbol") or ""): r.get("ref_close")
+                    for r in (tom_rows or [])
+                    if r.get("symbol")
+                },
+            }
 
-        logger.info(
-            "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
-            key,
-            len(tom_rows or []),
+            logger.info(
+                "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
+                key,
+                len(tom_rows or []),
+            )
+        except Exception as e:
+            logger.warning("Tomorrow zinciri RAM yazma failed: %s", e)
+
+        msg = r0_block + build_tomorrow_message(
+            tom_rows,
+            cand_rows,
+            xu_close,
+            xu_change,
+            thresh_s,
+            reg,
         )
-    except Exception as e:
-        logger.warning("Tomorrow zinciri RAM yazma failed: %s", e)
-
-    msg = r0_block + build_tomorrow_message(
-        tom_rows,
-        cand_rows,
-        xu_close,
-        xu_change,
-        thresh_s,
-        reg,
-    )
         
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
