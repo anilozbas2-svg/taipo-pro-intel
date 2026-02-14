@@ -2233,7 +2233,7 @@ except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
     msg = r0_block + build_tomorrow_message(
-        ,
+        tom_rows,
         cand_rows,
         xu_close,
         xu_change,
