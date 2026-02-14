@@ -2170,15 +2170,15 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
 
     if REJIM_GATE_TOMORROW and reg.get("block"):
-    msg = (
-        f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
-        f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
-        f"{format_regime_line(reg)}\n\n"
-        f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
-        f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
-    )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-    return
+        msg = (
+            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
+            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
+            f"{format_regime_line(reg)}\n\n"
+            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
+            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        return
 
 tom_rows = build_tomorrow_rows(rows)
 cand_rows = build_candidate_rows(rows, tom_rows)
