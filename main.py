@@ -278,19 +278,23 @@ def write_trade_log(record: dict) -> None:
     except Exception as e:
         logger.exception("Trade log write error: %s", e)
 
-def open_or_update_tomorrow_chain(day_key: str, : List[Dict[str, Any]]) -> None:
+def open_or_update_tomorrow_chain(day_key: str, tom_rows: List[Dict[str, Any]]) -> None:
     try:
         global TOMORROW_CHAINS
         if not isinstance(TOMORROW_CHAINS, dict):
             TOMORROW_CHAINS = {}
 
         # zinciri güncelle
-        TOMORROW_CHAINS[day_key] =  or []
+        TOMORROW_CHAINS[day_key] = tom_rows or []
 
         # kalıcı dosyaya yaz
         _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
 
-        logger.info("Tomorrow chain updated: day_key=%s rows=%d", day_key, len( or []))
+        logger.info(
+            "Tomorrow chain updated: day_key=%s rows=%d",
+            day_key,
+            len(tom_rows or []),
+        )
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
