@@ -14,72 +14,13 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-# ================================
-# LOGGING SETUP
-# ================================
-
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+from momo_prime import (
+    register_momo_prime,
+    job_momo_prime_scan,
+    MOMO_PRIME_ENABLED,
+    MOMO_PRIME_CHAT_ID,
+    MOMO_PRIME_INTERVAL_MIN,
 )
-
-logger = logging.getLogger("TAIPO_PRO_INTEL")
-
-
-# ==========================
-# MOMO PRIME BALİNA (SAFE IMPORT)
-# ==========================
-try:
-    from momo_prime import (
-        register_momo_prime,
-        job_momo_prime_scan,
-        MOMO_PRIME_ENABLED,
-        MOMO_PRIME_CHAT_ID,
-        MOMO_PRIME_INTERVAL_MIN,
-    )
-except Exception as e:
-    register_momo_prime = None
-    job_momo_prime_scan = None
-    MOMO_PRIME_ENABLED = False
-    MOMO_PRIME_CHAT_ID = None
-    MOMO_PRIME_INTERVAL_MIN = None
-
-    try:
-        logger.exception("MOMO PRIME import failed; feature disabled: %s", e)
-    except Exception:
-        pass
-
-from momo_flow import (
-    register_momo_flow,
-    job_momo_flow_scan,
-    MOMO_FLOW_ENABLED,
-    MOMO_FLOW_CHAT_ID,
-    MOMO_FLOW_INTERVAL_MIN,
-)
-
-from momo_kilit import (
-    register_momo_kilit,
-    job_momo_kilit_scan,
-    MOMO_KILIT_ENABLED,
-    MOMO_KILIT_CHAT_ID,
-    MOMO_KILIT_INTERVAL_MIN,
-)
-
-try:
-    from steady_trend import (
-        job_steady_trend_scan,
-        STEADY_TREND_ENABLED,
-        STEADY_TREND_CHAT_ID,
-        STEADY_TREND_INTERVAL_MIN,
-    )
-except Exception as e:
-    job_steady_trend_scan = None
-    STEADY_TREND_ENABLED = False
-    STEADY_TREND_CHAT_ID = ""
-    STEADY_TREND_INTERVAL_MIN = 0
-    logger.warning("STEADY_TREND disabled (import error): %s", e)
 
 # ==============================
 # Trade Log (Altın Log)
@@ -279,20 +220,7 @@ def write_trade_log(record: dict) -> None:
         logger.exception("Trade log write error: %s", e)
 
 def open_or_update_tomorrow_chain(day_key: str, tom_rows: List[Dict[str, Any]]) -> None:
-    try:
-        global TOMORROW_CHAINS
-        if not isinstance(TOMORROW_CHAINS, dict):
-            TOMORROW_CHAINS = {}
-
-        # zinciri güncelle
-        TOMORROW_CHAINS[day_key] = tom_rows or []
-
-        # kalıcı dosyaya yaz
-        _atomic_write_json(TOMORROW_CHAIN_FILE, TOMORROW_CHAINS)
-
-        logger.info("Tomorrow chain updated: day_key=%s rows=%d", day_key, len(tom_rows or []))
-    except Exception as e:
-        logger.warning("open_or_update_tomorrow_chain failed: %s", e)
+    return
 
 def safe_float(x: Any) -> float:
     try:
@@ -550,67 +478,6 @@ def get_altin_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
 
     return altin_tickers[:6], ref_close_map
 
-# ================================
-# YENİ ADAY FONKSİYONU BURAYA
-# ================================
-
-def get_aday_tickers_from_tomorrow_chain() -> tuple[list[str], dict]:
-    """
-    Dünkü /tomorrow zincirinden ADAY tickers + ref_close_map döner.
-    """
-    if not TOMORROW_CHAINS:
-        return [], {}
-
-    rows: list[dict] = []
-    ref_close_map: dict = {}
-
-    if isinstance(TOMORROW_CHAINS, dict):
-        active_key = today_key_tradingday()
-
-        if active_key not in TOMORROW_CHAINS:
-            try:
-                active_key = sorted(TOMORROW_CHAINS.keys())[-1]
-            except Exception:
-                active_key = None
-
-        chain_obj = TOMORROW_CHAINS.get(active_key) if active_key else None
-
-        if isinstance(chain_obj, dict):
-            rows = chain_obj.get("rows", []) or []
-            ref_close_map = chain_obj.get("ref_close", {}) or {}
-        elif isinstance(chain_obj, list):
-            rows = chain_obj
-            # ref_close yoksa boş bırak
-            ref_close_map = {}
-
-    elif isinstance(TOMORROW_CHAINS, list):
-        rows = TOMORROW_CHAINS
-        ref_close_map = {}
-
-    aday_tickers: list[str] = []
-
-    for r in (rows or []):
-        if not isinstance(r, dict):
-            continue
-
-        status = (
-            r.get("status")
-            or r.get("kind")
-            or r.get("list")
-            or r.get("bucket")
-            or r.get("kategori")
-            or r.get("K")
-            or ""
-        ).strip().upper()
-
-        # ADAY satırlarını yakala (esnek)
-        if ("ADAY" in status) or ("RADAR" in status):
-            t = (r.get("ticker") or r.get("symbol") or r.get("his") or "").strip().upper()
-            if t:
-                aday_tickers.append(t)
-
-    return aday_tickers, ref_close_map
-
 # =========================================================
 # Tomorrow (Altın Liste) - Message section
 # =========================================================
@@ -704,15 +571,10 @@ def within_alarm_window(dt: datetime) -> bool:
     return start <= t <= end
 
 def within_whale_window(dt: datetime) -> bool:
-    start = dtime(WHALE_START_HOUR, WHALE_START_MIN)
+    start = dtime(WHALE_START_HOUR, WHHALE_START_MIN) if False else dtime(WHALE_START_HOUR, WHALE_START_MIN)
     end = dtime(WHALE_END_HOUR, WHALE_END_MIN)
-
     t = dt.timetz().replace(tzinfo=None)
-
-    # Pencere gece yarısını aşıyorsa (örn 23:00–01:00)
-    if start <= end:
-        return start <= t <= end
-    return t >= start or t <= end
+    return start <= t <= end
 
 def st_short(sig_text: str) -> str:
     if sig_text == "TOPLAMA":
@@ -1311,31 +1173,13 @@ async def build_rows_from_is_list(is_list: List[str], xu100_change: float = floa
 # Signal logic (TopN threshold)
 # =========================================================
 def compute_volume_threshold(rows: List[Dict[str, Any]], top_n: int) -> float:
-    rows_with_vol = [
-        r for r in rows
-        if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])
-    ]
+    rows_with_vol = [r for r in rows if isinstance(r.get("volume"), (int, float)) and not math.isnan(r["volume"])]
     if not rows_with_vol:
         return float("inf")
-
     n = max(1, int(top_n))
-    ranked = sorted(
-        rows_with_vol,
-        key=lambda x: x.get("volume", 0) or 0,
-        reverse=True
-    )
+    ranked = sorted(rows_with_vol, key=lambda x: x.get("volume", 0) or 0, reverse=True)
     top = ranked[:n]
-    base = float(top[-1]["volume"]) if top else float("inf")
-
-    try:
-        factor = float(os.getenv("TOPN_THRESHOLD_FACTOR", "1.00"))
-    except Exception:
-        factor = 1.00
-
-    if factor <= 0:
-        factor = 1.00
-
-    return base * factor
+    return float(top[-1]["volume"]) if top else float("inf")
 
 def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float, top_n: int) -> float:
     threshold = compute_volume_threshold(rows, top_n)
@@ -2188,7 +2032,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ref_day_key = today_key_tradingday()
 
         # tom_rows list ise direkt koy
-        TOMORROW_CHAINS[ref_day_key] = list(tom_rows or [])
+        TOMORROW_CHAINS[ref_day_key] = list(tom_rows)
 
         logger.info(
             "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
@@ -2224,10 +2068,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
-        perf_section = build_tomorrow_altin_perf_section(
-        tom_rows,
-        TOMORROW_CHAINS,
-    )
+        perf_section = build_tomorrow_altin_perf_section(tom_rows, TOMORROW_CHAINS)
     except Exception:
         perf_section = ""
 
@@ -2618,6 +2459,95 @@ async def job_momo_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("MOMO_SCAN error: %s", e)
 
+async def job_alarm_scan(
+    context: ContextTypes.DEFAULT_TYPE,
+    force: bool = False
+) -> None:
+
+    logger.info(
+        "job_alarm_scan tick | force=%s | ALARM_ENABLED=%s | CHAT_ID=%s",
+        force,
+        ALARM_ENABLED,
+        ALARM_CHAT_ID,
+    )
+    if not ALARM_ENABLED or not ALARM_CHAT_ID:
+        return
+    if (not force) and (not within_alarm_window(now_tr())):
+        return
+    # MOMO  (ALARM çalışırken MOMO cache var mı?)
+    try:
+        momo_count = len(MOMO_CACHE) if isinstance(MOMO_CACHE, dict) else -1
+    except Exception:
+        momo_count = -1
+
+    logger.info("job_alarm_scan | MOMO_CACHE count=%s", momo_count)
+
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return
+
+    try:
+        # XU100
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+        reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+
+        global LAST_REGIME
+        LAST_REGIME = reg
+
+        if REJIM_GATE_ALARM and reg.get("block"):
+            return
+
+        # --- Ana liste (BIST200) ---
+        all_rows = await build_rows_from_is_list(bist200_list, xu_change)
+        update_history_from_rows(all_rows)
+        min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
+        thresh_s = format_threshold(min_vol)
+
+        alarm_rows = filter_new_alarms(all_rows)
+        if not alarm_rows:
+            return
+
+        ts_now = time.time()
+        for r in alarm_rows:
+            mark_alarm_sent((r.get("ticker") or "").strip(), ts_now)
+        save_last_alarm_ts()
+
+        # --- Watchlist ---
+        watch = env_csv_fallback("WATCHLIST", "WATCHLIST_BIST")
+        watch = (watch or [])[:WATCHLIST_MAX]
+        w_rows = await build_rows_from_is_list(watch, xu_change) if watch else []
+        if w_rows:
+            _apply_signals_with_threshold(w_rows, xu_change, min_vol)
+
+        # ✅ Tomorrow ALTIN canlı performans bloğu (Alarm'a ek)
+        tomorrow_perf_section = await build_tomorrow_altin_perf_section(all_rows)
+
+        # --- Alarm mesajını üret ---
+        text = build_alarm_message(
+            alarm_rows=alarm_rows,
+            watch_rows=w_rows,
+            xu_close=xu_close,
+            xu_change=xu_change,
+            thresh_s=thresh_s,
+            top_n=VOLUME_TOP_N,
+            reg=reg,
+        )
+
+        if tomorrow_perf_section:
+            text = text + tomorrow_perf_section
+
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text=text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    except Exception as e:
+        logger.exception("Alarm job error: %s", e)
+        return
+
 async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await update.message.reply_text("⏳ ALTIN canlı takip manuel tetikleniyor...")
@@ -2625,16 +2555,6 @@ async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         await update.message.reply_text(
             f"❌ ALTIN takip çalıştırılamadı:\n<code>{e}</code>",
-            parse_mode=ParseMode.HTML,
-        )
-
-async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        await update.message.reply_text("⏳ ALTIN LIVE manuel tetikleniyor...")
-        await job_altin_live_follow(context, force=True)
-    except Exception as e:
-        await update.message.reply_text(
-            f"❌ ALTIN takip manuel hata:\n<code>{e}</code>",
             parse_mode=ParseMode.HTML,
         )
 
@@ -2788,58 +2708,37 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
             )
             return
 
-        # Tomorrow zincirinden ALTIN + ADAY tickers al
+        # Tomorrow zincirinden ALTIN tickers al
         altin_tickers, ref_close_map = get_altin_tickers_from_tomorrow_chain()
-        aday_tickers, aday_ref_close_map = get_aday_tickers_from_tomorrow_chain()
 
-        # Güvenlik: yanlış dönüş (tuple) gelirse toparla (ALTIN)
+        # Güvenlik: yanlış dönüş (tuple) gelirse toparla
         if isinstance(ref_close_map, tuple) and len(ref_close_map) == 2:
             altin_tickers, ref_close_map = ref_close_map
 
-        # Güvenlik: yanlış dönüş (tuple) gelirse toparla (ADAY)
-        if isinstance(aday_ref_close_map, tuple) and len(aday_ref_close_map) == 2:
-            aday_tickers, aday_ref_close_map = aday_ref_close_map
-
-        # Güvenlik: map dict değilse boşla
         if not isinstance(ref_close_map, dict):
             ref_close_map = {}
-        if not isinstance(aday_ref_close_map, dict):
-            aday_ref_close_map = {}
 
-        # ALTIN tickers yoksa ref map'ten üret
         if not altin_tickers:
             altin_tickers = list(ref_close_map.keys())[:6]
 
-        # ADAY tickers yoksa aday_ref map'ten üret
-        if not aday_tickers:
-            aday_tickers = list(aday_ref_close_map.keys())[:6]
-
-        # ALTIN ve ADAY ikisi de boşsa uyar ve çık
-        if not altin_tickers and not aday_tickers:
+        if not altin_tickers:
             await context.bot.send_message(
                 chat_id=int(ALARM_CHAT_ID),
-                text="⚠ ALTIN follow: Tomorrow zincirinde ALTIN veya ADAY tickers yok.",
+                text="⚠️ ALTIN follow: Tomorrow zincirinde ALTIN tickers yok. Önce /tomorrow çalıştır.",
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
             )
             return
-        
-        # ===== CANLI: ALTIN + ADAY anlık satırlarını çek =====
+
+        # ===== BURADAN SONRASI: MEVCUT KODLARIN =====
         rows_now = await build_rows_from_is_list(altin_tickers, xu_change)
+
         now_map = {
             (r.get("ticker") or "").strip().upper(): r
             for r in (rows_now or [])
             if (r.get("ticker") or "").strip()
         }
 
-        rows_aday_now = await build_rows_from_is_list(aday_tickers, xu_change)
-        now_map_aday = {
-            (r.get("ticker") or "").strip().upper(): r
-            for r in (rows_aday_now or [])
-            if (r.get("ticker") or "").strip()
-        }
-
-        # ===== ALTIN performans tablosu =====
         perf = []
         for t in altin_tickers:
             ref_close = safe_float(ref_close_map.get(t))
@@ -2860,48 +2759,17 @@ async def job_altin_live_follow(context: ContextTypes.DEFAULT_TYPE, force: bool 
 
             perf.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
 
-        # ===== ADAY performans tablosu =====
-        perf_aday = []
-        for t in (aday_tickers or []):
-            ref_close = safe_float(aday_ref_close_map.get(t))
-            now_close = safe_float((now_map_aday.get(t) or {}).get("close"))
-            dd = pct_change(now_close, ref_close)
-
-            # dd NaN kontrolü
-            if dd == dd:
-                if dd > 0:
-                    emo = "🟢"
-                elif dd < 0:
-                    emo = "🔴"
-                else:
-                    emo = "⚪"
-                dd_s = f"{emo} {dd:+.2f}%"
-            else:
-                dd_s = "⚪ n/a"
-
-            perf_aday.append((t, dd_s, fmt_price(now_close), fmt_price(ref_close)))
-
         header = (
             "⏳ <b>ALTIN LIVE TAKİP</b>\n"
-            f"⏱ <b>{now_tr().strftime('%H:%M')}</b>\n"
+            f"<b>{now_tr().strftime('%H:%M')}</b>\n"
             f"XU100: <b>{xu_close:.0f}</b> / %{xu_change:+.2f}\n"
         )
 
         lines = []
-        lines.append("HIS    %Δ         NOW      REF")
+        lines.append("HIS     %Δ        NOW       REF")
         lines.append("--------------------------------")
-
-        # ===== ALTIN =====
         for t, dd_s, now_s, ref_s in perf:
             lines.append(f"{t:<6} {dd_s:<10} {now_s:>8} {ref_s:>8}")
-
-        # ===== ADAY =====
-        if perf_aday:
-            lines.append("")
-            lines.append("ADAY:")
-            lines.append("--------------------------------")
-            for t, dd_s, now_s, ref_s in perf_aday:
-                lines.append(f"{t:<6} {dd_s:<10} {now_s:>8} {ref_s:>8}")
 
         msg = header + "<pre>" + "\n".join(lines) + "</pre>"
 
@@ -3107,29 +2975,12 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
-
-    def safe_run_repeating(jq, callback, *, interval_sec: int, first, name: str) -> None:
-        try:
-            existing = jq.get_jobs_by_name(name) if jq else []
-            if existing:
-                logger.info("SAFE_SCHEDULE | job already exists: %s (skip)", name)
-                return
-            jq.run_repeating(
-                callback,
-                interval=interval_sec,
-                first=first,
-                name=name,
-            )
-            logger.info("SAFE_SCHEDULE | scheduled: %s", name)
-        except Exception as e:
-            logger.exception("SAFE_SCHEDULE | FAILED: %s | %s", name, e)
-
     if jq is None:
         logger.warning(
             "JobQueue yok -> otomatik alarm/tomorrow/whale/altin/momo CALISMAZ. Komutlar calisir."
         )
         return
-        
+
     # -------------------------
     # ALARM scan repeating + Tomorrow daily
     # -------------------------
@@ -3162,57 +3013,6 @@ def schedule_jobs(app: Application) -> None:
         logger.info(
             "ALARM kapali veya ALARM_CHAT_ID yok -> otomatik alarm/tomorrow gonderilmeyecek."
         )
-        
-    # --------------------------
-    # MOMO MODÜLLERİNİ UYGULAMAYA REGISTER ET (SAFE)
-    # --------------------------
-    try:
-        register_momo_prime(app)
-        logger.info("register_momo_prime OK")
-    except Exception as e:
-        logger.exception("register_momo_prime FAILED (safe-skip): %s", e)
-
-    try:
-        register_momo_flow(app)
-        logger.info("register_momo_flow OK")
-    except Exception as e:
-        logger.exception("register_momo_flow FAILED (safe-skip): %s", e)
-
-    try:
-        register_momo_kilit(app)
-        logger.info("register_momo_kilit OK")
-    except Exception as e:
-        logger.exception("register_momo_kilit FAILED (safe-skip): %s", e)
-        
-    # -----------------------------
-    # MOMO PRIME BALINA (SAFE SCHEDULE) - isolated
-    # -----------------------------
-    try:
-        if MOMO_PRIME_ENABLED and MOMO_PRIME_CHAT_ID and job_momo_prime_scan:
-            first_prime = next_aligned_run(MOMO_PRIME_INTERVAL_MIN)
-
-            safe_run_repeating(
-                jq,
-                job_momo_prime_scan,
-                interval_sec=int(MOMO_PRIME_INTERVAL_MIN) * 60,
-                first=first_prime,
-                name="momo_prime_scan_repeating",
-            )
-
-            logger.info(
-                "MOMO PRIME scan scheduled every %d min. First=%s",
-                int(MOMO_PRIME_INTERVAL_MIN),
-                first_prime.isoformat(),
-            )
-        else:
-            logger.info(
-                "MOMO PRIME not scheduled (enabled=%s chat_id=%s job=%s)",
-                bool(MOMO_PRIME_ENABLED),
-                bool(MOMO_PRIME_CHAT_ID),
-                bool(job_momo_prime_scan),
-            )
-    except Exception as e:
-        logger.exception("MOMO PRIME schedule failed (safe-skip): %s", e)
 
     # -------------------------
     # WHALE follow repeating
@@ -3317,142 +3117,30 @@ def schedule_jobs(app: Application) -> None:
         # MOMO_* degiskenleri projede yoksa patlamasin diye
         logger.info("MOMO degiskenleri tanimli degil -> momo schedule atlandi.")
         
-    # ==========================
-    # MOMO FLOW (ROCKET)
-    # ==========================
+    # ----------------------------
+    # MOMO PRIME BALİNA scan repeating (isolated)
+    # ----------------------------
     try:
-        if MOMO_FLOW_ENABLED and MOMO_FLOW_CHAT_ID:
-            first_f = next_aligned_run(MOMO_FLOW_INTERVAL_MIN)
-
+        if MOMO_PRIME_ENABLED and MOMO_PRIME_CHAT_ID:
+            first_p = next_aligned_run(MOMO_PRIME_INTERVAL_MIN)
             jq.run_repeating(
-                job_momo_flow_scan,
-                interval=MOMO_FLOW_INTERVAL_MIN * 60,
-                first=first_f,
-                name="momo_flow_scan_repeating",
+                job_momo_prime_scan,
+                interval=MOMO_PRIME_INTERVAL_MIN * 60,
+                first=first_p,
+                name="momo_prime_scan_repeating",
             )
-
             logger.info(
-                "FLOW scan scheduled every %d min. First=%s",
-                MOMO_FLOW_INTERVAL_MIN,
-                first_f.isoformat(),
+                "MOMO PRIME scan scheduled every %d min. First=%s",
+                MOMO_PRIME_INTERVAL_MIN,
+                first_p.isoformat(),
             )
         else:
-            logger.info(
-                "FLOW kapali veya MOMO_FLOW_CHAT_ID yok -> flow calismayacak."
-            )
+            logger.info("MOMO PRIME kapali veya MOMO_PRIME_CHAT_ID yok -> prime calismayacak.")
     except NameError:
-        logger.info(
-            "FLOW degiskenleri tanimli degil -> flow schedule atlandi."
-        )
-    
-    # =========================
-    # STEADY TREND (AĞIR TREN)
-    # =========================
-
-    def _bist_open_safe() -> bool:
-        try:
-            return bist_session_open()
-        except Exception:
-            return True  # bist_session_open yoksa "acik" kabul et
-    
-    async def fetch_universe_rows(ctx):
-        try:
-            tickers_raw = (UNIVERSE_TICKERS or "").strip()
-
-            if not tickers_raw:
-                return []
-
-            parts = [
-                p.strip().upper()
-                for p in tickers_raw.replace("\n", ",").split(",")
-                if p.strip()
-            ]
-
-            rows = []
-            for t in parts:
-                rows.append({"ticker": t})
-
-            return rows
-
-        except Exception as e:
-            logger.exception("fetch_universe_rows failed: %s", e)
-    
-    async def telegram_send(ctx, chat_id, text, **kwargs):
-        try:
-            if not chat_id:
-                return False
-            bot = getattr(ctx, "bot", None)
-            if bot is None:
-                return False
-            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-            return True
-        except Exception as e:
-            logger.exception("telegram_send failed: %s", e)
-            return False
-    
-    async def job_steady_trend_scan(ctx, *args, **kwargs):
-        return await steady_trend_job(
-            ctx,
-            _bist_open_safe,
-            fetch_universe_rows,
-            telegram_send,
-        )
-
-    try:
-        if STEADY_TREND_ENABLED and STEADY_TREND_CHAT_ID and steady_trend_job:
-            first_st = next_aligned_run(STEADY_TREND_INTERVAL_MIN)
-
-            safe_run_repeating(
-                jq,
-                job_steady_trend_scan,
-                interval_sec=int(STEADY_TREND_INTERVAL_MIN) * 60,
-                first=first_st,
-                name="steady_trend_scan_repeating",
-            )
-
-            logger.info(
-                "STEADY scan scheduled every %d min. First=%s",
-                int(STEADY_TREND_INTERVAL_MIN),
-                first_st.isoformat(),
-            )
-        else:
-            logger.info("STEADY kapali veya chat_id yok -> steady calismayacak.")
+        logger.info("MOMO PRIME degiskenleri tanimli degil -> prime schedule atlandi.")
     except Exception as e:
-        logger.exception("STEADY schedule failed (safe-skip): %s", e)
-    
-    # ==========================
-    # MOMO KİLİT (isolated)
-    # ==========================
-    try:
-        if MOMO_KILIT_ENABLED and MOMO_KILIT_CHAT_ID:
-            first_kilit = next_aligned_run(MOMO_KILIT_INTERVAL_MIN)
-
-            jq.run_repeating(
-                job_momo_kilit_scan,
-                interval=MOMO_KILIT_INTERVAL_MIN * 60,
-                first=first_kilit,
-                name="momo_kilit_scan_repeating"
-            )
-
-            logger.info(
-                "KILIT scan scheduled every %d min. First=%s",
-                MOMO_KILIT_INTERVAL_MIN,
-                first_kilit.isoformat()
-            )
-        else:
-            logger.info(
-                "KILIT kapali veya MOMO_KILIT_CHAT_ID yok -> kilit calismayacak."
-            )
-    except NameError:
-        logger.info(
-            "KILIT degiskenleri tanimli degil -> kilit schedule atlandi."
-        )
-    except Exception as e:
-        logger.exception(
-            "KILIT schedule error: %s",
-            e
-        )
-    
+        logger.error("MOMO PRIME schedule error: %s", e)
+        
 # =============================
 # REJIM TRANSITION (R1 → R2 → R3 mesaj)
 # =============================
@@ -3551,11 +3239,7 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
-    app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     register_momo_prime(app)
-    register_momo_flow(app)
-    register_momo_kilit(app)
-    
     app.add_handler(
     MessageHandler(filters.COMMAND, log_any_command),
     group=99 
