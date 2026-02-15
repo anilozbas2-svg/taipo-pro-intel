@@ -220,6 +220,44 @@ def write_trade_log(record: dict) -> None:
         logger.exception("Trade log write error: %s", e)
 
 def open_or_update_tomorrow_chain(day_key: str, tom_rows: List[Dict[str, Any]]) -> None:
+    """
+    TOMORROW_CHAINS içine o günün zincirini (rows) ve referans kapanışları (ref_close) yazar.
+    Böylece ALTIN takip/perf bölümü ref_close -> canlı close farkını hesaplayabilir.
+    """
+    global TOMORROW_CHAINS
+
+    try:
+        if not isinstance(TOMORROW_CHAINS, dict):
+            TOMORROW_CHAINS = {}
+
+        rows = list(tom_rows or [])
+        ref_close: Dict[str, float] = {}
+
+        for r in rows:
+            t = (r.get("symbol") or r.get("ticker") or "").strip()
+            if not t:
+                continue
+            c = safe_float(r.get("close"))
+            if c == c:
+                ref_close[t] = c
+
+        TOMORROW_CHAINS[day_key] = {
+            "ts": time.time(),
+            "rows": rows,
+            "ref_close": ref_close,
+        }
+
+        # Basit prune: son 5 anahtardan fazlasını tutma (2 gün kuralı için fazlasıyla yeterli)
+        if len(TOMORROW_CHAINS) > 5:
+            keys_sorted = sorted(
+                TOMORROW_CHAINS.keys(),
+                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+            )
+            for k in keys_sorted[:-5]:
+                TOMORROW_CHAINS.pop(k, None)
+
+    except Exception as e:
+        logger.exception("open_or_update_tomorrow_chain error: %s", e)
     return
 
 def safe_float(x: Any) -> float:
@@ -229,35 +267,38 @@ def safe_float(x: Any) -> float:
         return float("nan")
 
 
-def build_tomorrow_altin_perf_section(all_rows: list) -> str:
+def build_tomorrow_altin_perf_section(all_rows: list, chains: Optional[dict] = None) -> str:
     """
     Tomorrow zincirindeki ALTIN listesini alır ve ref_close -> now_close % farkını basar.
     Alarm mesajına veya /tomorrow çıktısına eklenebilir.
     HTML döner (<pre> dahil). Hata olursa "" döner.
     """
     try:
+        # Eğer dışarıdan zincir verilmişse onu kullan, yoksa global TOMORROW_CHAINS
+        use_chains = chains if isinstance(chains, dict) else TOMORROW_CHAINS
+
         all_map = {
             (r.get("ticker") or "").strip(): r
             for r in (all_rows or [])
             if (r.get("ticker") or "").strip()
         }
 
-        if not TOMORROW_CHAINS:
+        if not use_chains:
             return ""
 
         active_key = today_key_tradingday()
-        if active_key not in TOMORROW_CHAINS:
+        if active_key not in use_chains:
             active_key = max(
-                TOMORROW_CHAINS.keys(),
-                key=lambda k: (TOMORROW_CHAINS.get(k, {}) or {}).get("ts", 0),
+                use_chains.keys(),
+                key=lambda k: (use_chains.get(k, {}) or {}).get("ts", 0),
             )
 
-        chain = TOMORROW_CHAINS.get(active_key, {}) or {}
+        chain = use_chains.get(active_key, {}) or {}
         t_rows = chain.get("rows", []) or []
         ref_close_map = chain.get("ref_close", {}) or {}
 
         # ALTIN tickers
-        altin_tickers = []
+        altin_tickers: List[str] = []
         for rr in t_rows:
             t = (rr.get("symbol") or rr.get("ticker") or "").strip()
             if not t:
@@ -266,6 +307,7 @@ def build_tomorrow_altin_perf_section(all_rows: list) -> str:
             if "ALTIN" in kind:
                 altin_tickers.append(t)
 
+        # fallback: ref_close_map'ten ilk 6
         if not altin_tickers:
             altin_tickers = list(ref_close_map.keys())[:6]
 
@@ -297,12 +339,12 @@ def build_tomorrow_altin_perf_section(all_rows: list) -> str:
         if not perf_lines:
             return ""
 
-        header = "\n\n🌙 <b>TOMORROW • ALTIN (Canlı)</b>\n"
+        header = "\n\n📌 <b>TOMORROW • ALTIN (Canlı)</b>\n"
         lines = []
-        lines.append("HIS   Δ%          NOW      REF")
-        lines.append("-------------------------------")
+        lines.append("HIS   Δ%            NOW      REF")
+        lines.append("--------------------------------")
         for (t, dd_s, now_s, ref_s) in perf_lines:
-            lines.append(f"{t:<5} {dd_s:<11}  {now_s:>7}  {ref_s:>7}")
+            lines.append(f"{t:<5} {dd_s:<13}  {now_s:>7}  {ref_s:>7}")
 
         return header + "<pre>" + "\n".join(lines) + "</pre>"
 
