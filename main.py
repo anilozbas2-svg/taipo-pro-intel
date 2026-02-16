@@ -2600,6 +2600,58 @@ async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode=ParseMode.HTML,
         )
 
+async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id if update and update.effective_chat else None
+    now = now_tr()
+
+    alarm_chat_id = os.getenv("ALARM_CHAT_ID", "").strip()
+
+    # 1) Chat kontrolü (sessiz çıkma yok)
+    if alarm_chat_id and str(chat_id) != str(alarm_chat_id):
+        await update.message.reply_text(
+            f"⛔ Bu komut bu grupta kapalı.\n"
+            f"chat_id: {chat_id}\n"
+            f"ALARM_CHAT_ID: {alarm_chat_id}"
+        )
+        return
+
+    # 2) Saat kontrolü (sessiz çıkma yok)
+    if not within_altin_follow_window(now):
+        await update.message.reply_text(
+            f"⏰ ALTIN FOLLOW penceresi dışı.\n"
+            f"Şu an: {now.strftime('%H:%M')}\n"
+            f"Pencere: {os.getenv('ALTIN_FOLLOW_START','10:30')}–{os.getenv('ALTIN_FOLLOW_END','19:30')}"
+        )
+        return
+
+    await update.message.reply_text("✅ ALTIN FOLLOW manuel tetiklendi...")
+
+    try:
+        # Güncel market verisini çek
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+
+        rows = await build_rows_from_list(
+            list(os.getenv("BIST200_TICKERS", "").split(",")),
+            xu_change
+        )
+
+        # Mevcut tomorrow zinciri üzerinden ALTIN performans bloğunu üret
+        perf_section = build_tomorrow_altin_perf_section(rows)
+
+        if not perf_section:
+            await update.message.reply_text("⚠️ Aktif ALTIN zinciri bulunamadı.")
+            return
+
+        await update.message.reply_text(
+            perf_section,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    except Exception as e:
+        logger.exception("cmd_altin_follow error: %s", e)
+        await update.message.reply_text(f"⚠️ ALTIN FOLLOW hata: {e}")
+
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
@@ -3281,6 +3333,8 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
+    app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
+    app.add_handler(CommandHandler("altin", cmd_altin))
     register_momo_prime(app)
     app.add_handler(
     MessageHandler(filters.COMMAND, log_any_command),
