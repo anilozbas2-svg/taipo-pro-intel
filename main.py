@@ -2600,7 +2600,22 @@ async def cmd_alarm_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode=ParseMode.HTML,
         )
 
+async def cmd_altin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg_obj = update.effective_message
+    if not context.args:
+        await msg_obj.reply_text("Kullanım: /altin follow")
+        return
+
+    sub = (context.args[0] or "").strip().lower()
+    if sub == "follow":
+        await cmd_altin_follow(update, context)
+        return
+
+    await msg_obj.reply_text("Bilinmeyen alt komut. Kullanım: /altin follow")
+
+
 async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg_obj = update.effective_message
     chat_id = update.effective_chat.id if update and update.effective_chat else None
     now = now_tr()
 
@@ -2608,7 +2623,7 @@ async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # 1) Chat kontrolü (sessiz çıkma yok)
     if alarm_chat_id and str(chat_id) != str(alarm_chat_id):
-        await update.message.reply_text(
+        await msg_obj.reply_text(
             f"⛔ Bu komut bu grupta kapalı.\n"
             f"chat_id: {chat_id}\n"
             f"ALARM_CHAT_ID: {alarm_chat_id}"
@@ -2617,14 +2632,14 @@ async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # 2) Saat kontrolü (sessiz çıkma yok)
     if not within_altin_follow_window(now):
-        await update.message.reply_text(
+        await msg_obj.reply_text(
             f"⏰ ALTIN FOLLOW penceresi dışı.\n"
             f"Şu an: {now.strftime('%H:%M')}\n"
             f"Pencere: {os.getenv('ALTIN_FOLLOW_START','10:30')}–{os.getenv('ALTIN_FOLLOW_END','19:30')}"
         )
         return
 
-    await update.message.reply_text("✅ ALTIN FOLLOW manuel tetiklendi...")
+    await msg_obj.reply_text("✅ ALTIN FOLLOW manuel tetiklendi. Veri hazırlanıyor...")
 
     try:
         # Güncel market verisini çek
@@ -2639,18 +2654,18 @@ async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         perf_section = build_tomorrow_altin_perf_section(rows)
 
         if not perf_section:
-            await update.message.reply_text("⚠️ Aktif ALTIN zinciri bulunamadı.")
+            await msg_obj.reply_text("⚠️ Aktif ALTIN zinciri bulunamadı.")
             return
 
-        await update.message.reply_text(
+        await msg_obj.reply_text(
             perf_section,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            disable_web_page_preview=True
         )
 
     except Exception as e:
         logger.exception("cmd_altin_follow error: %s", e)
-        await update.message.reply_text(f"⚠️ ALTIN FOLLOW hata: {e}")
+        await msg_obj.reply_text(f"⚠️ ALTIN FOLLOW hata: {e}")
 
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
