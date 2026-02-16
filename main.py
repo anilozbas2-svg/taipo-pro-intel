@@ -2624,20 +2624,19 @@ async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # 1) Chat kontrolü (sessiz çıkma yok)
     if alarm_chat_id and str(chat_id) != str(alarm_chat_id):
         await msg_obj.reply_text(
-            f"⛔ Bu komut bu grupta kapalı.\n"
+            "⛔ Bu komut bu grupta kapalı.\n"
             f"chat_id: {chat_id}\n"
             f"ALARM_CHAT_ID: {alarm_chat_id}"
         )
         return
 
-    # 2) Saat kontrolü (sessiz çıkma yok)
+    # 2) Saat kontrolü: artık BLOKLAMASIN, sadece not düşsün
+    note = ""
     if not within_altin_follow_window(now):
-        await msg_obj.reply_text(
-            f"⏰ ALTIN FOLLOW penceresi dışı.\n"
-            f"Şu an: {now.strftime('%H:%M')}\n"
-            f"Pencere: {os.getenv('ALTIN_FOLLOW_START','10:30')}–{os.getenv('ALTIN_FOLLOW_END','19:30')}"
+        note = (
+            f"⏰ (Bilgi) Pencere dışı: şimdi {now.strftime('%H:%M')} | "
+            f"{os.getenv('ALTIN_FOLLOW_START','10:30')}–{os.getenv('ALTIN_FOLLOW_END','19:30')}\n"
         )
-        return
 
     await msg_obj.reply_text("✅ ALTIN FOLLOW manuel tetiklendi. Veri hazırlanıyor...")
 
@@ -2646,7 +2645,7 @@ async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
 
         rows = await build_rows_from_list(
-            list(os.getenv("BIST200_TICKERS", "").split(",")),
+            [t.strip() for t in os.getenv("BIST200_TICKERS", "").split(",") if t.strip()],
             xu_change
         )
 
@@ -2658,7 +2657,7 @@ async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
 
         await msg_obj.reply_text(
-            perf_section,
+            note + perf_section,
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True
         )
