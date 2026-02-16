@@ -1543,6 +1543,7 @@ async def yahoo_bootstrap_if_needed() -> str:
         tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200 if x.strip()]
 
         logger.info("BOOTSTRAP başlıyor… Yahoo %d gün (hisse=%d)", BOOTSTRAP_DAYS, len(tickers))
+        logger.info("BOOTSTRAP DEBUG | tickers list: %s", tickers)
         filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, BOOTSTRAP_DAYS)
         done = f"BOOTSTRAP tamam ✅ filled={filled} • points={points}"
         logger.info(done)
