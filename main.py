@@ -201,6 +201,27 @@ YAHOO_UA = os.getenv(
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36",
 ).strip()
 
+# Layered history windows (pro pipeline)
+SCAN_DAYS = int(os.getenv("SCAN_DAYS", "120"))
+FLOW_NORM_DAYS = int(os.getenv("FLOW_NORM_DAYS", "60"))
+EARLY_DAYS = int(os.getenv("EARLY_DAYS", "30"))
+
+EARLY_DAYS = int(os.getenv("EARLY_DAYS", "30"))
+
+def _days_for_layer(layer: str) -> int:
+    layer = (layer or "").strip().lower()
+    if layer in ("bootstrap", "boot", "init"):
+        return BOOTSTRAP_DAYS
+    if layer in ("scan", "radar", "general"):
+        return SCAN_DAYS
+    if layer in ("flow", "normalize", "norm"):
+        return FLOW_NORM_DAYS
+    if layer in ("early", "momo_early", "first"):
+        return EARLY_DAYS
+    return SCAN_DAYS
+
+_YAHOO_BAD_SYMBOLS: Dict[str, float] = {}
+
 _YAHOO_BAD_SYMBOLS: Dict[str, float] = {}  # sym -> ts
 
 
