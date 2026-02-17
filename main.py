@@ -1443,6 +1443,8 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
     sym = (symbol or "").strip()
     if not sym:
         return []
+
+    # days -> Yahoo "range" map
     if days > 365:
         rng = "2y"
     elif days > 180:
@@ -1454,42 +1456,125 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
     else:
         rng = "2mo"
 
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
-    params = {"range": rng, "interval": "1d"}
-    headers = {"User-Agent": "Mozilla/5.0"}
+    # Two endpoints: query1 sometimes returns 404, query2 often works as fallback
+    base_urls = [
+        "https://query1.finance.yahoo.com/v8/finance/chart",
+        "https://query2.finance.yahoo.com/v8/finance/chart",
+    ]
+
+    params = {
+        "range": rng,
+        "interval": "1d",
+        "includePrePost": "false",
+        "events": "div,splits",
+        "includeAdjustedClose": "true",
+    }
+
+    # Stronger headers to reduce "bot" style blocks
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 14; SM-A725F) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/121.0.0.0 Mobile Safari/537.36"
+        ),
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Connection": "keep-alive",
+    }
+
+    # Local import to avoid touching global imports
+    import random
+
+    # Use a Session for keep-alive (slightly friendlier / faster)
+    sess = requests.Session()
+
+    # Try attempts, and within each attempt try both hosts (query1 -> query2)
     for attempt in range(3):
-        try:
-            r = requests.get(url, params=params, timeout=YAHOO_TIMEOUT, headers=headers)
-            r.raise_for_status()
-            j = r.json() or {}
-            chart = (j.get("chart") or {})
-            res = (chart.get("result") or [])
-            if not res:
-                return []
-            res0 = res[0]
-            ts_list = res0.get("timestamp") or []
-            ind = (res0.get("indicators") or {}).get("quote") or []
-            if not ind:
-                return []
-            q0 = ind[0]
-            closes = q0.get("close") or []
-            vols = q0.get("volume") or []
-            out: List[Tuple[str, float, float]] = []
-            for i, ts in enumerate(ts_list):
-                if i >= len(closes) or i >= len(vols):
+        last_err = None
+
+        for base in base_urls:
+            url = f"{base}/{sym}"
+
+            try:
+                r = sess.get(url, params=params, timeout=YAHOO_TIMEOUT, headers=headers)
+
+                # If Yahoo is rate-limiting / blocking, back off harder and try again
+                if r.status_code in (401, 403, 429):
+                    # stronger cooldown on blocked
+                    sleep_s = max(float(YAHOO_SLEEP_SEC), 0.5) * (attempt + 1) * 4.0
+                    sleep_s += random.uniform(0.0, 0.6)
+                    logger.warning("Yahoo blocked/limited (%s) sym=%s attempt=%d sleep=%.2fs",
+                                   r.status_code, sym, attempt + 1, sleep_s)
+                    time.sleep(sleep_s)
+                    last_err = Exception(f"blocked_or_limited_{r.status_code}")
                     continue
-                c = closes[i]; v = vols[i]
-                if c is None or v is None:
+
+                # If query1 returns 404, try query2 immediately
+                if r.status_code == 404:
+                    last_err = Exception("404_not_found")
                     continue
-                dt = datetime.fromtimestamp(int(ts), tz=TZ).date()
-                day_s = dt.strftime("%Y-%m-%d")
-                out.append((day_s, float(c), float(v)))
-            if days > 0 and len(out) > days:
-                out = out[-days:]
-            return out
-        except Exception as e:
-            logger.warning("Yahoo fetch error (%s) attempt=%d: %s", sym, attempt + 1, e)
-            time.sleep(0.6 * (attempt + 1))
+
+                r.raise_for_status()
+
+                try:
+                    j = r.json() or {}
+                except Exception:
+                    # JSON parse fail: treat as empty and retry
+                    last_err = Exception("json_parse_failed")
+                    continue
+
+                chart = (j.get("chart") or {})
+                res = (chart.get("result") or [])
+                if not res:
+                    # Sometimes Yahoo returns chart.error; treat as empty
+                    last_err = Exception("empty_result")
+                    continue
+
+                res0 = res[0]
+                ts_list = res0.get("timestamp") or []
+                ind = (res0.get("indicators") or {}).get("quote") or []
+                if not ind:
+                    last_err = Exception("no_indicators")
+                    continue
+
+                q0 = ind[0]
+                closes = q0.get("close") or []
+                vols = q0.get("volume") or []
+
+                out: List[Tuple[str, float, float]] = []
+                for i, ts in enumerate(ts_list):
+                    if i >= len(closes) or i >= len(vols):
+                        continue
+                    c = closes[i]
+                    v = vols[i]
+                    if c is None or v is None:
+                        continue
+                    dt = datetime.fromtimestamp(int(ts), tz=TZ).date()
+                    day_s = dt.strftime("%Y-%m-%d")
+                    out.append((day_s, float(c), float(v)))
+
+                if days > 0 and len(out) > days:
+                    out = out[-days:]
+
+                return out
+
+            except Exception as e:
+                last_err = e
+                # mild backoff between host tries / attempts
+                sleep_s = max(float(YAHOO_SLEEP_SEC), 0.4) * (attempt + 1)
+                sleep_s += random.uniform(0.0, 0.4)
+                logger.warning("Yahoo fetch error (%s) attempt=%d host=%s: %s",
+                               sym, attempt + 1, base, e)
+                time.sleep(sleep_s)
+
+        # If both hosts failed for this attempt, do a slightly longer cooloff
+        cooloff = max(float(YAHOO_SLEEP_SEC), 0.6) * (attempt + 1) * 2.0
+        cooloff += random.uniform(0.0, 0.8)
+        if last_err is not None:
+            logger.warning("Yahoo fetch all-hosts failed sym=%s attempt=%d cooloff=%.2fs last=%s",
+                           sym, attempt + 1, cooloff, last_err)
+        time.sleep(cooloff)
+
     return []
 
 def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, int]:
