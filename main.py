@@ -1681,31 +1681,42 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
 def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, int]:
     if not tickers:
         return (0, 0)
+
     price_hist = _load_json(PRICE_HISTORY_FILE)
     vol_hist = _load_json(VOLUME_HISTORY_FILE)
+
     if not isinstance(price_hist, dict):
         price_hist = {}
     if not isinstance(vol_hist, dict):
         vol_hist = {}
+
     total_points = 0
     filled = 0
+
     for t in tickers:
         short = (t or "").strip().upper().replace("BIST:", "")
         if not short:
             continue
+
         sym = _to_yahoo_symbol_bist(short)
-        data = yahoo_fetch_history_sync(sym, layer_days)
+
+        # ✅ Bootstrap = parametre days (genelde 400)
+        data = yahoo_fetch_history_sync(sym, days)
+
         if not data:
             time.sleep(YAHOO_SLEEP_SEC)
             continue
+
         for day_s, close, vol in data:
             price_hist.setdefault(day_s, {})
             vol_hist.setdefault(day_s, {})
             price_hist[day_s][short] = float(close)
             vol_hist[day_s][short] = float(vol)
             total_points += 1
-        filled += 1
+            filled += 1
+
         time.sleep(YAHOO_SLEEP_SEC)
+
     _prune_days(price_hist, max(HISTORY_DAYS, days))
     _prune_days(vol_hist, max(HISTORY_DAYS, days))
     _atomic_write_json(PRICE_HISTORY_FILE, price_hist)
