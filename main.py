@@ -188,30 +188,57 @@ TORPIL_MIN_SAMPLES = int(os.getenv("TORPIL_MIN_SAMPLES", "10"))
 TORPIL_MIN_VOL_RATIO = float(os.getenv("TORPIL_MIN_VOL_RATIO", "1.05"))
 TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))
 
-# Yahoo bootstrap
+# ===============================
+# Yahoo bootstrap config
+# ===============================
+
 BOOTSTRAP_ON_START = os.getenv("BOOTSTRAP_ON_START", "1").strip() == "1"
 BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "400"))
 BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"
+
 YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
 YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))
 YAHOO_MAX_ATTEMPTS = int(os.getenv("YAHOO_MAX_ATTEMPTS", "3"))
 YAHOO_BAD_TTL_SEC = int(os.getenv("YAHOO_BAD_TTL_SEC", "21600"))  # 6 saat
+
 YAHOO_UA = os.getenv(
     "YAHOO_UA",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36",
 ).strip()
 
-# Layered days (katmanlı)
-SCAN_DAYS = int(os.getenv("SCAN_DAYS", "120"))
-FLOW_NORM_DAYS = int(os.getenv("FLOW_NORM_DAYS", "60"))
-EARLY_DAYS = int(os.getenv("EARLY_DAYS", "30"))
 
-# Layered history windows (pro pipeline)
-SCAN_DAYS = int(os.getenv("SCAN_DAYS", "120"))
-FLOW_NORM_DAYS = int(os.getenv("FLOW_NORM_DAYS", "60"))
-EARLY_DAYS = int(os.getenv("EARLY_DAYS", "30"))
+# ===============================
+# Layered days (PRO katmanlı yapı)
+# ===============================
 
-EARLY_DAYS = int(os.getenv("EARLY_DAYS", "30"))
+SCAN_DAYS = int(os.getenv("SCAN_DAYS", "120"))        # Genel radar / scan
+FLOW_NORM_DAYS = int(os.getenv("FLOW_NORM_DAYS", "60"))  # Flow normalize
+EARLY_DAYS = int(os.getenv("EARLY_DAYS", "30"))      # Momo early
+
+
+def _days_for_layer(layer: str) -> int:
+    layer = (layer or "").strip().lower()
+
+    if layer in ("bootstrap", "boot", "init"):
+        return BOOTSTRAP_DAYS
+
+    if layer in ("scan", "radar", "general"):
+        return SCAN_DAYS
+
+    if layer in ("flow", "normalize", "norm"):
+        return FLOW_NORM_DAYS
+
+    if layer in ("early", "momo_early", "first"):
+        return EARLY_DAYS
+
+    return SCAN_DAYS
+
+
+# ===============================
+# Yahoo bad symbol cache
+# ===============================
+
+_YAHOO_BAD_SYMBOLS: Dict[str, float] = {}
 
 def _days_for_layer(layer: str) -> int:
     layer = (layer or "").strip().lower()
