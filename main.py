@@ -2283,7 +2283,17 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Kullanım: <code>/stats AKBNK</code>", parse_mode=ParseMode.HTML)
+    msg = (
+        f"📦 <b>SYSTEM STATS</b>\n"
+        f"____________________\n"
+        f"• History Days: <b>{HISTORY_DAYS}</b>\n"
+        f"• Scan Window: <b>{SCAN_DAYS}</b>\n"
+        f"• Flow Window: <b>{FLOW_NORM_DAYS}</b>\n"
+        f"• Early Window: <b>{EARLY_DAYS}</b>\n"
+        f"• Data Dir: <code>{EFFECTIVE_DATA_DIR}</code>\n"
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    return
         return
     t = re.sub(r"[^A-Za-z0-9:_\.]", "", context.args[0]).upper().replace("BIST:", "")
     if not t:
