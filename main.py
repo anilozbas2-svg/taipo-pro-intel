@@ -1591,6 +1591,10 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
                 logger.warning("Yahoo fetch error (%s) attempt=%d host=%s: %s",
                                sym, attempt + 1, base, e)
                 time.sleep(sleep_s)
+        # Eğer iki host da 404 döndüyse, sembolü geçici BAD listeye al
+        if last_err is not None and "404_not_found" in str(last_err):
+            _yahoo_mark_bad(sym)
+            return []
 
         # If both hosts failed for this attempt, do a slightly longer cooloff
         cooloff = max(float(YAHOO_SLEEP_SEC), 0.6) * (attempt + 1) * 2.0
