@@ -194,6 +194,28 @@ BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "400"))
 BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"
 YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
 YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))
+YAHOO_MAX_ATTEMPTS = int(os.getenv("YAHOO_MAX_ATTEMPTS", "3"))
+YAHOO_BAD_TTL_SEC = int(os.getenv("YAHOO_BAD_TTL_SEC", "21600"))  # 6 saat
+YAHOO_UA = os.getenv(
+    "YAHOO_UA",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36",
+).strip()
+
+_YAHOO_BAD_SYMBOLS: Dict[str, float] = {}  # sym -> ts
+
+
+def _yahoo_is_bad(sym: str) -> bool:
+    ts = _YAHOO_BAD_SYMBOLS.get(sym)
+    if not ts:
+        return False
+    if time.time() - ts >= YAHOO_BAD_TTL_SEC:
+        _YAHOO_BAD_SYMBOLS.pop(sym, None)
+        return False
+    return True
+
+
+def _yahoo_mark_bad(sym: str) -> None:
+    _YAHOO_BAD_SYMBOLS[sym] = time.time()
 
 # Whale
 WHALE_ENABLED = os.getenv("WHALE_ENABLED", "1").strip() == "1"
@@ -1443,6 +1465,8 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
     sym = (symbol or "").strip()
     if not sym:
         return []
+    if _yahoo_is_bad(sym):
+        return []
 
     # days -> Yahoo "range" map
     if days > 365:
@@ -1511,6 +1535,7 @@ def yahoo_fetch_history_sync(symbol: str, days: int) -> List[Tuple[str, float, f
 
                 # If query1 returns 404, try query2 immediately
                 if r.status_code == 404:
+                    # her iki host da 404 verirse sembol büyük ihtimalle Yahoo tarafında yok
                     last_err = Exception("404_not_found")
                     continue
 
