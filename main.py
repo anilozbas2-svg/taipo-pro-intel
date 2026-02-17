@@ -237,6 +237,25 @@ def _yahoo_is_bad(sym: str) -> bool:
 
 def _yahoo_mark_bad(sym: str) -> None:
     _YAHOO_BAD_SYMBOLS[sym] = time.time()
+    
+# -----------------------------
+# Layered history days
+# -----------------------------
+SCAN_DAYS = int(os.getenv("SCAN_DAYS", "120"))
+FLOW_NORM_DAYS = int(os.getenv("FLOW_NORM_DAYS", "60"))
+EARLY_DAYS = int(os.getenv("EARLY_DAYS", "30"))
+
+def _days_for_layer(layer: str) -> int:
+    layer = (layer or "").strip().lower()
+    if layer in ("bootstrap", "boot", "init"):
+        return BOOTSTRAP_DAYS
+    if layer in ("scan", "radar", "general"):
+        return SCAN_DAYS
+    if layer in ("flow", "normalize", "norm"):
+        return FLOW_NORM_DAYS
+    if layer in ("early", "momo_early", "first"):
+        return EARLY_DAYS
+    return SCAN_DAYS
 
 # Whale
 WHALE_ENABLED = os.getenv("WHALE_ENABLED", "1").strip() == "1"
@@ -1643,7 +1662,8 @@ def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, in
         if not short:
             continue
         sym = _to_yahoo_symbol_bist(short)
-        data = yahoo_fetch_history_sync(sym, days)
+        layer_days = _days_for_layer("scan")
+        data = yahoo_fetch_history_sync(sym, layer_days)
         if not data:
             time.sleep(YAHOO_SLEEP_SEC)
             continue
