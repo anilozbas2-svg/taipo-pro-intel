@@ -201,6 +201,11 @@ YAHOO_UA = os.getenv(
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36",
 ).strip()
 
+# Layered days (katmanlı)
+SCAN_DAYS = int(os.getenv("SCAN_DAYS", "120"))
+FLOW_NORM_DAYS = int(os.getenv("FLOW_NORM_DAYS", "60"))
+EARLY_DAYS = int(os.getenv("EARLY_DAYS", "30"))
+
 # Layered history windows (pro pipeline)
 SCAN_DAYS = int(os.getenv("SCAN_DAYS", "120"))
 FLOW_NORM_DAYS = int(os.getenv("FLOW_NORM_DAYS", "60"))
@@ -1662,7 +1667,6 @@ def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, in
         if not short:
             continue
         sym = _to_yahoo_symbol_bist(short)
-        layer_days = _days_for_layer("scan")
         data = yahoo_fetch_history_sync(sym, layer_days)
         if not data:
             time.sleep(YAHOO_SLEEP_SEC)
