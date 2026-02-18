@@ -4,7 +4,7 @@ import time
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Any
 
 import requests
 from telegram import Update
@@ -25,6 +25,13 @@ MOMO_KILIT_COOLDOWN_SEC = int(os.getenv("MOMO_KILIT_COOLDOWN_SEC", "2700"))
 MOMO_KILIT_MAX_ALERTS_PER_SCAN = int(os.getenv("MOMO_KILIT_MAX_ALERTS_PER_SCAN", "1"))
 MOMO_KILIT_WINDOW_MIN = int(os.getenv("MOMO_KILIT_WINDOW_MIN", "15"))
 
+# Per-symbol cooldown (mentor kararı: watchlist'ten silme yok, cooldown var)
+KILIT_SYMBOL_COOLDOWN_MIN = int(os.getenv("KILIT_SYMBOL_COOLDOWN_MIN", "240"))  # 240 dk = 4 saat
+
+# Seans saatleri (env)
+BIST_OPEN_HM = os.getenv("BIST_OPEN_HM", "10:00").strip()
+BIST_CLOSE_HM = os.getenv("BIST_CLOSE_HM", "18:10").strip()
+
 # ✅ Separate envs for KILIT (do NOT reuse FLOW envs)
 TV_SCAN_URL = os.getenv("MOMO_KILIT_TV_SCAN_URL", "https://scanner.tradingview.com/turkey/scan").strip()
 TV_TIMEOUT = int(os.getenv("MOMO_KILIT_TV_TIMEOUT", "12"))
@@ -34,19 +41,40 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 KILIT_STATE_FILE = os.path.join(DATA_DIR, "momo_kilit_state.json")
 KILIT_LAST_ALERT_FILE = os.path.join(DATA_DIR, "momo_kilit_last_alert.json")
 
-# PRIME watchlist dosyası (mevcut PRIME modülünle uyum için aynı klasörde tutuyoruz)
+# PRIME watchlist dosyası (mevcut PRIME modülünle uyum için aynı klasörde)
 PRIME_WATCHLIST_FILE = os.path.join(DATA_DIR, "momo_prime_watchlist.json")
 
 # ======================
-# SESSION HELPERS
+# TIME / SESSION HELPERS
 # ======================
+def _istanbul_now() -> datetime:
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Europe/Istanbul"))
+    except Exception:
+        # Fallback: sistem saati
+        return datetime.now()
+
+def _hm_to_minutes(hm: str, default_min: int) -> int:
+    try:
+        parts = (hm or "").strip().split(":")
+        if len(parts) != 2:
+            return default_min
+        h = int(parts[0])
+        m = int(parts[1])
+        return h * 60 + m
+    except Exception:
+        return default_min
+
 def _bist_session_open() -> bool:
-    now = datetime.now()  # Render TR saatinde
-    wd = now.weekday()    # 0=Pzt ... 6=Paz
+    now = _istanbul_now()
+    wd = now.weekday()  # 0=Pzt ... 6=Paz
     if wd >= 5:
         return False
     hm = now.hour * 60 + now.minute
-    return (10 * 60) <= hm <= (18 * 60 + 10)
+    open_min = _hm_to_minutes(BIST_OPEN_HM, 10 * 60)
+    close_min = _hm_to_minutes(BIST_CLOSE_HM, 18 * 60 + 10)
+    return open_min <= hm <= close_min
 
 # ==========================
 # JSON helpers
@@ -91,7 +119,7 @@ def _hash_message(s: str) -> str:
 # ==========================
 def _default_kilit_state() -> dict:
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "system": "momo_kilit",
         "telegram": {
             "momo_kilit_chat_id": int(MOMO_KILIT_CHAT_ID) if MOMO_KILIT_CHAT_ID else None
@@ -103,17 +131,21 @@ def _default_kilit_state() -> dict:
         "rules": {
             "score_min": MOMO_KILIT_SCORE_MIN,
             "cooldown_seconds": MOMO_KILIT_COOLDOWN_SEC,
+            "symbol_cooldown_min": KILIT_SYMBOL_COOLDOWN_MIN,
             "max_alerts_per_scan": MOMO_KILIT_MAX_ALERTS_PER_SCAN,
-            "window_min": MOMO_KILIT_WINDOW_MIN
+            "window_min": MOMO_KILIT_WINDOW_MIN,
+            "bist_open_hm": BIST_OPEN_HM,
+            "bist_close_hm": BIST_CLOSE_HM
         },
         "history": {}
     }
 
 def _default_last_alert() -> dict:
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "system": "momo_kilit",
         "cooldown_seconds": MOMO_KILIT_COOLDOWN_SEC,
+        "symbol_cooldown_min": KILIT_SYMBOL_COOLDOWN_MIN,
         "last_alert_by_symbol": {}
     }
 
@@ -130,8 +162,15 @@ def _default_watchlist() -> dict:
 # ==========================
 def _normalize_symbol(raw: str) -> str:
     s = (raw or "").strip().upper()
+    # TradingView "BIST:ASELS" gibi gelirse
     if ":" in s:
         s = s.split(":")[-1].strip()
+    # Bazı durumlarda "ASELS / ..." gibi ekstralar gelebilir
+    for sep in ["/", " ", "\t"]:
+        if sep in s:
+            s = s.split(sep)[0].strip()
+    # Son güvenlik
+    s = s.replace(".", "").strip()
     return s
 
 def _load_watchlist_symbols() -> List[str]:
@@ -149,23 +188,11 @@ def _load_watchlist_symbols() -> List[str]:
         out.append(s)
     return out
 
+# Mentor kararı: KİLİT attı diye watchlist'ten çıkarmıyoruz.
+# (İstersen ileride tekrar açarız.)
 def _remove_from_watchlist(symbol: str) -> None:
-    symbol = _normalize_symbol(symbol)
-    wl = _load_json(PRIME_WATCHLIST_FILE, _default_watchlist())
-    syms = wl.get("symbols") or []
-
-    new_syms: List[str] = []
-    for x in syms:
-        s = _normalize_symbol(str(x))
-        if not s:
-            continue
-        if s == symbol:
-            continue
-        new_syms.append(s)
-
-    wl["symbols"] = new_syms
-    wl["updated_utc"] = _utc_now_iso()
-    _save_json(PRIME_WATCHLIST_FILE, wl)
+    _ = symbol
+    return
 
 # ==========================
 # TradingView scan (by tickers list)
@@ -236,6 +263,33 @@ def _safe_mean(vals: List[float]) -> float:
         return 0.0
     return sum(vals) / float(len(vals))
 
+def _close_trend_bonus(closes: List[float]) -> float:
+    """
+    Close trend teyidi:
+    - son 3 close art arda artıyorsa +0.20
+    - son 4 close art arda artıyorsa +0.35
+    - zigzag 0
+    - düşüş baskınsa -0.10
+    """
+    if len(closes) < 4:
+        return 0.0
+
+    tail3 = closes[-3:]
+    inc3 = (tail3[0] <= tail3[1] <= tail3[2])
+
+    tail4 = closes[-4:]
+    inc4 = (tail4[0] <= tail4[1] <= tail4[2] <= tail4[3])
+
+    dec3 = (tail3[0] >= tail3[1] >= tail3[2])
+
+    if inc4:
+        return 0.35
+    if inc3:
+        return 0.20
+    if dec3:
+        return -0.10
+    return 0.0
+
 def _compute_kilit_score(samples: List[dict]) -> Tuple[int, Dict[str, str]]:
     if len(samples) < 3:
         return 0, {
@@ -272,8 +326,11 @@ def _compute_kilit_score(samples: List[dict]) -> Tuple[int, Dict[str, str]]:
                 above += 1
         vol_cont_ratio = above / float(len(tail))
 
-    # 2) Mini ivme: son iki tarama arası pct artışı
+    # 2) Mini ivme: son iki tarama arası pct artışı (yardımcı)
     pct_delta = latest_pct - float(prev_pcts[-1] if prev_pcts else 0.0)
+
+    # 2b) Close trend teyidi (asıl)
+    trend_bonus = _close_trend_bonus(closes)
 
     # 3) Geri çekilme zayıflığı: pencere içi zirveden max drawdown
     peak = max(closes) if closes else 0.0
@@ -282,7 +339,7 @@ def _compute_kilit_score(samples: List[dict]) -> Tuple[int, Dict[str, str]]:
         dd = (peak - latest_close) / peak
 
     # 4) Kırılım benzeri: hacim artıyor + ivme pozitif
-    break_like = (vol_spike >= 1.4) and (pct_delta >= 0.15)
+    break_like = (vol_spike >= 1.4) and ((pct_delta + (trend_bonus * 100.0)) >= 0.15)
 
     # --- Score weights ---
     score = 0.0
@@ -294,15 +351,20 @@ def _compute_kilit_score(samples: List[dict]) -> Tuple[int, Dict[str, str]]:
     dd_norm = 1.0 - max(0.0, min(1.0, dd / 0.012))
     score += 25.0 * dd_norm
 
-    # Mini ivme: 25 (pct_delta 0.00 => 0, 0.20+ => 1.0)
+    # Mini ivme: 25 -> pct_delta yardımcı + trend teyidi
+    # pct_delta 0.00 => 0, 0.20+ => 1.0
     ivme_norm = max(0.0, min(1.0, pct_delta / 0.20))
-    score += 25.0 * ivme_norm
+    # trend_bonus (0.35 max) ile çarpan: +%0..+%35
+    ivme_with_trend = max(0.0, min(1.0, ivme_norm + trend_bonus))
+    score += 25.0 * ivme_with_trend
 
     # Hacim spike + ivme: 20
     vol_norm = 0.0
     if vol_spike > 1.0:
         vol_norm = max(0.0, min(1.0, (vol_spike - 1.0) / 0.8))
-    score += 20.0 * vol_norm * (1.0 if pct_delta > 0.0 else 0.4)
+    # Trend pozitifse destekle
+    trend_factor = 1.0 if trend_bonus > 0 else 0.7
+    score += 20.0 * vol_norm * (1.0 if pct_delta > 0.0 else 0.4) * trend_factor
 
     score_int = int(round(max(0.0, min(100.0, score))))
 
@@ -319,18 +381,20 @@ def _compute_kilit_score(samples: List[dict]) -> Tuple[int, Dict[str, str]]:
     elif dd <= 0.008:
         cek_tag = "ORTA"
 
+    # ivme etiketi trend ile beslensin
     ivme_tag = "BASLAMADI"
-    if pct_delta >= 0.25:
+    eff = pct_delta + (trend_bonus * 0.30)  # trend etkisini küçük tut
+    if eff >= 0.25:
         ivme_tag = "HIZLANDI"
-    elif pct_delta >= 0.12:
+    elif eff >= 0.12:
         ivme_tag = "BASLADI"
 
-    # ✅ fixed semantics: break_like => "KIRIYOR" (not "TUTAMIYOR")
+    # ✅ fixed semantics: break_like => "KIRIYOR"
     tut_tag = "NORMAL"
     if break_like:
         tut_tag = "KIRIYOR"
     else:
-        if vol_spike >= 1.3 and pct_delta <= 0.05:
+        if vol_spike >= 1.3 and eff <= 0.05:
             tut_tag = "TOPLUYOR"
 
     tags = {
@@ -358,18 +422,34 @@ def _score_badge(score: int) -> str:
 # ==========================
 # Decision / cooldown
 # ==========================
-def _cooldown_ok(last_ts: Optional[float], now_ts: float) -> bool:
+def _cooldown_ok(last_ts: Optional[float], now_ts: float, cooldown_sec: int) -> bool:
     if last_ts is None:
         return True
-    return (now_ts - last_ts) >= float(MOMO_KILIT_COOLDOWN_SEC)
+    return (now_ts - last_ts) >= float(cooldown_sec)
 
-def _should_alert(last_alert_map: dict, ticker: str, message_hash: str, now_ts: float) -> bool:
+def _should_alert(
+    last_alert_map: dict,
+    ticker: str,
+    message_hash: str,
+    now_ts: float
+) -> bool:
     entry = (last_alert_map.get(ticker) or {})
-    last_ts = _parse_utc_iso(entry.get("last_alert_utc"))
-    if not _cooldown_ok(last_ts, now_ts):
-        return False
+
+    # 1) Mesaj hash aynıysa gönderme
     if entry.get("last_message_hash") == message_hash:
         return False
+
+    # 2) Genel cooldown
+    last_ts = _parse_utc_iso(entry.get("last_alert_utc"))
+    if not _cooldown_ok(last_ts, now_ts, int(MOMO_KILIT_COOLDOWN_SEC)):
+        return False
+
+    # 3) Symbol cooldown (mentor A)
+    sym_ts = _parse_utc_iso(entry.get("last_symbol_alert_utc"))
+    sym_cd_sec = int(KILIT_SYMBOL_COOLDOWN_MIN) * 60
+    if not _cooldown_ok(sym_ts, now_ts, sym_cd_sec):
+        return False
+
     return True
 
 # ==========================
@@ -394,12 +474,12 @@ def _format_kilit_message(ticker: str, score: int, tags: Dict[str, str]) -> str:
         + "\n".join(tag_lines) +
         "\n\n"
         "🧠 <i>Mentor notu:</i> Kilit açılıyor. Takip + disiplin.\n"
-        f"⏱ {datetime.now().strftime('%H:%M')}"
+        f"⏱ {_istanbul_now().strftime('%H:%M')}"
     )
     return msg
 
 def _kilit_message_hash_key(ticker: str, score: int, tags: Dict[str, str]) -> str:
-    # ✅ Stable hash key (time-independent)
+    # Stable hash key (time-independent)
     base = (
         f"{ticker}|{_score_level(score)}|"
         f"{tags.get('DEVAM','')}|{tags.get('CEKILME','')}|"
@@ -419,12 +499,16 @@ async def cmd_kilit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         txt = (
             "🔓 MOMO KİLİT\n\n"
             "Komutlar:\n"
-            "• /kilit status  → KİLİT durum\n"
-            "• /kilit test    → test mesajı\n\n"
+            "• /kilit status          → KİLİT durum\n"
+            "• /kilit test            → test mesajı\n"
+            "• /kilit watchlist       → watchlist özeti\n"
+            "• /kilit check ASELS     → tek hisse debug\n\n"
             "Notlar:\n"
             "• KİLİT sadece PRIME watchlist içinden tarar.\n"
             "• Seans dışında otomatik susar.\n"
-            "• Mesajlar etiketsel gelir (sayısal metrik basmaz)."
+            "• Mesajlar etiketsel gelir (sayısal metrik basmaz).\n"
+            f"• Seans: {BIST_OPEN_HM}-{BIST_CLOSE_HM} (TR)\n"
+            f"• Symbol cooldown: {KILIT_SYMBOL_COOLDOWN_MIN} dk"
         )
         await update.effective_message.reply_text(txt)
         return
@@ -439,11 +523,60 @@ async def cmd_kilit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "🔓 KİLİT STATUS\n\n"
             f"enabled: {int(MOMO_KILIT_ENABLED)}\n"
             f"chat_id: {MOMO_KILIT_CHAT_ID or 'n/a'}\n"
+            f"session_open: {int(_bist_session_open())}\n"
             f"watchlist_count: {len(wl)}\n"
             f"last_scan_utc: {last_scan}\n"
             f"tracked_alerts: {n_alerts}\n"
             f"cooldown(min): {int(MOMO_KILIT_COOLDOWN_SEC / 60)}\n"
+            f"symbol_cooldown(min): {KILIT_SYMBOL_COOLDOWN_MIN}\n"
             f"window(min): {MOMO_KILIT_WINDOW_MIN}\n"
+            f"bist: {BIST_OPEN_HM}-{BIST_CLOSE_HM} TR\n"
+        )
+        await update.effective_message.reply_text(txt)
+        return
+
+    if sub == "watchlist":
+        wl = _load_watchlist_symbols()
+        if not wl:
+            await update.effective_message.reply_text("📌 PRIME watchlist boş.")
+            return
+        head = f"📌 PRIME WATCHLIST ({len(wl)})\n\n"
+        lines = []
+        for s in wl[:20]:
+            lines.append(f"• {s}")
+        tail = ""
+        if len(wl) > 20:
+            tail = f"\n\n(+{len(wl) - 20} daha)"
+        await update.effective_message.reply_text(head + "\n".join(lines) + tail)
+        return
+
+    if sub == "check":
+        if len(context.args) < 2:
+            await update.effective_message.reply_text("Kullanım: /kilit check ASELS")
+            return
+        ticker = _normalize_symbol(context.args[1])
+
+        st = _load_json(KILIT_STATE_FILE, _default_kilit_state())
+        history = (st.get("history") or {})
+        samples = history.get(ticker) or []
+
+        if not samples or len(samples) < 3:
+            await update.effective_message.reply_text(f"{ticker}: yeterli örnek yok (min 3).")
+            return
+
+        score, tags = _compute_kilit_score(samples)
+        last_seen_ts = float(samples[-1].get("ts") or 0.0)
+        last_seen = datetime.fromtimestamp(last_seen_ts).strftime("%H:%M:%S")
+
+        txt = (
+            f"🔎 KİLİT CHECK – {ticker}\n\n"
+            f"score_badge: {_score_badge(score)}\n"
+            f"level: {_score_level(score)}\n"
+            f"DEVAM: {tags.get('DEVAM')}\n"
+            f"ÇEKİLME: {tags.get('CEKILME')}\n"
+            f"İVME: {tags.get('IVME')}\n"
+            f"TUTAMAMA: {tags.get('TUTAMAMA')}\n\n"
+            f"last_seen: {last_seen}"
         )
         await update.effective_message.reply_text(txt)
         return
@@ -492,14 +625,17 @@ async def job_momo_kilit_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     rows = _tv_scan_rows_for_symbols(watch_syms)
 
+    st.setdefault("scan", {})
     st["scan"]["last_scan_utc"] = _utc_now_iso()
-    _save_json(KILIT_STATE_FILE, st)
 
     if not rows:
+        _save_json(KILIT_STATE_FILE, st)
         logger.info("KILIT: no rows")
         return
 
     window_min = int(MOMO_KILIT_WINDOW_MIN)
+
+    # Update history memory
     for r in rows:
         ticker = _normalize_symbol(str(r.get("symbol") or ""))
         if not ticker:
@@ -522,6 +658,7 @@ async def job_momo_kilit_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     st["history"] = history
     _save_json(KILIT_STATE_FILE, st)
 
+    # Score candidates (watchlist order independent)
     candidates: List[Tuple[str, int, Dict[str, str]]] = []
     for ticker in watch_syms:
         t = _normalize_symbol(ticker)
@@ -559,14 +696,16 @@ async def job_momo_kilit_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error("KILIT send error: %s", e)
             continue
 
+        # Alert memory update
         last_alert_by_symbol[ticker] = {
             "last_alert_utc": _utc_now_iso(),
+            "last_symbol_alert_utc": _utc_now_iso(),
             "last_message_hash": mh,
             "level": _score_level(score)
         }
 
-        # 🔥 Spam sıfır: KİLİT attıysa watchlist’ten çıkar
-        _remove_from_watchlist(ticker)
+        # Mentor kararı: watchlist'ten çıkarma yok (cooldown ile yönetiyoruz)
+        # _remove_from_watchlist(ticker)
 
     la["last_alert_by_symbol"] = last_alert_by_symbol
     _save_json(KILIT_LAST_ALERT_FILE, la)
