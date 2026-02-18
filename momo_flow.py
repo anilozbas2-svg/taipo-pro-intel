@@ -144,7 +144,7 @@ def _hash_message(s: str) -> str:
 # ==========================
 def _default_flow_state() -> dict:
     return {
-        "schema_version": "3.0",
+        "schema_version": "3.1",
         "system": "momo_flow_spark_radar_rocket",
         "telegram": {
             "momo_flow_chat_id": int(MOMO_FLOW_CHAT_ID) if MOMO_FLOW_CHAT_ID else None
@@ -165,7 +165,7 @@ def _default_flow_state() -> dict:
 
 def _default_last_alert() -> dict:
     return {
-        "schema_version": "3.0",
+        "schema_version": "3.1",
         "system": "momo_flow_spark_radar_rocket",
         "cooldown_seconds": FLOW_COOLDOWN_SEC,
         "last_alert_by_symbol": {}
@@ -183,38 +183,66 @@ def _normalize_symbol(raw: str) -> str:
 
 
 def _tv_scan_rows() -> List[dict]:
-    payload = {
-        "filter": [
-            {"left": "market_cap_basic", "operation": "nempty"},
-            {"left": "volume", "operation": "nempty"},
-            {"left": "change", "operation": "nempty"}
-        ],
-        "options": {"lang": "tr"},
-        "symbols": {"query": {"types": []}, "tickers": []},
-        "columns": ["name", "change", "volume", "close"],
-        "sort": {"sortBy": "volume", "sortOrder": "desc"},
-        "range": [0, max(0, FLOW_TOP_N - 1)]
-    }
-    try:
+    def _call_scan(sort_by: str, columns: List[str]) -> List[dict]:
+        payload = {
+            "filter": [
+                {"left": "market_cap_basic", "operation": "nempty"},
+                {"left": "volume", "operation": "nempty"},
+                {"left": "change", "operation": "nempty"}
+            ],
+            "options": {"lang": "tr"},
+            "symbols": {"query": {"types": []}, "tickers": []},
+            "columns": columns,
+            "sort": {"sortBy": sort_by, "sortOrder": "desc"},
+            "range": [0, max(0, FLOW_TOP_N - 1)]
+        }
+
         r = requests.post(TV_SCAN_URL, json=payload, timeout=TV_TIMEOUT)
         r.raise_for_status()
         data = r.json() or {}
-        out = []
+
+        out: List[dict] = []
         for row in data.get("data", []) or []:
             d = row.get("d") or []
             if len(d) < 4:
                 continue
+
             sym = _normalize_symbol(str(d[0]))
             try:
-                out.append({
+                rec = {
                     "symbol": sym,
                     "change_pct": float(d[1]),
                     "volume": float(d[2]),
-                    "close": float(d[3])
-                })
+                    "close": float(d[3]),
+                }
+                if len(d) >= 5:
+                    try:
+                        rec["relvol"] = float(d[4])
+                    except Exception:
+                        rec["relvol"] = None
+                out.append(rec)
             except Exception:
                 continue
+
         return out
+
+    # 1) Önce relative volume ile dene (anomali yakalar)
+    try:
+        rows = _call_scan(
+            sort_by="relative_volume_10d_calc",
+            columns=["name", "change", "volume", "close", "relative_volume_10d_calc"]
+        )
+        if rows:
+            return rows
+    except Exception as e:
+        logger.info("FLOW TV scan relvol fallback (not supported or failed): %s", e)
+
+    # 2) Fallback: volume ile eski davranış
+    try:
+        return _call_scan(
+            sort_by="volume",
+            columns=["name", "change", "volume", "close"]
+        )
     except Exception as e:
         logger.error("FLOW TV scan error: %s", e)
         return []
@@ -242,7 +270,8 @@ def _roll_append(vals: List[float], v: float, n: int) -> List[float]:
 
 def _avg(vals: List[float]) -> Optional[float]:
     v = [x for x in (vals or []) if isinstance(x, (int, float))]
-    if len(v) < 3:
+    # 3 yerine 2: daha erken vol_spike üretir, FLOW’un susmasını azaltır
+    if len(v) < 2:
         return None
     return sum(v) / float(len(v))
 
@@ -469,10 +498,11 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         vsp = _safe_float(r.get("last_vol_spike"))
         vol = _safe_float(r.get("last_volume")) or 0.0
         close = _safe_float(r.get("last_close")) or 0.0
-        lvl = (r.get("last_level") or "n/a").upper()
+        lvl = (r.get("last_level") or "n/a")
         seen = r.get("last_seen_utc") or "n/a"
 
         vsp_txt = "n/a" if vsp is None else f"{vsp:.2f}x"
+        lvl_txt = "n/a" if not lvl else str(lvl).upper()
 
         txt = (
             f"⚡️ FLOW CHECK – {ticker}\n\n"
@@ -481,7 +511,7 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"VOL SPIKE: {vsp_txt}\n"
             f"HACİM: {vol:,.0f}\n"
             f"FİYAT: {close:.2f}\n"
-            f"SEVİYE: {lvl}\n"
+            f"SEVİYE: {lvl_txt}\n"
             f"last_seen_utc: {seen}"
         )
         await update.effective_message.reply_text(txt)
@@ -496,8 +526,8 @@ async def cmd_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pct = _safe_float(v.get("last_pct"))
             if pct is None:
                 continue
-            lvl = (v.get("last_level") or "-").upper()
-            items.append((pct, sym, lvl))
+            lvl = (v.get("last_level") or "-")
+            items.append((pct, sym, str(lvl).upper()))
 
         if not items:
             await update.effective_message.reply_text("📌 FLOW WATCH\n\nListe boş (state yok).")
@@ -547,6 +577,11 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     candidates: List[Tuple[str, float, float, float, float, Optional[float], str]] = []
 
+    # Teşhis sayaçları
+    rej_cap = 0
+    rej_no_level = 0
+    rej_bad_input = 0
+
     for r in rows:
         ticker = (r.get("symbol") or "").strip().upper()
         pct = float(r.get("change_pct") or 0.0)
@@ -554,6 +589,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         close = float(r.get("close") or 0.0)
 
         if not ticker or vol <= 0:
+            rej_bad_input += 1
             continue
 
         prev = recent.get(ticker) or {}
@@ -576,6 +612,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         # Hard cap: mesaj yok ama hafıza var
         if pct > FLOW_PCT_CAP:
+            rej_cap += 1
             base_mem["last_level"] = None
             recent[ticker] = base_mem
             continue
@@ -585,6 +622,7 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         recent[ticker] = base_mem
 
         if not level:
+            rej_no_level += 1
             continue
 
         candidates.append((ticker, pct, pct_delta, vol, close, vol_spike, level))
@@ -594,7 +632,10 @@ async def job_momo_flow_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     _save_json(FLOW_STATE_FILE, st)
 
     if not candidates:
-        logger.info("FLOW: no candidates")
+        logger.info(
+            "FLOW: no candidates | rows=%d | rej_bad_input=%d | rej_cap=%d | rej_no_level=%d",
+            len(rows), rej_bad_input, rej_cap, rej_no_level
+        )
         return
 
     # Priority: higher level, higher pct_delta, higher vol_spike, higher pct
