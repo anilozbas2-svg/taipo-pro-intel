@@ -615,8 +615,9 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if len(context.args) < 2:
             await update.effective_message.reply_text("Kullanım: /prime force THYAO")
             return
+        
         ticker = (context.args[1] or "").strip().upper()
-        ticker = _normalize_symbol(ticker)
+        ticker = "".join([c for c in ticker if c.isalnum()]).upper()
         if not ticker:
             await update.effective_message.reply_text("Ticker boş olamaz.")
             return
