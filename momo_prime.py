@@ -110,24 +110,26 @@ def prime_watchlist_add(symbol: str) -> None:
         syms = syms[:PRIME_WATCHLIST_MAX]
 
     d["symbols"] = syms
-    d["updated_utc"] = _utc_now_iso() if "_utc_now_iso" in globals() else None
+    d["updated_utc"] = _utc_now_iso()
     _prime_watchlist_save(d)
 
 def prime_watchlist_list() -> List[str]:
-    wl = _load_json(PRIME_WATCHLIST_FILE, {"symbols": []})
-    syms = wl.get("symbols") or []
+    d = _prime_watchlist_load()
+    syms = d.get("symbols") or []
+
     out: List[str] = []
     seen: set = set()
+
     for x in syms:
-        s = _normalize_symbol(str(x))
+        s = _prime_watchlist_normalize(str(x))
         if not s:
             continue
         if s in seen:
             continue
         seen.add(s)
         out.append(s)
-    return out
 
+    return out
 
 def prime_watchlist_clear() -> None:
     wl = _load_json(PRIME_WATCHLIST_FILE, {"symbols": []})
