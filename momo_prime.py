@@ -629,24 +629,16 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
         
     if sub in ("watchlist", "list"):
-    wl = prime_watchlist_list()
-    if not wl:
-        await update.effective_message.reply_text("📌 PRIME watchlist boş.")
-        return
-
-    txt = "📌 PRIME watchlist:\n" + "\n".join([f"• {s}" for s in wl])
-    await update.effective_message.reply_text(txt)
-    return
-
-    if sub in ("watchlist", "list"):
         wl = prime_watchlist_list()
         if not wl:
             await update.effective_message.reply_text("📌 PRIME watchlist boş.")
             return
+
         top = wl[:40]
         txt = "📌 PRIME WATCHLIST\n\n" + "\n".join([f"• {x}" for x in top])
         if len(wl) > len(top):
             txt += f"\n\n(+{len(wl) - len(top)} daha)"
+
         await update.effective_message.reply_text(txt)
         return
 
