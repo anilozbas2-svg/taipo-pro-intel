@@ -113,6 +113,28 @@ def prime_watchlist_add(symbol: str) -> None:
     d["updated_utc"] = _utc_now_iso() if "_utc_now_iso" in globals() else None
     _prime_watchlist_save(d)
 
+def prime_watchlist_list() -> List[str]:
+    wl = _load_json(PRIME_WATCHLIST_FILE, {"symbols": []})
+    syms = wl.get("symbols") or []
+    out: List[str] = []
+    seen: set = set()
+    for x in syms:
+        s = _normalize_symbol(str(x))
+        if not s:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def prime_watchlist_clear() -> None:
+    wl = _load_json(PRIME_WATCHLIST_FILE, {"symbols": []})
+    wl["symbols"] = []
+    wl["updated_utc"] = _utc_now_iso()
+    _save_json(PRIME_WATCHLIST_FILE, wl)
+
 def prime_watchlist_peek(limit: int = 25) -> list:
     d = _prime_watchlist_load()
     syms = [ _prime_watchlist_normalize(x) for x in (d.get("symbols") or []) ]
@@ -585,6 +607,40 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.effective_message.reply_text("Test gönderildi ✅")
         except Exception as e:
             await update.effective_message.reply_text(f"Test hata: {e}")
+        return
+
+    if sub == "force":
+        if len(context.args) < 2:
+            await update.effective_message.reply_text("Kullanım: /prime force THYAO")
+            return
+        ticker = (context.args[1] or "").strip().upper()
+        ticker = _normalize_symbol(ticker)
+        if not ticker:
+            await update.effective_message.reply_text("Ticker boş olamaz.")
+            return
+
+        prime_watchlist_add(ticker)
+        wl = prime_watchlist_list()
+        await update.effective_message.reply_text(
+            f"✅ PRIME force eklendi: {ticker}\nwatchlist_count: {len(wl)}"
+        )
+        return
+
+    if sub in ("watchlist", "list"):
+        wl = prime_watchlist_list()
+        if not wl:
+            await update.effective_message.reply_text("📌 PRIME watchlist boş.")
+            return
+        top = wl[:40]
+        txt = "📌 PRIME WATCHLIST\n\n" + "\n".join([f"• {x}" for x in top])
+        if len(wl) > len(top):
+            txt += f"\n\n(+{len(wl) - len(top)} daha)"
+        await update.effective_message.reply_text(txt)
+        return
+
+    if sub == "clear":
+        prime_watchlist_clear()
+        await update.effective_message.reply_text("🧹 PRIME watchlist temizlendi.")
         return
 
     await update.effective_message.reply_text("Bilinmeyen alt komut. /prime help")
