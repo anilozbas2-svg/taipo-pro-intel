@@ -568,6 +568,8 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Komutlar:\n"
             "• /prime status  → PRIME durum\n"
             "• /prime test    → test mesajı\n\n"
+            "• /prime force THYAO  → watchlist’e elle ekle\n"
+            "• /prime watchlist    → watchlist’i göster\n\n"
             "Not: PRIME tarama 3 dk; koşullar: %0.30–%0.80 + hacim ≥1.8x (10g-TV / 20g / 400g) + 4 saat cooldown.\n"
             f"Yahoo max/scan: {MOMO_PRIME_YAHOO_MAX_PER_SCAN} | Yahoo block: {int(MOMO_PRIME_YAHOO_BLOCK_SEC / 60)} dk"
         )
@@ -625,6 +627,16 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"✅ PRIME force eklendi: {ticker}\nwatchlist_count: {len(wl)}"
         )
         return
+        
+    if sub in ("watchlist", "list"):
+    wl = prime_watchlist_list()
+    if not wl:
+        await update.effective_message.reply_text("📌 PRIME watchlist boş.")
+        return
+
+    txt = "📌 PRIME watchlist:\n" + "\n".join([f"• {s}" for s in wl])
+    await update.effective_message.reply_text(txt)
+    return
 
     if sub in ("watchlist", "list"):
         wl = prime_watchlist_list()
