@@ -46,6 +46,79 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 PRIME_STATE_FILE = os.path.join(DATA_DIR, "momo_prime_state.json")
 PRIME_LAST_ALERT_FILE = os.path.join(DATA_DIR, "momo_prime_last_alert.json")
 
+# ==========================
+# PRIME WATCHLIST (for KILIT)
+# ==========================
+PRIME_WATCHLIST_FILE = os.path.join(DATA_DIR, "momo_prime_watchlist.json")
+PRIME_WATCHLIST_MAX = int(os.getenv("PRIME_WATCHLIST_MAX", "180"))  # liste şişmesin
+
+def _prime_watchlist_default() -> dict:
+    return {
+        "schema_version": "1.0",
+        "system": "momo_prime_watchlist",
+        "updated_utc": None,
+        "symbols": []
+    }
+
+def _prime_watchlist_load() -> dict:
+    try:
+        if not os.path.exists(PRIME_WATCHLIST_FILE):
+            return _prime_watchlist_default()
+        with open(PRIME_WATCHLIST_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f) or {}
+        if "symbols" not in d:
+            d["symbols"] = []
+        return d
+    except Exception as e:
+        logger.exception("PRIME watchlist load error: %s", e)
+        return _prime_watchlist_default()
+
+def _prime_watchlist_save(d: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(PRIME_WATCHLIST_FILE), exist_ok=True)
+        tmp = PRIME_WATCHLIST_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, PRIME_WATCHLIST_FILE)
+    except Exception as e:
+        logger.exception("PRIME watchlist save error: %s", e)
+
+def _prime_watchlist_normalize(sym: str) -> str:
+    s = (sym or "").strip().upper()
+    if ":" in s:
+        s = s.split(":")[-1].strip()
+    return s
+
+def prime_watchlist_add(symbol: str) -> None:
+    s = _prime_watchlist_normalize(symbol)
+    if not s:
+        return
+
+    d = _prime_watchlist_load()
+    syms = [ _prime_watchlist_normalize(x) for x in (d.get("symbols") or []) ]
+    syms = [x for x in syms if x]
+
+    if s in syms:
+        # zaten varsa, en üste taşı
+        syms = [x for x in syms if x != s]
+        syms.insert(0, s)
+    else:
+        syms.insert(0, s)
+
+    # cap
+    if len(syms) > PRIME_WATCHLIST_MAX:
+        syms = syms[:PRIME_WATCHLIST_MAX]
+
+    d["symbols"] = syms
+    d["updated_utc"] = _utc_now_iso() if "_utc_now_iso" in globals() else None
+    _prime_watchlist_save(d)
+
+def prime_watchlist_peek(limit: int = 25) -> list:
+    d = _prime_watchlist_load()
+    syms = [ _prime_watchlist_normalize(x) for x in (d.get("symbols") or []) ]
+    syms = [x for x in syms if x]
+    return syms[:max(1, int(limit))]
+
 # Small caches (RAM)
 _YAHOO_CACHE: Dict[str, Dict[str, Any]] = {}
 _YAHOO_CACHE_TTL = int(os.getenv("MOMO_PRIME_YAHOO_CACHE_TTL", "1800"))  # 30 min
@@ -615,6 +688,7 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True
             )
+            prime_watchlist_add(ticker)
             sent_any = True
         except Exception as e:
             logger.error("PRIME send error: %s", e)
