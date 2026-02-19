@@ -29,6 +29,9 @@ PRIME_PCT_MAX = float(os.getenv("MOMO_PRIME_PCT_MAX", "0.80"))
 PRIME_VOL_RATIO_MIN = float(os.getenv("MOMO_PRIME_VOL_RATIO_MIN", "1.80"))
 PRIME_COOLDOWN_SEC = int(os.getenv("MOMO_PRIME_COOLDOWN_SEC", "14400"))  # 4h
 
+# Watchlist advantage (cooldown reduction factor when ticker is already in watchlist)
+PRIME_WATCHLIST_COOLDOWN_FACTOR = float(os.getenv("PRIME_WATCHLIST_COOLDOWN_FACTOR", "0.5"))  # 0.5 => half cooldown
+
 # TradingView scanner
 TV_SCAN_URL = os.getenv("MOMO_PRIME_TV_SCAN_URL", "https://scanner.tradingview.com/turkey/scan").strip()
 TV_TIMEOUT = int(os.getenv("MOMO_PRIME_TV_TIMEOUT", "12"))
@@ -52,6 +55,7 @@ PRIME_LAST_ALERT_FILE = os.path.join(DATA_DIR, "momo_prime_last_alert.json")
 PRIME_WATCHLIST_FILE = os.path.join(DATA_DIR, "momo_prime_watchlist.json")
 PRIME_WATCHLIST_MAX = int(os.getenv("PRIME_WATCHLIST_MAX", "180"))  # liste şişmesin
 
+
 def _prime_watchlist_default() -> dict:
     return {
         "schema_version": "1.0",
@@ -59,6 +63,7 @@ def _prime_watchlist_default() -> dict:
         "updated_utc": None,
         "symbols": []
     }
+
 
 def _prime_watchlist_load() -> dict:
     try:
@@ -73,6 +78,7 @@ def _prime_watchlist_load() -> dict:
         logger.exception("PRIME watchlist load error: %s", e)
         return _prime_watchlist_default()
 
+
 def _prime_watchlist_save(d: dict) -> None:
     try:
         os.makedirs(os.path.dirname(PRIME_WATCHLIST_FILE), exist_ok=True)
@@ -83,11 +89,15 @@ def _prime_watchlist_save(d: dict) -> None:
     except Exception as e:
         logger.exception("PRIME watchlist save error: %s", e)
 
+
 def _prime_watchlist_normalize(sym: str) -> str:
     s = (sym or "").strip().upper()
     if ":" in s:
         s = s.split(":")[-1].strip()
+    # only keep alnum
+    s = "".join([c for c in s if c.isalnum()]).upper()
     return s
+
 
 def prime_watchlist_add(symbol: str) -> None:
     s = _prime_watchlist_normalize(symbol)
@@ -95,23 +105,41 @@ def prime_watchlist_add(symbol: str) -> None:
         return
 
     d = _prime_watchlist_load()
-    syms = [ _prime_watchlist_normalize(x) for x in (d.get("symbols") or []) ]
+    syms = [_prime_watchlist_normalize(x) for x in (d.get("symbols") or [])]
     syms = [x for x in syms if x]
 
     if s in syms:
-        # zaten varsa, en üste taşı
         syms = [x for x in syms if x != s]
         syms.insert(0, s)
     else:
         syms.insert(0, s)
 
-    # cap
     if len(syms) > PRIME_WATCHLIST_MAX:
         syms = syms[:PRIME_WATCHLIST_MAX]
 
     d["symbols"] = syms
     d["updated_utc"] = _utc_now_iso()
     _prime_watchlist_save(d)
+
+
+def prime_watchlist_remove(symbol: str) -> bool:
+    s = _prime_watchlist_normalize(symbol)
+    if not s:
+        return False
+
+    d = _prime_watchlist_load()
+    syms = [_prime_watchlist_normalize(x) for x in (d.get("symbols") or [])]
+    syms = [x for x in syms if x]
+
+    if s not in syms:
+        return False
+
+    syms = [x for x in syms if x != s]
+    d["symbols"] = syms
+    d["updated_utc"] = _utc_now_iso()
+    _prime_watchlist_save(d)
+    return True
+
 
 def prime_watchlist_list() -> List[str]:
     d = _prime_watchlist_load()
@@ -131,17 +159,21 @@ def prime_watchlist_list() -> List[str]:
 
     return out
 
+
 def prime_watchlist_clear() -> None:
     wl = _load_json(PRIME_WATCHLIST_FILE, {"symbols": []})
     wl["symbols"] = []
     wl["updated_utc"] = _utc_now_iso()
     _save_json(PRIME_WATCHLIST_FILE, wl)
 
-def prime_watchlist_peek(limit: int = 25) -> list:
+
+def prime_watchlist_peek(limit: int = 25) -> List[str]:
     d = _prime_watchlist_load()
-    syms = [ _prime_watchlist_normalize(x) for x in (d.get("symbols") or []) ]
+    syms = [_prime_watchlist_normalize(x) for x in (d.get("symbols") or [])]
     syms = [x for x in syms if x]
-    return syms[:max(1, int(limit))]
+    lim = max(1, int(limit))
+    return syms[:lim]
+
 
 # Small caches (RAM)
 _YAHOO_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -222,6 +254,7 @@ def _default_prime_state() -> dict:
             "pct_max": PRIME_PCT_MAX,
             "vol_ratio_min": PRIME_VOL_RATIO_MIN,
             "cooldown_seconds": PRIME_COOLDOWN_SEC,
+            "watchlist_cooldown_factor": PRIME_WATCHLIST_COOLDOWN_FACTOR,
             "reference_windows_days": [10, 20, 400],
             "position_windows_days": [30, 90, 180],
             "yahoo_max_per_scan": MOMO_PRIME_YAHOO_MAX_PER_SCAN,
@@ -254,10 +287,10 @@ def _hash_message(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:32]
 
 
-def _cooldown_ok(last_alert_ts: Optional[float], now_ts: float) -> bool:
+def _cooldown_ok(last_alert_ts: Optional[float], now_ts: float, cooldown_sec: int = PRIME_COOLDOWN_SEC) -> bool:
     if last_alert_ts is None:
         return True
-    return (now_ts - last_alert_ts) >= PRIME_COOLDOWN_SEC
+    return (now_ts - last_alert_ts) >= int(cooldown_sec)
 
 
 def _pct_position(close: float, low: float, high: float) -> Optional[float]:
@@ -269,6 +302,18 @@ def _pct_position(close: float, low: float, high: float) -> Optional[float]:
         return max(0.0, min(1.0, (close - low) / (high - low)))
     except Exception:
         return None
+
+
+def _watchlist_cooldown_seconds(is_in_watchlist: bool) -> int:
+    if not is_in_watchlist:
+        return int(PRIME_COOLDOWN_SEC)
+    factor = PRIME_WATCHLIST_COOLDOWN_FACTOR
+    try:
+        f = float(factor)
+    except Exception:
+        f = 0.5
+    f = max(0.1, min(1.0, f))
+    return max(60, int(PRIME_COOLDOWN_SEC * f))
 
 
 # ==========================
@@ -532,11 +577,12 @@ def _should_alert(
     r20: Optional[float],
     r400: Optional[float],
     now_ts: float,
-    message_hash: str
+    message_hash: str,
+    cooldown_sec: int
 ) -> bool:
     entry = (last_alert_map.get(ticker) or {})
     last_ts = _parse_utc_iso(entry.get("last_alert_utc"))
-    if not _cooldown_ok(last_ts, now_ts):
+    if not _cooldown_ok(last_ts, now_ts, cooldown_sec):
         return False
 
     ratios = [v for v in [r10, r20, r400] if isinstance(v, (int, float)) and v is not None]
@@ -568,11 +614,15 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         txt = (
             "🐳🔥 MOMO PRIME BALİNA\n\n"
             "Komutlar:\n"
-            "• /prime status  → PRIME durum\n"
-            "• /prime test    → test mesajı\n\n"
-            "• /prime force THYAO  → watchlist’e elle ekle\n"
-            "• /prime watchlist    → watchlist’i göster\n\n"
-            "Not: PRIME tarama 3 dk; koşullar: %0.30–%0.80 + hacim ≥1.8x (10g-TV / 20g / 400g) + 4 saat cooldown.\n"
+            "• /prime status        → PRIME durum\n"
+            "• /prime test          → test mesajı\n\n"
+            "• /prime force THYAO   → watchlist’e elle ekle\n"
+            "• /prime remove THYAO  → watchlist’ten sil\n"
+            "• /prime watchlist     → watchlist’i göster\n"
+            "• /prime top           → watchlist top (ilk 15)\n"
+            "• /prime clear         → watchlist’i temizle\n\n"
+            "Not: PRIME tarama 3 dk; koşullar: %0.30–%0.80 + hacim ≥1.8x (10g-TV / 20g / 400g).\n"
+            f"Cooldown: {int(PRIME_COOLDOWN_SEC / 3600)} saat | Watchlist avantaj: x{PRIME_WATCHLIST_COOLDOWN_FACTOR} cooldown\n"
             f"Yahoo max/scan: {MOMO_PRIME_YAHOO_MAX_PER_SCAN} | Yahoo block: {int(MOMO_PRIME_YAHOO_BLOCK_SEC / 60)} dk"
         )
         await update.effective_message.reply_text(txt)
@@ -591,6 +641,7 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"last_scan_utc: {last_scan}\n"
             f"tracked_alerts: {n_alerts}\n"
             f"cooldown(h): {PRIME_COOLDOWN_SEC / 3600:.0f}\n"
+            f"watchlist_cd_factor: {PRIME_WATCHLIST_COOLDOWN_FACTOR}\n"
             f"yahoo_allowed: {int(_yahoo_allowed_now())}\n"
             f"yahoo_block_left_sec: {blocked_left}\n"
             f"yahoo_max_per_scan: {MOMO_PRIME_YAHOO_MAX_PER_SCAN}\n"
@@ -617,9 +668,8 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if len(context.args) < 2:
             await update.effective_message.reply_text("Kullanım: /prime force THYAO")
             return
-        
-        ticker = (context.args[1] or "").strip().upper()
-        ticker = "".join([c for c in ticker if c.isalnum()]).upper()
+
+        ticker = _prime_watchlist_normalize(context.args[1] or "")
         if not ticker:
             await update.effective_message.reply_text("Ticker boş olamaz.")
             return
@@ -630,7 +680,38 @@ async def cmd_prime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"✅ PRIME force eklendi: {ticker}\nwatchlist_count: {len(wl)}"
         )
         return
-        
+
+    if sub == "remove":
+        if len(context.args) < 2:
+            await update.effective_message.reply_text("Kullanım: /prime remove THYAO")
+            return
+
+        ticker = _prime_watchlist_normalize(context.args[1] or "")
+        if not ticker:
+            await update.effective_message.reply_text("Ticker boş olamaz.")
+            return
+
+        ok = prime_watchlist_remove(ticker)
+        wl = prime_watchlist_list()
+        if ok:
+            await update.effective_message.reply_text(f"🗑️ PRIME kaldırıldı: {ticker}\nwatchlist_count: {len(wl)}")
+        else:
+            await update.effective_message.reply_text(f"⚠️ Listede yok: {ticker}\nwatchlist_count: {len(wl)}")
+        return
+
+    if sub == "top":
+        wl = prime_watchlist_list()
+        if not wl:
+            await update.effective_message.reply_text("📌 PRIME watchlist boş.")
+            return
+
+        top = wl[:15]
+        txt = "🔥 PRIME TOP\n\n" + "\n".join([f"• {x}" for x in top])
+        if len(wl) > len(top):
+            txt += f"\n\n(+{len(wl) - len(top)} daha)"
+        await update.effective_message.reply_text(txt)
+        return
+
     if sub in ("watchlist", "list"):
         wl = prime_watchlist_list()
         if not wl:
@@ -672,6 +753,9 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     la = _load_json(PRIME_LAST_ALERT_FILE, _default_last_alert())
     last_alert_by_symbol = la.get("last_alert_by_symbol") or {}
 
+    # snapshot watchlist once per scan (fast + consistent)
+    wl_now = set(prime_watchlist_peek(200))
+
     rows = _tv_scan_rows()
     st["scan"]["last_scan_utc"] = _utc_now_iso()
     _save_json(PRIME_STATE_FILE, st)
@@ -692,9 +776,12 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         if vol <= 0:
             continue
 
+        is_in_watch = _prime_watchlist_normalize(ticker) in wl_now
+        cd = _watchlist_cooldown_seconds(is_in_watch)
+
         entry = last_alert_by_symbol.get(ticker) or {}
         last_ts = _parse_utc_iso(entry.get("last_alert_utc"))
-        if not _cooldown_ok(last_ts, now_ts):
+        if not _cooldown_ok(last_ts, now_ts, cd):
             continue
 
         pre_candidates.append((ticker, pct, phase, vol, av10))
@@ -705,6 +792,9 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     yahoo_used = 0
 
     for (ticker, pct, phase, today_vol, av10) in pre_candidates:
+        is_in_watch = _prime_watchlist_normalize(ticker) in wl_now
+        cd = _watchlist_cooldown_seconds(is_in_watch)
+
         r10 = None
         if av10 is not None and av10 > 0:
             r10 = today_vol / av10
@@ -741,7 +831,7 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         mh = _hash_message(msg)
 
-        if not _should_alert(last_alert_by_symbol, ticker, pct, phase, r10, r20, r400, now_ts, mh):
+        if not _should_alert(last_alert_by_symbol, ticker, pct, phase, r10, r20, r400, now_ts, mh, cd):
             continue
 
         try:
@@ -752,6 +842,8 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
                 disable_web_page_preview=True
             )
             prime_watchlist_add(ticker)
+            # keep local snapshot fresh for the remainder of scan
+            wl_now.add(_prime_watchlist_normalize(ticker))
             sent_any = True
         except Exception as e:
             logger.error("PRIME send error: %s", e)
@@ -768,7 +860,9 @@ async def job_momo_prime_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
             "last_position_3m": p3,
             "last_position_6m": p6,
             "yahoo_ok": int(yahoo_ok),
-            "last_message_hash": mh
+            "last_message_hash": mh,
+            "cooldown_used_sec": int(cd),
+            "in_watchlist": int(is_in_watch)
         }
 
     la["last_alert_by_symbol"] = last_alert_by_symbol
