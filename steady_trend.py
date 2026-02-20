@@ -283,3 +283,33 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
             logger.warning("STEADY_TREND: telegram_send_fn error for %s: %s", sym, e)
 
     logger.info("STEADY_TREND: sent=%d top=%d", sent_any, len(top))
+
+# -------------------------
+# Backward compatibility (main.py expects this symbol)
+# -------------------------
+async def job_steady_trend_scan(context, *args, **kwargs) -> None:
+    # main.py already provides adapters via a wrapper or bot_data
+    # if you wired it as steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn)
+    # then keep calling that wrapper in main.py.
+    #
+    # If main.py directly schedules job_steady_trend_scan(context) (no adapters passed),
+    # we try to read adapters from bot_data (same pattern as other modules).
+    app = getattr(context, "application", None)
+    bot_data = getattr(app, "bot_data", {}) if app else {}
+
+    bist_open_fn = bot_data.get("bist_session_open")
+    fetch_rows_fn = bot_data.get("fetch_universe_rows")
+    telegram_send_fn = bot_data.get("telegram_send")
+
+    # If main.py uses your inline wrapper (recommended), these will be None here,
+    # but then main.py will NOT call this function anyway. Still safe.
+
+    try:
+        await steady_trend_job(context, bist_open_fn, fetch_rows_fn, telegram_send_fn)
+    except TypeError:
+        # If your steady_trend_job signature differs, fail-safe: do nothing
+        logger.warning("STEADY_TREND: job wrapper signature mismatch -> skipped")
+        return
+    except Exception as e:
+        logger.warning("STEADY_TREND: job wrapper error: %s", e)
+        return
