@@ -3571,16 +3571,33 @@ def schedule_jobs(app: Application) -> None:
             except Exception:
                 return True
 
+        # --- UNIVERSE TICKERS -> ENV'den oku (THYAO.IS,ASELS.IS,...)
+        async def _steady_fetch_universe_rows(ctx):
+            try:
+                tickers_raw = (os.getenv("UNIVERSE_TICKERS") or "").strip()
+                if not tickers_raw:
+                    return []
+
+                parts = [
+                    p.strip().upper()
+                    for p in tickers_raw.replace("\n", ",").split(",")
+                    if p.strip()
+                ]
+                return [{"ticker": t} for t in parts]
+            except Exception as e:
+                logger.exception("STEADY: _steady_fetch_universe_rows failed: %s", e)
+                return []
+
         # Adapters: steady_trend.py bunları bot_data içinden okuyor
         app.bot_data["bist_session_open"] = _steady_bist_open_safe
-        app.bot_data["fetch_universe_rows"] = fetch_universe_rows
+        app.bot_data["fetch_universe_rows"] = _steady_fetch_universe_rows
         app.bot_data["telegram_send"] = telegram_send
 
         logger.info(
             "STEADY DEBUG -> enabled=%s chat=%s job=%s interval=%s",
             STEADY_TREND_ENABLED,
             STEADY_TREND_CHAT_ID,
-            job_steady_trend_scan,
+            bool(job_steady_trend_scan),
             STEADY_TREND_INTERVAL_MIN,
         )
 
