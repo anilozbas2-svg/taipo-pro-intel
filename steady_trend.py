@@ -2,15 +2,17 @@ import os
 import time
 import math
 import logging
+import inspect
 from typing import Dict, Any, List, Tuple, Optional
 
 import requests
 
 logger = logging.getLogger("STEADY_TREND")
 
-# -------------------------
-# ENV helpers
-# -------------------------
+# =========================================================
+# ENV HELPERS
+# =========================================================
+
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.getenv(name, "")
     if val == "":
@@ -40,32 +42,70 @@ def _safe_float(x: Any) -> Optional[float]:
     except Exception:
         return None
 
-# -------------------------
+# =========================================================
+# TICKER NORMALIZATION ( .IS + BIST SAFE )
+# =========================================================
+
+def _tv_ticker(sym: str) -> str:
+    """
+    Converts:
+        THYAO.IS  -> BIST:THYAO
+        THYAO     -> BIST:THYAO
+        BIST:THYAO -> BIST:THYAO
+    """
+    s = (sym or "").strip().upper()
+    if not s:
+        return ""
+
+    if s.endswith(".IS"):
+        s = s[:-3]
+
+    if ":" in s:
+        return s
+
+    return f"BIST:{s}"
+
+def _norm_symbol(sym: str) -> str:
+    """
+    Converts:
+        BIST:THYAO -> THYAO
+        THYAO.IS   -> THYAO
+    """
+    s = (sym or "").strip().upper()
+
+    if ":" in s:
+        s = s.split(":")[-1].strip()
+
+    if s.endswith(".IS"):
+        s = s[:-3]
+
+    return s
+
+# =========================================================
 # ENV
-# -------------------------
+# =========================================================
+
 STEADY_TREND_ENABLED = _env_bool("STEADY_TREND_ENABLED", False)
 STEADY_TREND_CHAT_ID = os.getenv("STEADY_TREND_CHAT_ID", "").strip()
-
 STEADY_TREND_INTERVAL_MIN = _env_int("STEADY_TREND_INTERVAL_MIN", 2)
 
-# Ağır tren filtreleri (TV tabanlı)
-STEADY_TREND_MIN_PCT = _env_float("STEADY_TREND_MIN_PCT", 0.60)          # intraday %
-STEADY_TREND_MAX_PCT = _env_float("STEADY_TREND_MAX_PCT", 2.20)          # çok kaçtıysa “tren” değil
-STEADY_TREND_MIN_VOL_SPIKE = _env_float("STEADY_TREND_MIN_VOL_SPIKE", 1.05)  # vol/avg10
-
-# “düzenlilik” proxy (şimdilik hafif)
+STEADY_TREND_MIN_PCT = _env_float("STEADY_TREND_MIN_PCT", 0.60)
+STEADY_TREND_MAX_PCT = _env_float("STEADY_TREND_MAX_PCT", 2.20)
+STEADY_TREND_MIN_VOL_SPIKE = _env_float("STEADY_TREND_MIN_VOL_SPIKE", 1.05)
 STEADY_TREND_PROXY_MIN_STEADY = _env_float("STEADY_TREND_PROXY_MIN_STEADY", 0.62)
-
-# Spam önleme
 STEADY_TREND_COOLDOWN_MIN = _env_int("STEADY_TREND_COOLDOWN_MIN", 45)
 
-# TradingView scanner
-TV_SCAN_URL = os.getenv("STEADY_TREND_TV_SCAN_URL", "https://scanner.tradingview.com/turkey/scan").strip()
+TV_SCAN_URL = os.getenv(
+    "STEADY_TREND_TV_SCAN_URL",
+    "https://scanner.tradingview.com/turkey/scan"
+).strip()
+
 TV_TIMEOUT = _env_int("STEADY_TREND_TV_TIMEOUT", 12)
 
-# -------------------------
-# In-memory cooldown state
-# -------------------------
+# =========================================================
+# COOLDOWN MEMORY
+# =========================================================
+
 _LAST_SENT_TS: Dict[str, float] = {}
 
 def _cooldown_ok(symbol: str) -> bool:
@@ -76,12 +116,16 @@ def _cooldown_ok(symbol: str) -> bool:
     _LAST_SENT_TS[symbol] = now
     return True
 
-# -------------------------
-# TradingView scan for specific tickers
-# -------------------------
+# =========================================================
+# TRADINGVIEW SCAN
+# =========================================================
+
 def _tv_scan_for_tickers(tickers: List[str]) -> List[Dict[str, Any]]:
-    tickers = [t.strip().upper() for t in tickers if t and t.strip()]
-    if not tickers:
+
+    tv_tickers = [_tv_ticker(t) for t in (tickers or []) if t and str(t).strip()]
+    tv_tickers = [t for t in tv_tickers if t]
+
+    if not tv_tickers:
         return []
 
     payload = {
@@ -91,16 +135,23 @@ def _tv_scan_for_tickers(tickers: List[str]) -> List[Dict[str, Any]]:
             {"left": "close", "operation": "nempty"},
         ],
         "options": {"lang": "tr"},
-        "symbols": {"query": {"types": []}, "tickers": tickers},
-        "columns": ["name", "change", "volume", "close", "average_volume_10d_calc"],
+        "symbols": {"query": {"types": []}, "tickers": tv_tickers},
+        "columns": [
+            "name",
+            "change",
+            "volume",
+            "close",
+            "average_volume_10d_calc"
+        ],
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
-        "range": [0, min(200, len(tickers))]
+        "range": [0, min(200, len(tv_tickers))]
     }
 
     try:
         r = requests.post(TV_SCAN_URL, json=payload, timeout=TV_TIMEOUT)
         r.raise_for_status()
         js = r.json() or {}
+
         out: List[Dict[str, Any]] = []
 
         for row in (js.get("data") or []):
@@ -108,28 +159,26 @@ def _tv_scan_for_tickers(tickers: List[str]) -> List[Dict[str, Any]]:
             if len(d) < 4:
                 continue
 
-            sym = str(d[0]).strip().upper()
-            pct = _safe_float(d[1])      # günlük change (%)
-            vol = _safe_float(d[2])      # volume
-            last = _safe_float(d[3])     # close
+            sym = _norm_symbol(str(d[0]))
+            pct = _safe_float(d[1])
+            vol = _safe_float(d[2])
+            last = _safe_float(d[3])
             av10 = _safe_float(d[4]) if len(d) >= 5 else None
 
             if not sym or pct is None or vol is None or last is None:
                 continue
 
             vol_spike_10g = None
-            if av10 is not None and av10 > 0:
+            if av10 and av10 > 0:
                 vol_spike_10g = vol / av10
 
-            # “steadiness” proxy: aşırı spike değil, kontrollü aralık + hacim var ise yükselt
-            # (gerçek bar-up oranı yok; TV ile proxy)
             steady_proxy = 0.50
+
             if STEADY_TREND_MIN_PCT <= pct <= STEADY_TREND_MAX_PCT:
                 steady_proxy += 0.15
-            if vol_spike_10g is not None and vol_spike_10g >= STEADY_TREND_MIN_VOL_SPIKE:
+
+            if vol_spike_10g and vol_spike_10g >= STEADY_TREND_MIN_VOL_SPIKE:
                 steady_proxy += 0.15
-            if pct <= (STEADY_TREND_MIN_PCT + (STEADY_TREND_MAX_PCT - STEADY_TREND_MIN_PCT) * 0.65):
-                steady_proxy += 0.10
 
             steady_proxy = max(0.0, min(1.0, steady_proxy))
 
@@ -138,57 +187,58 @@ def _tv_scan_for_tickers(tickers: List[str]) -> List[Dict[str, Any]]:
                 "last": last,
                 "pct_day": pct,
                 "vol_spike_10g": vol_spike_10g,
-                "bars_up_ratio": steady_proxy,   # proxy
-                "delta_15m": None,               # yok (TV ile)
+                "bars_up_ratio": steady_proxy,
             })
 
         return out
+
     except Exception as e:
         logger.warning("STEADY_TREND: TV scan error: %s", e)
         return []
 
-# -------------------------
-# Filters / scoring
-# -------------------------
-def _passes_filters(row: Dict[str, Any]) -> Tuple[bool, str]:
-    pct_day = _safe_float(row.get("pct_day"))
-    vol_spike = _safe_float(row.get("vol_spike_10g"))
+# =========================================================
+# FILTER & SCORE
+# =========================================================
+
+def _passes_filters(row: Dict[str, Any]) -> bool:
+    pct = _safe_float(row.get("pct_day"))
+    vol = _safe_float(row.get("vol_spike_10g"))
     cons = _safe_float(row.get("bars_up_ratio"))
 
-    if pct_day is None or vol_spike is None or cons is None:
-        return (False, "bad_data")
+    if pct is None or vol is None or cons is None:
+        return False
 
-    if pct_day < STEADY_TREND_MIN_PCT:
-        return (False, "pct_low")
-    if pct_day > STEADY_TREND_MAX_PCT:
-        return (False, "pct_too_high")
-    if vol_spike < STEADY_TREND_MIN_VOL_SPIKE:
-        return (False, "vol_low")
+    if pct < STEADY_TREND_MIN_PCT:
+        return False
+    if pct > STEADY_TREND_MAX_PCT:
+        return False
+    if vol < STEADY_TREND_MIN_VOL_SPIKE:
+        return False
     if cons < STEADY_TREND_PROXY_MIN_STEADY:
-        return (False, "steady_proxy_low")
+        return False
 
-    return (True, "ok")
+    return True
 
 def _steady_score(row: Dict[str, Any]) -> float:
-    pct_day = float(row.get("pct_day", 0.0) or 0.0)
-    vol_spike = float(row.get("vol_spike_10g", 0.0) or 0.0)
+    pct = float(row.get("pct_day", 0.0) or 0.0)
+    vol = float(row.get("vol_spike_10g", 0.0) or 0.0)
     cons = float(row.get("bars_up_ratio", 0.0) or 0.0)
 
     s = 0.0
     s += cons * 3.0
-    s += min(vol_spike, 2.5) * 1.8
-    # pct çok kaçarsa puanı kır (tren değil)
-    pct_norm = max(0.0, min(1.0, (pct_day - STEADY_TREND_MIN_PCT) / max(0.01, (STEADY_TREND_MAX_PCT - STEADY_TREND_MIN_PCT))))
+    s += min(vol, 2.5) * 1.8
+
+    denom = max(0.01, (STEADY_TREND_MAX_PCT - STEADY_TREND_MIN_PCT))
+    pct_norm = max(0.0, min(1.0, (pct - STEADY_TREND_MIN_PCT) / denom))
     s += pct_norm * 1.2
+
     return s
 
+# =========================================================
+# MESSAGE FORMAT
+# =========================================================
+
 def _format_msg(row: Dict[str, Any]) -> str:
-    sym = row.get("symbol", "?")
-    last = row.get("last", None)
-    pct_day = row.get("pct_day", None)
-    vol_spike = row.get("vol_spike_10g", None)
-    cons = row.get("bars_up_ratio", None)
-    score = row.get("steady_score", None)
 
     def fnum(x, nd=2):
         try:
@@ -196,45 +246,45 @@ def _format_msg(row: Dict[str, Any]) -> str:
         except Exception:
             return "n/a"
 
-    lines = []
-    lines.append("🚄 STEADY TREND – AĞIR TREN (TV)")
-    lines.append("")
-    lines.append(f"HİSSE: {sym}")
-    lines.append(f"FİYAT: {fnum(last, 2)}")
-    lines.append(f"GÜNLÜK: +{fnum(pct_day, 2)}%")
-    lines.append(f"HACİM: {fnum(vol_spike, 2)}x (10g-TV)")
-    lines.append(f"İSTİKRAR(PROXY): {fnum(cons, 2)}")
-    lines.append(f"SKOR: {fnum(score, 2)}")
-    lines.append("")
-    lines.append("🧠 Mentor notu: Spike değil; kontrollü tırmanış (TV tabanlı). Takipte kal.")
-    return "\n".join(lines)
+    return (
+        "🚄 STEADY TREND – AĞIR TREN (TV)\n\n"
+        f"HİSSE: {row.get('symbol')}\n"
+        f"FİYAT: {fnum(row.get('last'),2)}\n"
+        f"GÜNLÜK: +{fnum(row.get('pct_day'),2)}%\n"
+        f"HACİM: {fnum(row.get('vol_spike_10g'),2)}x\n"
+        f"İSTİKRAR: {fnum(row.get('bars_up_ratio'),2)}\n"
+        f"SKOR: {fnum(row.get('steady_score'),2)}\n\n"
+        "🧠 Mentor notu: Spike değil; kontrollü tırmanış."
+    )
 
-# -------------------------
-# PUBLIC ENTRY (main.py ile uyumlu)
-# steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn)
-# -------------------------
+# =========================================================
+# MAIN ENTRY
+# =========================================================
+
 async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -> None:
+
     if not STEADY_TREND_ENABLED:
-        logger.info("STEADY_TREND: disabled -> return")
         return
 
     if not STEADY_TREND_CHAT_ID:
-        logger.warning("STEADY_TREND: missing STEADY_TREND_CHAT_ID -> return")
         return
 
     try:
         if bist_open_fn and (not bist_open_fn()):
-            logger.info("STEADY_TREND: session_closed -> return")
             return
-    except Exception as e:
-        logger.warning("STEADY_TREND: bist_open_fn error: %s", e)
+    except Exception:
         return
 
-    # fetch rows from main.py (expected: [{"ticker": "THYAO"}, ...])
+    # fetch_rows_fn async/sync safe
     try:
-        rows = await fetch_rows_fn(ctx) if fetch_rows_fn else []
-    except Exception as e:
-        logger.warning("STEADY_TREND: fetch_rows_fn error: %s", e)
+        if fetch_rows_fn:
+            if inspect.iscoroutinefunction(fetch_rows_fn):
+                rows = await fetch_rows_fn(ctx)
+            else:
+                rows = fetch_rows_fn(ctx)
+        else:
+            rows = []
+    except Exception:
         return
 
     tickers: List[str] = []
@@ -244,56 +294,44 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
             tickers.append(t)
 
     if not tickers:
-        logger.info("STEADY_TREND: no tickers")
         return
 
     tv_rows = _tv_scan_for_tickers(tickers)
-    if not tv_rows:
-        logger.info("STEADY_TREND: TV returned no rows")
-        return
 
     picks: List[Dict[str, Any]] = []
+
     for r in tv_rows:
-        ok, _reason = _passes_filters(r)
-        if not ok:
+        if not _passes_filters(r):
             continue
         r["steady_score"] = _steady_score(r)
         picks.append(r)
 
     if not picks:
-        logger.info("STEADY_TREND: no alerts")
         return
 
-    picks.sort(key=lambda x: float(x.get("steady_score", 0.0) or 0.0), reverse=True)
+    picks.sort(key=lambda x: x["steady_score"], reverse=True)
     top = picks[:3]
 
-    sent_any = 0
     for r in top:
-        sym = (r.get("symbol") or "").strip().upper()
-        if not sym:
-            continue
+        sym = r["symbol"]
         if not _cooldown_ok(sym):
             continue
 
         msg = _format_msg(r)
+
         try:
-            await telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
-            sent_any += 1
-        except Exception as e:
-            logger.warning("STEADY_TREND: telegram_send_fn error for %s: %s", sym, e)
+            if inspect.iscoroutinefunction(telegram_send_fn):
+                await telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
+            else:
+                telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
+        except Exception:
+            continue
 
-    logger.info("STEADY_TREND: sent=%d top=%d", sent_any, len(top))
+# =========================================================
+# Backward compatibility
+# =========================================================
 
-# -------------------------
-# Backward compatibility (main.py expects this symbol)
-# -------------------------
 async def job_steady_trend_scan(context, *args, **kwargs) -> None:
-    # main.py already provides adapters via a wrapper or bot_data
-    # if you wired it as steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn)
-    # then keep calling that wrapper in main.py.
-    #
-    # If main.py directly schedules job_steady_trend_scan(context) (no adapters passed),
-    # we try to read adapters from bot_data (same pattern as other modules).
     app = getattr(context, "application", None)
     bot_data = getattr(app, "bot_data", {}) if app else {}
 
@@ -301,15 +339,7 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
     fetch_rows_fn = bot_data.get("fetch_universe_rows")
     telegram_send_fn = bot_data.get("telegram_send")
 
-    # If main.py uses your inline wrapper (recommended), these will be None here,
-    # but then main.py will NOT call this function anyway. Still safe.
+    if not telegram_send_fn or not fetch_rows_fn:
+        return
 
-    try:
-        await steady_trend_job(context, bist_open_fn, fetch_rows_fn, telegram_send_fn)
-    except TypeError:
-        # If your steady_trend_job signature differs, fail-safe: do nothing
-        logger.warning("STEADY_TREND: job wrapper signature mismatch -> skipped")
-        return
-    except Exception as e:
-        logger.warning("STEADY_TREND: job wrapper error: %s", e)
-        return
+    await steady_trend_job(context, bist_open_fn, fetch_rows_fn, telegram_send_fn)
