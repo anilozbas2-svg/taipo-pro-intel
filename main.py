@@ -3556,58 +3556,13 @@ def schedule_jobs(app: Application) -> None:
     # =========================
     # STEADY TREND (AĞIR TREN)
     # =========================
-
-    def _bist_open_safe() -> bool:
-        try:
-            return bist_session_open()
-        except Exception:
-            return True  # bist_session_open yoksa "acik" kabul et
-    
-    async def fetch_universe_rows(ctx):
-        try:
-            tickers_raw = (UNIVERSE_TICKERS or "").strip()
-
-            if not tickers_raw:
-                return []
-
-            parts = [
-                p.strip().upper()
-                for p in tickers_raw.replace("\n", ",").split(",")
-                if p.strip()
-            ]
-
-            rows = []
-            for t in parts:
-                rows.append({"ticker": t})
-
-            return rows
-
-        except Exception as e:
-            logger.exception("fetch_universe_rows failed: %s", e)
-    
-    async def telegram_send(ctx, chat_id, text, **kwargs):
-        try:
-            if not chat_id:
-                return False
-            bot = getattr(ctx, "bot", None)
-            if bot is None:
-                return False
-            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-            return True
-        except Exception as e:
-            logger.exception("telegram_send failed: %s", e)
-            return False
-    
-    async def job_steady_trend_scan(ctx, *args, **kwargs):
-        return await steady_trend_job(
-            ctx,
-            _bist_open_safe,
-            fetch_universe_rows,
-            telegram_send,
-        )
-
     try:
-        if STEADY_TREND_ENABLED and STEADY_TREND_CHAT_ID and steady_trend_job:
+        # Adapters: steady_trend.py bunları bot_data içinden okuyor
+        app.bot_data["bist_session_open"] = bist_session_open
+        app.bot_data["fetch_universe_rows"] = fetch_universe_rows
+        app.bot_data["telegram_send"] = telegram_send
+
+        if STEADY_TREND_ENABLED and STEADY_TREND_CHAT_ID and job_steady_trend_scan:
             first_st = next_aligned_run(STEADY_TREND_INTERVAL_MIN)
 
             safe_run_repeating(
@@ -3624,7 +3579,7 @@ def schedule_jobs(app: Application) -> None:
                 first_st.isoformat(),
             )
         else:
-            logger.info("STEADY kapali veya chat_id yok -> steady calismayacak.")
+            logger.info("STEADY kapali veya chat_id yok veya import yok -> steady calismayacak.")
     except Exception as e:
         logger.exception("STEADY schedule failed (safe-skip): %s", e)
     
