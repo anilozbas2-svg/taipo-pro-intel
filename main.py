@@ -3571,13 +3571,12 @@ def schedule_jobs(app: Application) -> None:
             except Exception:
                 return True
 
-        # --- UNIVERSE TICKERS -> ENV'den oku (THYAO.IS,ASELS.IS,...)
+        # --- UNIVERSE TICKERS -> rows adapter (ENV: UNIVERSE_TICKERS="THYAO.IS,ASELS.IS,...")
         async def _steady_fetch_universe_rows(ctx):
             try:
-                tickers_raw = (os.getenv("UNIVERSE_TICKERS") or "").strip()
+                tickers_raw = (UNIVERSE_TICKERS or "").strip()
                 if not tickers_raw:
                     return []
-
                 parts = [
                     p.strip().upper()
                     for p in tickers_raw.replace("\n", ",").split(",")
@@ -3585,13 +3584,26 @@ def schedule_jobs(app: Application) -> None:
                 ]
                 return [{"ticker": t} for t in parts]
             except Exception as e:
-                logger.exception("STEADY: _steady_fetch_universe_rows failed: %s", e)
+                logger.exception("STEADY fetch_universe_rows failed: %s", e)
                 return []
+
+        async def _steady_telegram_send(ctx, chat_id, text, **kwargs):
+            try:
+                if not chat_id:
+                    return False
+                bot = getattr(ctx, "bot", None)
+                if bot is None:
+                    return False
+                await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+                return True
+            except Exception as e:
+                logger.exception("STEADY telegram_send failed: %s", e)
+                return False
 
         # Adapters: steady_trend.py bunları bot_data içinden okuyor
         app.bot_data["bist_session_open"] = _steady_bist_open_safe
         app.bot_data["fetch_universe_rows"] = _steady_fetch_universe_rows
-        app.bot_data["telegram_send"] = telegram_send
+        app.bot_data["telegram_send"] = _steady_telegram_send
 
         logger.info(
             "STEADY DEBUG -> enabled=%s chat=%s job=%s interval=%s",
