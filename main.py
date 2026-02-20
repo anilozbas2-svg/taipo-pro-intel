@@ -3557,10 +3557,32 @@ def schedule_jobs(app: Application) -> None:
     # STEADY TREND (AĞIR TREN)
     # =========================
     try:
+        # --- SAFE BIST OPEN FN (adı farklı olabilir, o yüzden garantiye alıyoruz)
+        def _steady_bist_open_safe() -> bool:
+            try:
+                fn = None
+                for _name in ("bist_session_open", "is_bist_open", "bist_is_open", "bist_open"):
+                    if _name in globals() and callable(globals().get(_name)):
+                        fn = globals().get(_name)
+                        break
+                if fn:
+                    return bool(fn())
+                return True
+            except Exception:
+                return True
+
         # Adapters: steady_trend.py bunları bot_data içinden okuyor
-        app.bot_data["bist_session_open"] = bist_session_open
+        app.bot_data["bist_session_open"] = _steady_bist_open_safe
         app.bot_data["fetch_universe_rows"] = fetch_universe_rows
         app.bot_data["telegram_send"] = telegram_send
+
+        logger.info(
+            "STEADY DEBUG -> enabled=%s chat=%s job=%s interval=%s",
+            STEADY_TREND_ENABLED,
+            STEADY_TREND_CHAT_ID,
+            job_steady_trend_scan,
+            STEADY_TREND_INTERVAL_MIN,
+        )
 
         if STEADY_TREND_ENABLED and STEADY_TREND_CHAT_ID and job_steady_trend_scan:
             first_st = next_aligned_run(STEADY_TREND_INTERVAL_MIN)
