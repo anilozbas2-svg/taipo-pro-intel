@@ -99,6 +99,11 @@ TRADE_LOG_FILE = os.path.join(
 # =========================================================
 TZ = ZoneInfo(os.getenv("TZ", "Europe/Istanbul"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+UNIVERSE_TICKERS = os.getenv("UNIVERSE_TICKERS", "").strip()
+
+if not UNIVERSE_TICKERS:
+    # fallback: UNIVERSE boşsa BIST200 listesini kullan
+    UNIVERSE_TICKERS = os.getenv("BIST200_TICKERS", "").strip()
 logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
