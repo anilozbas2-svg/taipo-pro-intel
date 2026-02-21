@@ -113,6 +113,8 @@ STEADY_TREND_PROXY_MIN_STEADY = _env_float("STEADY_TREND_PROXY_MIN_STEADY", 0.30
 TV_SCAN_URL = os.getenv("STEADY_TREND_TV_SCAN_URL", "https://scanner.tradingview.com/turkey/scan").strip()
 TV_TIMEOUT = _env_int("STEADY_TREND_TV_TIMEOUT", 12)
 
+STEADY_TREND_DRY_RUN = _env_bool("STEADY_TREND_DRY_RUN", False)
+STEADY_TREND_DRY_RUN_TAG = _env_bool("STEADY_TREND_DRY_RUN_TAG", False)
 
 # =========================================================
 # COOLDOWN MEMORY (in-memory)
@@ -258,16 +260,21 @@ def _format_msg(row: Dict[str, Any]) -> str:
             return "n/a"
 
     sym = row.get("symbol", "n/a")
+
+    # DRY-RUN etiketi (isteğe bağlı)
+    prefix = "🧪 <b>DRY-RUN</b>\n" if STEADY_TREND_DRY_RUN_TAG else ""
+
     return (
-        "🚄 <b>STEADY TREND – AĞIR TREN</b>\n"
-        "────────────────────────\n"
-        f"📌 <b>Hisse</b>: <code>{sym}</code>\n"
-        f"💰 <b>Fiyat</b>: {fnum(row.get('last'), 2)}\n"
-        f"📈 <b>Günlük</b>: +{fnum(row.get('pct_day'), 2)}%\n"
-        f"📊 <b>Hacim (10g)</b>: {fnum(row.get('vol_spike_10g'), 2)}x\n"
-        f"🧠 <b>Steady Proxy</b>: {fnum(row.get('steady_proxy'), 2)}\n"
-        f"🏁 <b>Skor</b>: {fnum(row.get('steady_score'), 2)}\n\n"
-        "📝 <i>Mentor notu: Spike kovalamıyoruz; kontrollü tırmanış.</i>"
+        prefix
+        + "🚄 <b>STEADY TREND – AĞIR TREN</b>\n"
+        + "______________________________\n"
+        + f"📌 <b>Hisse</b>: <code>{sym}</code>\n"
+        + f"💰 <b>Fiyat</b>: {fnum(row.get('last'), 2)}\n"
+        + f"📈 <b>Günlük</b>: +{fnum(row.get('pct_day'), 2)}%\n"
+        + f"📊 <b>Hacim (10g)</b>: {fnum(row.get('vol_spike_10g'), 2)}x\n"
+        + f"🧠 <b>Steady Proxy</b>: {fnum(row.get('steady_proxy'), 2)}\n"
+        + f"🏁 <b>Skor</b>: {fnum(row.get('steady_score'), 2)}\n\n"
+        + "📝 <i>Mentor notu: Spike kovalamıyoruz; kontrollü tırmanış.</i>"
     )
 
 
@@ -282,13 +289,13 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
     if not telegram_send_fn or not fetch_rows_fn:
         return
 
-    # BIST açık değilse (safe) çalışmayacak
-    try:
-        if bist_open_fn and (not bist_open_fn()):
-            return
-    except Exception:
-        # bist open fonksiyonu patlarsa safe skip
-        return
+    # BIST açık değilse normalde durur; DRY_RUN ile bypass ederiz
+        try:
+            if (not STEADY_TREND_DRY_RUN) and bist_open_fn and (not bist_open_fn()):
+                return
+        except Exception:
+            if not STEADY_TREND_DRY_RUN:
+                return
 
     # fetch_rows_fn async/sync safe
     try:
