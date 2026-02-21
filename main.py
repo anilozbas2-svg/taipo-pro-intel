@@ -5,6 +5,7 @@ import time
 import json
 import logging
 import asyncio
+import inspect
 from datetime import datetime, timedelta, time as dtime, date
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Any, Tuple, Optional
@@ -2280,6 +2281,36 @@ async def cmd_alarm_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
+async def cmd_steadytest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
+
+        if chat_id:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="🧪 <b>STEADY TEST</b> tetiklendi. Scan başlatıyorum…",
+                parse_mode="HTML",
+            )
+
+        res = job_steady_trend_scan(context)
+        if inspect.isawaitable(res):
+            await res
+
+        if chat_id:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="✅ <b>STEADY TEST</b> tamamlandı.",
+                parse_mode="HTML",
+            )
+
+    except Exception as e:
+        logger.exception("cmd_steadytest error: %s", e)
+        if chat_id:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ Hata: <code>{e}</code>",
+                parse_mode="HTML",
+            )
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
@@ -3755,6 +3786,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
+    app.add_handler(CommandHandler("steadytest", cmd_steadytest))
     app.add_handler(CommandHandler("rejim", cmd_rejim))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("status", cmd_stats))
