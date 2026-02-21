@@ -138,9 +138,7 @@ def _default_whale_state() -> dict:
         "schema_version": "1.0",
         "system": "whale_engine",
         "scan": {"last_scan_utc": None},
-        "continuity": {
-            # symbol: {"count": int, "last_seen_utc": str}
-        },
+        "continuity": {},
     }
 
 
@@ -149,9 +147,7 @@ def _default_last_alert() -> dict:
         "schema_version": "1.0",
         "system": "whale_engine",
         "cooldown_min": WHALE_COOLDOWN_MIN,
-        "last_alert_by_symbol": {
-            # symbol: {"last_alert_utc": str, "last_hash": str}
-        },
+        "last_alert_by_symbol": {},
     }
 
 
@@ -201,6 +197,7 @@ def prime_watchlist_add(symbol: str) -> None:
     if not s:
         return
     d = _wl_load()
+
     syms = [_wl_norm(x) for x in (d.get("symbols") or [])]
     syms = [x for x in syms if x]
 
@@ -376,7 +373,7 @@ def _passes_layer2(row: Dict[str, Any]) -> bool:
 def _score(row: Dict[str, Any], layer: str, cont_count: int) -> float:
     pct = float(row.get("pct") or 0.0)
     vs = float(row.get("vol_spike_10g") or 0.0)
-    sp = _steady_proxy(pct, vs)
+    sp = _steady_proxy(pct, _safe_float(vs))
 
     s = 0.0
     s += sp * 6.0
@@ -451,46 +448,80 @@ def _cooldown_ok(last_utc: Optional[str]) -> bool:
 
 
 def _format_message(row: Dict[str, Any], layer: str, score: float, cont_count: int) -> str:
-    sym = row.get("symbol") or "?"
+    sym = (row.get("symbol") or "?").strip()
     pct = float(row.get("pct") or 0.0)
     last = row.get("last")
-    vs = row.get("vol_spike_10g")
+    vs = _safe_float(row.get("vol_spike_10g"))
+    sp = _steady_proxy(pct, vs)
 
-    sp = _steady_proxy(pct, _safe_float(vs))
-
-    if score >= 10.5:
-        badge = "🐳🔥 <b>BALİNA KİLİT</b>"
-        mentor = "🧠 Mentor: Büyük balık oltada. Takip et, geri çekilmeyi kollayıp disiplinle gir."
-    elif score >= 9.5:
-        badge = "🐳 <b>BALİNA RADAR</b>"
-        mentor = "🧠 Mentor: Akıllı para izi var. 2. teyit scan beklenebilir."
-    else:
-        badge = "🦈 <b>ÖN RADAR</b>"
-        mentor = "🧠 Mentor: Hareket var ama teyit şart."
-
-    prefix = "🧪 <b>DRY-RUN</b>\n" if (WHALE_DRY_RUN and WHALE_DRY_RUN_TAG) else ""
-
-    def fnum(x, nd: int = 2) -> str:
+    def fnum(x: Any, nd: int = 2) -> str:
         try:
             return f"{float(x):.{nd}f}"
         except Exception:
             return "n/a"
 
-    msg = (
-        prefix
-        + f"{badge}\n\n"
-        + f"<b>HİSSE:</b> {sym}\n"
-        + f"<b>KATMAN:</b> {layer} ({'TV-TopN' if layer == 'L1' else 'Universe'})\n"
-        + f"<b>FİYAT:</b> {fnum(last, 2)}\n"
-        + f"<b>GÜNLÜK:</b> {pct:+.2f}%\n"
-        + f"<b>HACİM:</b> {fnum(vs, 2)}x (10g-TV)\n"
-        + f"<b>STEADY:</b> {fnum(sp, 2)}\n"
-        + f"<b>SKOR:</b> {fnum(score, 2)}\n"
-        + f"<b>SÜREKLİLİK:</b> {cont_count} scan\n\n"
-        + f"{mentor}\n"
-        + f"⏱ {datetime.now().strftime('%H:%M')}"
-    )
-    return msg
+    # Seviye
+    if score >= 10.5:
+        level = "BALİNA KİLİT"
+        trust = "YÜKSEK"
+    elif score >= 9.5:
+        level = "BALİNA RADAR"
+        trust = "ORTA-YÜKSEK"
+    else:
+        level = "ÖN RADAR (İZLE)"
+        trust = "ORTA"
+
+    # Pump analizi
+    if pct >= 4.50:
+        tempo_note = "Pump riski yüksek (aşırı şişme)."
+    elif pct >= 3.50:
+        tempo_note = "Hızlanma var, pump mı kontrollü mü takip şart."
+    else:
+        tempo_note = "Kontrollü tırmanış profili."
+
+    # Mentor B teyit
+    teyit_ok = (score >= 9.5 and cont_count >= 2 and (vs is not None and vs >= 1.30))
+
+    if teyit_ok:
+        action_block = [
+            "NE YAPAYIM? (Mentor B) → GİRİŞ PLANI AKTİF",
+            "1) Pullback bekle (kontrollü geri çekilme).",
+            "2) Pullback sonrası yukarı kırılım gelirse giriş değerlendir.",
+            "3) Sonraki scan’de skor düşmezse pozisyon korunur.",
+        ]
+    else:
+        action_block = [
+            "NE YAPAYIM? (Mentor B) → ŞİMDİLİK İZLE",
+            "1) Teyit gelmeden giriş yok.",
+            "2) Teyit şartı: Skor ≥ 9.5 + Süreklilik ≥ 2 + Hacim ≥ 1.30x",
+            "3) Pullback + yeniden yukarı kırılım görmeden giriş düşünme.",
+        ]
+
+    risk_block = [
+        "RİSK NOTU",
+        f"- {tempo_note}",
+        "- Hacim 1.10x altına düşerse izlemeye dön.",
+        "- Günlük %+3.50 üstü pump riski artar.",
+        "- Skor 1 puan ve üzeri düşerse balina zayıflıyor olabilir.",
+    ]
+
+    prefix = "DRY-RUN TEST\n" if (WHALE_DRY_RUN and WHALE_DRY_RUN_TAG) else ""
+
+    msg_lines = [
+        prefix + f"🐳 WHALE ENGINE — {level} | Güven: {trust}",
+        "",
+        f"Hisse: {sym}   Fiyat: {fnum(last, 2)}",
+        f"Günlük: {pct:+.2f}%   Hacim(10g): {fnum(vs, 2)}x   Steady: {fnum(sp, 2)}   Skor: {fnum(score, 2)}",
+        f"Süreklilik: {int(cont_count)} scan   Katman: {layer}",
+        "",
+    ]
+    msg_lines.extend(action_block)
+    msg_lines.append("")
+    msg_lines.extend(risk_block)
+    msg_lines.append("")
+    msg_lines.append(f"Saat: {datetime.now().strftime('%H:%M')}")
+
+    return "\n".join(msg_lines)
 
 
 # ==========================
@@ -516,6 +547,7 @@ async def job_whale_engine_scan(context) -> None:
         logger.warning("WHALE_ENGINE: missing telegram_send adapter")
         return
 
+    # Seans kapalıysa normalde bloklar; dry-run açıksa geçer
     if not WHALE_DRY_RUN:
         try:
             if bist_open_fn and (not bist_open_fn()):
@@ -527,13 +559,16 @@ async def job_whale_engine_scan(context) -> None:
     la = _load_json(WHALE_LAST_ALERT_FILE, _default_last_alert())
     last_map = la.get("last_alert_by_symbol") or {}
 
+    # Layer 1
     l1_rows = _tv_topn_rows(WHALE_TOPN)
     l1_candidates = [r for r in l1_rows if _passes_layer1(r)]
 
+    # Layer 2
     universe = _parse_universe_env(UNIVERSE_TICKERS)
     l2_rows = _tv_universe_rows(universe) if universe else []
     l2_candidates = [r for r in l2_rows if _passes_layer2(r)]
 
+    # Merge (L2 overwrite)
     merged: Dict[str, Dict[str, Any]] = {}
     for r in l1_candidates:
         merged[r["symbol"]] = dict(r)
@@ -585,7 +620,6 @@ async def job_whale_engine_scan(context) -> None:
                 context,
                 WHALE_CHAT_ID,
                 msg,
-                parse_mode="HTML",
                 disable_web_page_preview=True,
             )
             sent += 1
@@ -593,8 +627,13 @@ async def job_whale_engine_scan(context) -> None:
             logger.warning("WHALE_ENGINE: send error: %s", e)
             continue
 
-        last_map[sym] = {"last_alert_utc": _utc_now_iso(), "last_hash": mh, "last_score": float(s)}
+        last_map[sym] = {
+            "last_alert_utc": _utc_now_iso(),
+            "last_hash": mh,
+            "last_score": float(s),
+        }
 
+        # KILIT pipeline
         try:
             prime_watchlist_add(sym)
         except Exception:
