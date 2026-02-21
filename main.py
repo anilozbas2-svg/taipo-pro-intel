@@ -82,6 +82,23 @@ except Exception as e:
     STEADY_TREND_INTERVAL_MIN = 0
     logger.warning("STEADY_TREND disabled (import error): %s", e)
 
+# =========================
+# WHALE ENGINE (SAFE IMPORT)
+# =========================
+try:
+    from whale_engine import (
+        job_whale_engine_scan,
+        WHALE_ENABLED,
+        WHALE_CHAT_ID,
+        WHALE_INTERVAL_MIN,
+    )
+except Exception as e:
+    job_whale_engine_scan = None
+    WHALE_ENABLED = False
+    WHALE_CHAT_ID = ""
+    WHALE_INTERVAL_MIN = 0
+    logger.warning("WHALE_ENGINE disabled (import error): %s", e)
+
 # ==============================
 # Trade Log (Altın Log)
 # ==============================
@@ -2317,6 +2334,41 @@ async def cmd_steadytest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 parse_mode="HTML",
             )
 
+async def cmd_whaletest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = None
+    try:
+        chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
+
+        if chat_id:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="🧪 <b>WHALE TEST</b> tetiklendi. Scan başlatıyorum…",
+                parse_mode="HTML",
+            )
+
+        if not job_whale_engine_scan:
+            raise RuntimeError("job_whale_engine_scan tanımlı değil (import fail?)")
+
+        res = job_whale_engine_scan(context)
+        if inspect.isawaitable(res):
+            await res
+
+        if chat_id:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="✅ <b>WHALE TEST</b> tamamlandı.",
+                parse_mode="HTML",
+            )
+
+    except Exception as e:
+        logger.exception("cmd_whaletest error: %s", e)
+        if chat_id:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ <b>WHALE TEST</b> hata: <code>{e}</code>",
+                parse_mode="HTML",
+            )
+
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         msg = (
@@ -3671,6 +3723,45 @@ def schedule_jobs(app: Application) -> None:
         logger.exception("STEADY schedule failed (safe-skip): %s", e)
     
     # ==========================
+    # WHALE ENGINE (BALİNA MOTORU)
+    # ==========================
+    try:
+        logger.info(
+            "WHALE DEBUG -> enabled=%s chat=%s job=%s interval=%s",
+            WHALE_ENABLED,
+            WHALE_CHAT_ID,
+            bool(job_whale_engine_scan),
+            WHALE_INTERVAL_MIN,
+        )
+
+        if WHALE_ENABLED and WHALE_CHAT_ID and job_whale_engine_scan:
+            first_whale = next_aligned_run(WHALE_INTERVAL_MIN)
+
+            safe_run_repeating(
+                jq,
+                job_whale_engine_scan,
+                interval_sec=int(WHALE_INTERVAL_MIN) * 60,
+                first=first_whale,
+                name="whale_engine_scan_repeating",
+            )
+
+            logger.info(
+                "WHALE scan scheduled every %d min. First=%s",
+                int(WHALE_INTERVAL_MIN),
+                first_whale.isoformat(),
+            )
+        else:
+            logger.info(
+                "WHALE kapali veya chat_id/job yok -> whale calismayacak."
+            )
+
+    except Exception as e:
+        logger.exception(
+            "WHALE schedule failed (safe-skip): %s",
+            e,
+        )
+    
+    # ==========================
     # MOMO KİLİT (isolated)
     # ==========================
     try:
@@ -3792,6 +3883,7 @@ def main() -> None:
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("alarm", cmd_alarm_status))
     app.add_handler(CommandHandler("steadytest", cmd_steadytest))
+    app.add_handler(CommandHandler("whaletest", cmd_whaletest))
     app.add_handler(CommandHandler("rejim", cmd_rejim))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("status", cmd_stats))
