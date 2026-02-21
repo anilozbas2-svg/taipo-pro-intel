@@ -20,17 +20,20 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return val.strip().lower() in ("1", "true", "yes", "y", "on")
 
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)).strip())
     except Exception:
         return default
 
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.getenv(name, str(default)).strip())
     except Exception:
         return default
+
 
 def _safe_float(x: Any) -> Optional[float]:
     try:
@@ -43,11 +46,14 @@ def _safe_float(x: Any) -> Optional[float]:
     except Exception:
         return None
 
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
+
 def _hash32(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:32]
+
 
 def _load_json(path: str, default: dict) -> dict:
     try:
@@ -59,6 +65,7 @@ def _load_json(path: str, default: dict) -> dict:
         logger.warning("WHALE load_json error: %s", e)
         return default
 
+
 def _save_json(path: str, payload: dict) -> None:
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -68,6 +75,7 @@ def _save_json(path: str, payload: dict) -> None:
         os.replace(tmp, path)
     except Exception as e:
         logger.warning("WHALE save_json error: %s", e)
+
 
 # ==========================
 # ENV
@@ -121,6 +129,7 @@ WHALE_LAST_ALERT_FILE = os.path.join(DATA_DIR, "whale_engine_last_alert.json")
 PRIME_WATCHLIST_FILE = os.path.join(DATA_DIR, "momo_prime_watchlist.json")
 PRIME_WATCHLIST_MAX = _env_int("PRIME_WATCHLIST_MAX", 180)
 
+
 # ==========================
 # State defaults
 # ==========================
@@ -128,13 +137,12 @@ def _default_whale_state() -> dict:
     return {
         "schema_version": "1.0",
         "system": "whale_engine",
-        "scan": {
-            "last_scan_utc": None
-        },
+        "scan": {"last_scan_utc": None},
         "continuity": {
             # symbol: {"count": int, "last_seen_utc": str}
-        }
+        },
     }
+
 
 def _default_last_alert() -> dict:
     return {
@@ -143,14 +151,16 @@ def _default_last_alert() -> dict:
         "cooldown_min": WHALE_COOLDOWN_MIN,
         "last_alert_by_symbol": {
             # symbol: {"last_alert_utc": str, "last_hash": str}
-        }
+        },
     }
+
 
 # ==========================
 # Watchlist (for KILIT)
 # ==========================
 def _wl_default() -> dict:
     return {"schema_version": "1.0", "system": "momo_prime_watchlist", "updated_utc": None, "symbols": []}
+
 
 def _wl_norm(sym: str) -> str:
     s = (sym or "").strip().upper()
@@ -159,6 +169,7 @@ def _wl_norm(sym: str) -> str:
     if s.endswith(".IS"):
         s = s[:-3]
     return s
+
 
 def _wl_load() -> dict:
     try:
@@ -173,6 +184,7 @@ def _wl_load() -> dict:
         logger.warning("WHALE watchlist load error: %s", e)
         return _wl_default()
 
+
 def _wl_save(d: dict) -> None:
     try:
         os.makedirs(os.path.dirname(PRIME_WATCHLIST_FILE), exist_ok=True)
@@ -182,6 +194,7 @@ def _wl_save(d: dict) -> None:
         os.replace(tmp, PRIME_WATCHLIST_FILE)
     except Exception as e:
         logger.warning("WHALE watchlist save error: %s", e)
+
 
 def prime_watchlist_add(symbol: str) -> None:
     s = _wl_norm(symbol)
@@ -202,6 +215,7 @@ def prime_watchlist_add(symbol: str) -> None:
     d["updated_utc"] = _utc_now_iso()
     _wl_save(d)
 
+
 # ==========================
 # TradingView scan helpers
 # ==========================
@@ -210,39 +224,44 @@ def _tv_scan(payload: dict) -> List[Dict[str, Any]]:
         r = requests.post(TV_SCAN_URL, json=payload, timeout=TV_TIMEOUT)
         r.raise_for_status()
         js = r.json() or {}
+
         out: List[Dict[str, Any]] = []
         for row in (js.get("data") or []):
             d = row.get("d") or []
             if len(d) < 4:
                 continue
+
             sym = str(d[0]).strip().upper()
             pct = _safe_float(d[1])
             vol = _safe_float(d[2])
             last = _safe_float(d[3])
             av10 = _safe_float(d[4]) if len(d) >= 5 else None
+
             if not sym or pct is None or vol is None or last is None:
                 continue
 
-            # normalize: THYAO.IS -> THYAO
             sym_norm = _wl_norm(sym)
 
             vol_spike_10g = None
             if av10 is not None and av10 > 0:
                 vol_spike_10g = vol / av10
 
-            out.append({
-                "symbol_raw": sym,
-                "symbol": sym_norm,
-                "pct": float(pct),
-                "volume": float(vol),
-                "last": float(last),
-                "av10": float(av10) if av10 is not None else None,
-                "vol_spike_10g": float(vol_spike_10g) if vol_spike_10g is not None else None,
-            })
+            out.append(
+                {
+                    "symbol_raw": sym,
+                    "symbol": sym_norm,
+                    "pct": float(pct),
+                    "volume": float(vol),
+                    "last": float(last),
+                    "av10": float(av10) if av10 is not None else None,
+                    "vol_spike_10g": float(vol_spike_10g) if vol_spike_10g is not None else None,
+                }
+            )
         return out
     except Exception as e:
         logger.warning("WHALE TV scan error: %s", e)
         return []
+
 
 def _tv_topn_rows(topn: int) -> List[Dict[str, Any]]:
     payload = {
@@ -255,21 +274,21 @@ def _tv_topn_rows(topn: int) -> List[Dict[str, Any]]:
         "symbols": {"query": {"types": []}, "tickers": []},
         "columns": ["name", "change", "volume", "close", "average_volume_10d_calc"],
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
-        "range": [0, max(0, int(topn) - 1)]
+        "range": [0, max(0, int(topn) - 1)],
     }
     return _tv_scan(payload)
 
+
 def _tv_universe_rows(tickers: List[str]) -> List[Dict[str, Any]]:
-    t = []
+    t: List[str] = []
     for x in tickers:
         x = (x or "").strip().upper()
         if not x:
             continue
-        # TV tickers: BIST:THYAO or THYAO? -> safest: BIST:THYAO
-        # if env gave THYAO.IS -> strip .IS and prefix BIST:
         norm = _wl_norm(x)
         if norm:
             t.append(f"BIST:{norm}")
+
     if not t:
         return []
 
@@ -283,17 +302,20 @@ def _tv_universe_rows(tickers: List[str]) -> List[Dict[str, Any]]:
         "symbols": {"query": {"types": []}, "tickers": t},
         "columns": ["name", "change", "volume", "close", "average_volume_10d_calc"],
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
-        "range": [0, max(0, len(t) - 1)]
+        "range": [0, max(0, len(t) - 1)],
     }
     return _tv_scan(payload)
+
 
 def _parse_universe_env(raw: str) -> List[str]:
     raw = (raw or "").strip()
     if not raw:
         return []
+
     parts = [p.strip() for p in raw.replace("\n", ",").split(",") if p.strip()]
     out: List[str] = []
     seen: set = set()
+
     for p in parts:
         norm = _wl_norm(p)
         if not norm:
@@ -302,23 +324,23 @@ def _parse_universe_env(raw: str) -> List[str]:
             continue
         seen.add(norm)
         out.append(norm)
+
     return out
+
 
 # ==========================
 # Steady proxy + filters
 # ==========================
 def _steady_proxy(pct: float, vol_spike_10g: Optional[float]) -> float:
-    # 0..1 arası bir proxy: kontrollü artış + anlamlı hacim
     s = 0.50
-
     if 0.30 <= pct <= 3.50:
         s += 0.15
     if vol_spike_10g is not None and vol_spike_10g >= 1.05:
         s += 0.15
     if pct <= 2.20:
         s += 0.10
-
     return max(0.0, min(1.0, s))
+
 
 def _passes_layer1(row: Dict[str, Any]) -> bool:
     pct = float(row.get("pct") or 0.0)
@@ -333,6 +355,7 @@ def _passes_layer1(row: Dict[str, Any]) -> bool:
         return False
     return True
 
+
 def _passes_layer2(row: Dict[str, Any]) -> bool:
     pct = float(row.get("pct") or 0.0)
     vs = _safe_float(row.get("vol_spike_10g"))
@@ -346,6 +369,7 @@ def _passes_layer2(row: Dict[str, Any]) -> bool:
         return False
     return True
 
+
 # ==========================
 # Scoring + continuity
 # ==========================
@@ -354,32 +378,28 @@ def _score(row: Dict[str, Any], layer: str, cont_count: int) -> float:
     vs = float(row.get("vol_spike_10g") or 0.0)
     sp = _steady_proxy(pct, vs)
 
-    # Base score: steady + vol + pct control
-    # hedef: 0..~12
     s = 0.0
     s += sp * 6.0
     s += min(vs, 3.0) * 2.0
 
-    # pct: çok küçükse düşük, çok büyürse “pump” diye kır
     if pct <= 0:
         pct_part = 0.0
     else:
-        pct_part = min(pct, 3.0) / 3.0  # 0..1
+        pct_part = min(pct, 3.0) / 3.0
     s += pct_part * 2.0
 
-    # layer boost
     if layer == "L1":
         s += 0.40
     else:
-        s += 0.70  # Universe daha “temiz”
+        s += 0.70
 
-    # continuity bonus
     if cont_count >= 3:
         s += WHALE_CONT_BONUS_3
     elif cont_count >= 2:
         s += WHALE_CONT_BONUS_2
 
     return float(s)
+
 
 def _continuity_update(state: dict, symbols_seen: List[str]) -> Dict[str, int]:
     cont = (state.get("continuity") or {})
@@ -395,7 +415,6 @@ def _continuity_update(state: dict, symbols_seen: List[str]) -> Dict[str, int]:
         cont[sym] = {"count": new_count, "last_seen_utc": now_utc}
         out_counts[sym] = new_count
 
-    # prune: 2 gün görünmeyenleri sıfırla (hafif temizlik)
     try:
         now_ts = time.time()
         drop = []
@@ -417,6 +436,7 @@ def _continuity_update(state: dict, symbols_seen: List[str]) -> Dict[str, int]:
     state["continuity"] = cont
     return out_counts
 
+
 # ==========================
 # Alert decision (cooldown + hash)
 # ==========================
@@ -428,6 +448,7 @@ def _cooldown_ok(last_utc: Optional[str]) -> bool:
         return (time.time() - dt.timestamp()) >= (WHALE_COOLDOWN_MIN * 60)
     except Exception:
         return True
+
 
 def _format_message(row: Dict[str, Any], layer: str, score: float, cont_count: int) -> str:
     sym = row.get("symbol") or "?"
@@ -449,7 +470,7 @@ def _format_message(row: Dict[str, Any], layer: str, score: float, cont_count: i
 
     prefix = "🧪 <b>DRY-RUN</b>\n" if (WHALE_DRY_RUN and WHALE_DRY_RUN_TAG) else ""
 
-    def fnum(x, nd=2) -> str:
+    def fnum(x, nd: int = 2) -> str:
         try:
             return f"{float(x):.{nd}f}"
         except Exception:
@@ -470,6 +491,7 @@ def _format_message(row: Dict[str, Any], layer: str, score: float, cont_count: i
         + f"⏱ {datetime.now().strftime('%H:%M')}"
     )
     return msg
+
 
 # ==========================
 # PUBLIC JOB (main.py will schedule this)
@@ -494,30 +516,24 @@ async def job_whale_engine_scan(context) -> None:
         logger.warning("WHALE_ENGINE: missing telegram_send adapter")
         return
 
-    # Session gate (unless dry-run)
     if not WHALE_DRY_RUN:
         try:
             if bist_open_fn and (not bist_open_fn()):
                 return
         except Exception:
-            # safe: if session function missing/broken, do not block
             pass
 
-    # Load state
     st = _load_json(WHALE_STATE_FILE, _default_whale_state())
     la = _load_json(WHALE_LAST_ALERT_FILE, _default_last_alert())
     last_map = la.get("last_alert_by_symbol") or {}
 
-    # Scan layer 1
     l1_rows = _tv_topn_rows(WHALE_TOPN)
     l1_candidates = [r for r in l1_rows if _passes_layer1(r)]
 
-    # Scan layer 2
     universe = _parse_universe_env(UNIVERSE_TICKERS)
     l2_rows = _tv_universe_rows(universe) if universe else []
     l2_candidates = [r for r in l2_rows if _passes_layer2(r)]
 
-    # Merge unique (prefer L2 data if same symbol)
     merged: Dict[str, Dict[str, Any]] = {}
     for r in l1_candidates:
         merged[r["symbol"]] = dict(r)
@@ -565,7 +581,13 @@ async def job_whale_engine_scan(context) -> None:
             continue
 
         try:
-            await telegram_send(context, WHALE_CHAT_ID, msg, parse_mode="HTML", disable_web_page_preview=True)
+            await telegram_send(
+                context,
+                WHALE_CHAT_ID,
+                msg,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
             sent += 1
         except Exception as e:
             logger.warning("WHALE_ENGINE: send error: %s", e)
@@ -573,7 +595,6 @@ async def job_whale_engine_scan(context) -> None:
 
         last_map[sym] = {"last_alert_utc": _utc_now_iso(), "last_hash": mh, "last_score": float(s)}
 
-        # KILIT pipeline: watchlist'e at
         try:
             prime_watchlist_add(sym)
         except Exception:
