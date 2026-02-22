@@ -3653,13 +3653,16 @@ def schedule_jobs(app: Application) -> None:
                     if _name in globals() and callable(globals().get(_name)):
                         fn = globals().get(_name)
                         break
-                if fn:
-                    return bool(fn())
-                return True
-            except Exception:
-                return True
 
-        # --- UNIVERSE TICKERS -> rows adapter (ENV: UNIVERSE_TICKERS="THYAO.IS,ASELS.IS,...")
+                # Eskiden True idi -> bu yüzden borsa kapalıyken de çalışıyordu
+                if not fn:
+                    return False
+
+                return bool(fn())
+            except Exception:
+                # Eskiden True idi -> hata olunca da çalışıyordu
+                return False
+                
         async def _steady_fetch_universe_rows(ctx):
             try:
                 tickers_raw = (UNIVERSE_TICKERS or "").strip()
