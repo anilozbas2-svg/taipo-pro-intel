@@ -676,4 +676,3 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
         return
 
     await steady_trend_job(context, bist_open_fn, fetch_rows_fn, telegram_send_fn)
-```0
