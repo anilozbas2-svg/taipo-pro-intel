@@ -568,12 +568,18 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
     if not telegram_send_fn:
         return
 
-    # BIST açık değilse normalde durur; DRY_RUN ile bypass ederiz
-    try:
-        if (not STEADY_TREND_DRY_RUN) and bist_open_fn and (not bist_open_fn()):
+    # --- HARD MARKET LOCK (double safety) ---
+    # DRY_RUN kapalıyken market dışı zamanlarda kesin sus.
+    if not STEADY_TREND_DRY_RUN:
+        # 1) Saat + hafta sonu kilidi (garanti)
+        if not _steady_is_trading_time_tr():
             return
-    except Exception:
-        if not STEADY_TREND_DRY_RUN:
+
+        # 2) Ek sigorta: bist_open_fn varsa kontrol et (fail-closed)
+        try:
+            if bist_open_fn and (not bist_open_fn()):
+                return
+        except Exception:
             return
 
     state = _load_json(STEADY_STATE_FILE, _default_state())
