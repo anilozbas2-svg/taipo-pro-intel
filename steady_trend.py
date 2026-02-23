@@ -499,7 +499,7 @@ def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
 
     msg = (
         prefix
-        + "🧊 STEADY TREND – Sessiz Tırmanış\n"
+        + "🐳 STEADY TREND – Sessiz Tırmanış\n"
         + "━━━━━━━━━━━━━━━━━━━━━━\n"
         + f"🎯 Hisse: {sym}\n"
         + f"💰 Fiyat: {fnum(price, 2)}\n"
@@ -511,11 +511,12 @@ def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
         + f"✅ Trend Getiri: {fnum(total_pct, 2)}%\n"
         + f"✅ Up-Ratio: {fnum(up_ratio, 2)}\n"
         + f"⚠️ Max Drawdown: {fnum(max_dd, 2)}%\n"
-        + f"⭐ Skor: {fnum(score, 2)}\n"
+        + f"⭐ Skor: {fnum(score, 2)}\n\n"
         + f"{verdict}\n\n"
         + f"{action}\n\n"
         + f"⏱ {datetime.now().strftime('%H:%M')}"
     )
+
     return msg
 
 
