@@ -682,9 +682,19 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
         logger.warning("STEADY_TREND: missing telegram_send adapter")
         return
 
-    # --- HARD MARKET LOCK (Saat + Hafta sonu filtresi)
-     if not STEADY_TREND_DRY_RUN:
+    # --- HARD MARKET LOCK (Saat + Hafta sonu filtresi) + BIST open sigortası
+    # DRY_RUN kapalıyken market dışı zamanda steady kesin susar.
+    if not STEADY_TREND_DRY_RUN:
+        # 1) Saat + hafta sonu kilidi (garanti)
         if not _steady_is_trading_time_tr():
+            return
+
+        # 2) Ek sigorta: BIST açık fonksiyonu varsa onu da kontrol et
+        try:
+            if bist_open_fn and (not bist_open_fn()):
+                return
+        except Exception:
+            # Fail-closed: hata olursa da sus
             return
 
     await steady_trend_job(context, bist_open_fn, fetch_rows_fn, telegram_send_fn)
