@@ -5,6 +5,7 @@ import math
 import logging
 import inspect
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, List, Optional, Tuple
 
 import requests
@@ -60,6 +61,19 @@ def _safe_chat_id(raw: str) -> Optional[int]:
     except Exception:
         return None
 
+TR_TZ = ZoneInfo("Europe/Istanbul")
+
+def _steady_is_trading_time_tr() -> bool:
+    now = datetime.now(TR_TZ)
+
+    # 5=Saturday, 6=Sunday
+    if now.weekday() >= 5:
+        return False
+
+    h = now.hour
+
+    # BIST normal seans 10:00 - 18:00 (TR)
+    return 10 <= h < 18
 
 # =========================================================
 # TICKER NORMALIZATION
