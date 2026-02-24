@@ -591,17 +591,34 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         return
 
     # --- HARD MARKET LOCK (double safety) ---
-    # DRY_RUN kapalıyken market dışı zamanlarda kesin sus.
+    # DRY_RUN kapaliyken market disi zamanlarda steady kesin sus.
     if not STEADY_TREND_DRY_RUN:
+        # --- DEBUG: trading gate ---
+        try:
+            now_dbg = datetime.now()
+            logger.info(
+                "STEADY GATE now=%s weekday=%s hour=%s dry=%s",
+                now_dbg.isoformat(),
+                now_dbg.weekday(),
+                now_dbg.hour,
+                STEADY_TREND_DRY_RUN,
+            )
+        except Exception:
+            pass
+
         # 1) Saat + hafta sonu kilidi (garanti)
         if not _steady_is_trading_time_tr():
             return
 
-        # 2) Ek sigorta: bist_open_fn varsa kontrol et (fail-closed)
+        # 2) Ek sigorta: BIST acik fonksiyonu varsa onu da kontrol et (fail-closed)
         try:
-            if bist_open_fn and (not bist_open_fn()):
-                return
-        except Exception:
+            if bist_open_fn:
+                ok = bool(bist_open_fn())
+                logger.info("STEADY GATE bist_open_fn=%s", ok)
+                if not ok:
+                    return
+        except Exception as e:
+            logger.exception("STEADY GATE bist_open_fn error: %s", e)
             return
 
     state = _load_json(STEADY_STATE_FILE, _default_state())
