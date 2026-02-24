@@ -573,6 +573,18 @@ def _resolve_universe(fetch_rows_fn, ctx) -> List[str]:
 async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -> None:
     if not STEADY_TREND_ENABLED:
         return
+    # --- DEBUG: trading gate ---
+    try:
+        now_dbg = datetime.now()
+        logger.info(
+            "STEADY GATE now=%s weekday=%s hour=%s dry=%s",
+            now_dbg.isoformat(),
+            now_dbg.weekday(),
+            now_dbg.hour,
+            STEADY_TREND_DRY_RUN,
+        )
+    except Exception:
+        pass
     if STEADY_TREND_CHAT_ID is None:
         return
     if not telegram_send_fn:
