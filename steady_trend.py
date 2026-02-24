@@ -290,6 +290,16 @@ def _tv_scan_for_tickers_batch(tickers: List[str]) -> List[Dict[str, Any]]:
 
         if not sym or pct is None or vol is None or last is None:
             continue
+        
+        if not sym or pct is None or vol is None or last is None:
+            continue
+
+        # --- DEBUG: TV row check ---
+        logger.info("TVROW %s pct=%s vol=%s av10=%s", sym, pct, vol, av10)
+
+        vol_spike_10g = None
+        if av10 is not None and av10 > 0:
+            vol_spike_10g = vol / av10
 
         vol_spike_10g = None
         if av10 is not None and av10 > 0:
