@@ -729,17 +729,22 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
     # son kez state kaydet (cooldown işledi)
     _save_json(STEADY_STATE_FILE, state)
 
-
 # =========================================================
 # Backward compatibility entrypoint (main.py schedule_jobs can call this)
 # =========================================================
 async def job_steady_trend_scan(context, *args, **kwargs) -> None:
-    logger.info("STEADY_SCAN tick: enabled=%s chat_id=%s", STEADY_TREND_ENABLED, STEADY_TREND_CHAT_ID)
+    logger.info(
+        "STEADY_SCAN tick: enabled=%s chat_id=%s",
+        STEADY_TREND_ENABLED,
+        STEADY_TREND_CHAT_ID,
+    )
+
     app = getattr(context, "application", None)
     bot_data = getattr(app, "bot_data", {}) if app else {}
 
     bist_open_fn = bot_data.get("bist_session_open")
     fetch_rows_fn = bot_data.get("fetch_universe_rows")
+
     telegram_send_fn = (
         bot_data.get("telegram_send")
         or bot_data.get("telegram_send_fn")
@@ -747,21 +752,44 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
         or bot_data.get("tg_send")
     )
 
+    # ---- Adapter debug (KRİTİK)
+    logger.info(
+        "STEADY_ADAPTERS fetch_rows_fn=%s telegram_send_fn=%s bist_open_fn=%s",
+        bool(fetch_rows_fn),
+        bool(telegram_send_fn),
+        bool(bist_open_fn),
+    )
+
+    # fetch adapter yoksa scan yapılamaz → mantıklı return
+    if not fetch_rows_fn:
+        logger.warning("STEADY_TREND: missing fetch_rows_fn adapter")
+        return
+
+    # telegram adapter yoksa sadece uyar → scan devam eder
     if not telegram_send_fn:
-        logger.warning("STEADY_TREND: missing telegram_send adapter (scan will run, no messages)")
+        logger.warning(
+            "STEADY_TREND: missing telegram_send adapter (scan will run, no messages)"
+        )
 
     # --- HARD MARKET LOCK (TR saat + hafta sonu) + BIST open sigortası
-    # DRY_RUN kapalıyken market dışı zamanda steady kesin susar.
+    # DRY_RUN kapalıyken market dışı zamanda steady susar.
     if not STEADY_TREND_DRY_RUN:
-        # 1) Saat + hafta sonu kilidi (garanti)
+
+        # 1) Saat + hafta sonu kilidi
         if not _steady_is_trading_time_tr():
             return
 
-        # 2) Ek sigorta: BIST açık fonksiyonu varsa onu da kontrol et (fail-closed)
+        # 2) Ek sigorta: BIST açık fonksiyonu varsa kontrol et (fail-closed)
         try:
             if bist_open_fn and (not bist_open_fn()):
                 return
         except Exception:
             return
 
-    await steady_trend_job(context, bist_open_fn, fetch_rows_fn, telegram_send_fn)
+    # ---- Asıl steady job çağrısı
+    await steady_trend_job(
+        context,
+        bist_open_fn,
+        fetch_rows_fn,
+        telegram_send_fn,
+    )
