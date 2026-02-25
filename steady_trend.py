@@ -734,6 +734,7 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
 # Backward compatibility entrypoint (main.py schedule_jobs can call this)
 # =========================================================
 async def job_steady_trend_scan(context, *args, **kwargs) -> None:
+    logger.info("STEADY_SCAN tick: enabled=%s chat_id=%s", STEADY_TREND_ENABLED, STEADY_TREND_CHAT_ID)
     app = getattr(context, "application", None)
     bot_data = getattr(app, "bot_data", {}) if app else {}
 
