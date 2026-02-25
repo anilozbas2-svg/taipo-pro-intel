@@ -588,7 +588,7 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
     if STEADY_TREND_CHAT_ID is None:
         return
     if not telegram_send_fn:
-        return
+        logger.warning("STEADY_TREND: no telegram_send_fn (scan will run, no messages)")
 
     # --- HARD MARKET LOCK (double safety) ---
     # DRY_RUN kapaliyken market disi zamanlarda steady kesin sus.
@@ -714,6 +714,9 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         msg = _format_msg(r, m)
 
         try:
+            if not telegram_send_fn:
+                continue
+                
             if inspect.iscoroutinefunction(telegram_send_fn):
                 await telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
             else:
@@ -736,11 +739,15 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
 
     bist_open_fn = bot_data.get("bist_session_open")
     fetch_rows_fn = bot_data.get("fetch_universe_rows")
-    telegram_send_fn = bot_data.get("telegram_send")
+    telegram_send_fn = (
+        bot_data.get("telegram_send")
+        or bot_data.get("telegram_send_fn")
+        or bot_data.get("send_telegram")
+        or bot_data.get("tg_send")
+    )
 
     if not telegram_send_fn:
-        logger.warning("STEADY_TREND: missing telegram_send adapter")
-        return
+        logger.warning("STEADY_TREND: missing telegram_send adapter (scan will run, no messages)")
 
     # --- HARD MARKET LOCK (TR saat + hafta sonu) + BIST open sigortası
     # DRY_RUN kapalıyken market dışı zamanda steady kesin susar.
