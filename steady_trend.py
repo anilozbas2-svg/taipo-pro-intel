@@ -573,6 +573,7 @@ def _resolve_universe(fetch_rows_fn, ctx) -> List[str]:
 async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -> None:
     if not STEADY_TREND_ENABLED:
         return
+
     # --- DEBUG: trading gate ---
     try:
         now_dbg = datetime.now()
@@ -585,27 +586,17 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         )
     except Exception:
         pass
+
     if STEADY_TREND_CHAT_ID is None:
         return
+
+    # Telegram adapter yoksa: scan çalışsın, mesaj basmasın
     if not telegram_send_fn:
         logger.warning("STEADY_TREND: no telegram_send_fn (scan will run, no messages)")
 
     # --- HARD MARKET LOCK (double safety) ---
     # DRY_RUN kapaliyken market disi zamanlarda steady kesin sus.
     if not STEADY_TREND_DRY_RUN:
-        # --- DEBUG: trading gate ---
-        try:
-            now_dbg = datetime.now()
-            logger.info(
-                "STEADY GATE now=%s weekday=%s hour=%s dry=%s",
-                now_dbg.isoformat(),
-                now_dbg.weekday(),
-                now_dbg.hour,
-                STEADY_TREND_DRY_RUN,
-            )
-        except Exception:
-            pass
-
         # 1) Saat + hafta sonu kilidi (garanti)
         if not _steady_is_trading_time_tr():
             return
@@ -621,7 +612,37 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
             logger.exception("STEADY GATE bist_open_fn error: %s", e)
             return
 
+    # --- ENV overrides (Spam Kill) ---
+    # ENV'den geliyor: COOLDOWN_SEC=7200, MAX_PER_TICK=3
+    try:
+        cooldown_sec = int(os.getenv("COOLDOWN_SEC", "7200"))
+    except Exception:
+        cooldown_sec = 7200
+
+    try:
+        max_per_tick = int(os.getenv("MAX_PER_TICK", "3"))
+    except Exception:
+        max_per_tick = 3
+
+    if max_per_tick < 0:
+        max_per_tick = 0
+
+    now_ts = int(time.time())
+
     state = _load_json(STEADY_STATE_FILE, _default_state())
+
+    # --- Spam Kill state containers ---
+    # sent_ts: symbol bazlı son gönderim zamanı
+    # sent_sig_ts: msg signature bazlı son gönderim zamanı
+    sent_ts = state.get("sent_ts")
+    if not isinstance(sent_ts, dict):
+        sent_ts = {}
+        state["sent_ts"] = sent_ts
+
+    sent_sig_ts = state.get("sent_sig_ts")
+    if not isinstance(sent_sig_ts, dict):
+        sent_sig_ts = {}
+        state["sent_sig_ts"] = sent_sig_ts
 
     # Universe çöz
     universe: List[str] = _parse_tickers_env(STEADY_UNIVERSE_TICKERS)
@@ -685,7 +706,6 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         r["trend_total_pct"] = total_pct
         r["trend_up_ratio"] = up_ratio
         r["trend_max_dd"] = max_dd
-
         r["steady_score"] = _steady_score(r, m)
         picks.append(r)
 
@@ -696,13 +716,54 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         return
 
     picks.sort(key=lambda x: float(x.get("steady_score") or 0.0), reverse=True)
-    top = picks[:3]
+
+    # MAX_PER_TICK kesin limit (0 ise tamamen sus)
+    if max_per_tick == 0:
+        logger.info("STEADY_TREND: MAX_PER_TICK=0 -> no messages")
+        return
+
+    top = picks[: max(1, max_per_tick)]
+
+    def _make_sig(sym: str, r: Dict[str, Any]) -> str:
+        # Mesaj “aynı mı?” kontrolü için minimal imza
+        # (symbol + total_pct + up_ratio + max_dd + score) yuvarlanmış
+        try:
+            tp = float(r.get("trend_total_pct") or 0.0)
+            ur = float(r.get("trend_up_ratio") or 0.0)
+            dd = float(r.get("trend_max_dd") or 0.0)
+            sc = float(r.get("steady_score") or 0.0)
+        except Exception:
+            tp, ur, dd, sc = 0.0, 0.0, 0.0, 0.0
+
+        key = f"{sym}|{tp:.2f}|{ur:.2f}|{dd:.2f}|{sc:.2f}"
+        # kısa signature
+        return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+
+    # --- SEND LOOP (Spam Kill burada) ---
+    sent_count = 0
 
     for r in top:
         sym = _norm_symbol(r.get("symbol") or "")
         if not sym:
             continue
-        if not _cooldown_ok(state, sym):
+
+        # 1) Sym cooldown (fail-safe)
+        last_sym_ts = int(sent_ts.get(sym) or 0)
+        if (now_ts - last_sym_ts) < cooldown_sec:
+            continue
+
+        # 2) Signature dedup cooldown
+        sig = _make_sig(sym, r)
+        last_sig_ts = int(sent_sig_ts.get(sig) or 0)
+        if (now_ts - last_sig_ts) < cooldown_sec:
+            continue
+
+        # 3) Senin mevcut cooldown fonksiyonun (varsa ek güvenlik)
+        try:
+            if not _cooldown_ok(state, sym):
+                continue
+        except Exception:
+            # cooldown fonksiyonu patlarsa fail-open değil fail-safe (spam olmasın)
             continue
 
         m = {
@@ -713,20 +774,32 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
 
         msg = _format_msg(r, m)
 
+        # Telegram yoksa “scan var ama mesaj yok” kuralı
+        if not telegram_send_fn:
+            continue
+
         try:
-            if not telegram_send_fn:
-                continue
-                
             if inspect.iscoroutinefunction(telegram_send_fn):
                 await telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
             else:
                 telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
+
+            # Başarılı send -> state işaretle
             _mark_sent(state, sym)
+
+            # Spam kill markers
+            sent_ts[sym] = now_ts
+            sent_sig_ts[sig] = now_ts
+
+            sent_count += 1
+            if sent_count >= max_per_tick:
+                break
+
         except Exception as e:
             logger.warning("STEADY_TREND send error: %s", e)
             continue
 
-    # son kez state kaydet (cooldown işledi)
+    # son kez state kaydet (cooldown + spam kill işledi)
     _save_json(STEADY_STATE_FILE, state)
 
 # =========================================================
