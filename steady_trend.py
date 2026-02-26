@@ -487,62 +487,70 @@ def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
         except Exception:
             return "n/a"
 
-    sym = row.get("symbol", "n/a")
+    sym = _norm_symbol(row.get("symbol", "n/a"))
     price = row.get("last")
     day_pct = row.get("pct_day")
     vs = row.get("vol_spike_10g")
     proxy = row.get("steady_proxy")
-    score = row.get("steady_score")
+    score = float(row.get("steady_score") or 0.0)
 
-    total_pct = m.get("total_pct")
-    up_ratio = m.get("up_ratio")
-    max_dd = m.get("max_drawdown_pct")
+    total_pct = float(m.get("total_pct") or 0.0)
+    up_ratio = float(m.get("up_ratio") or 0.0)
+    max_dd = float(m.get("max_drawdown_pct") or 0.0)
 
-    # Mentor kararı (net)
-    # - Skor yüksekse: giriş planı daha net
-    # - Skor orta: teyit şart
-    if float(score or 0.0) >= 7.8:
+    # --- Güven seviyesi ---
+    if score >= 13 and up_ratio >= 0.85:
+        confidence = "🟢 YÜKSEK"
+    elif score >= 10:
+        confidence = "🟡 ORTA"
+    else:
+        confidence = "🔴 DİKKAT"
+
+    # --- Mentor kararı ---
+    if score >= 8:
         verdict = "🟢 GİRİŞ ADAYI"
         action = (
-            "Ne yapayım?\n"
-            "• Giriş: 1) 5-10 dk yatay/mini geri çekilme gör, 2) kırınca küçük lot gir.\n"
-            "• Teyit: 1 sonraki scan’de trend bozulmuyorsa ekleme düşünebilirsin.\n"
-            "• Stop: max drawdown üstüne çıkarsa (geri çekilme büyürse) disiplinle çık.\n"
-            "• Risk: tavan kovalamıyoruz; amaç kontrollü tırmanış."
+            "🎯 PLAN\n"
+            "1) 5-10 dk kontrollü geri çekilme bekle.\n"
+            "2) Yukarı kırılım gelirse küçük lotla gir.\n"
+            "3) Skor düşmezse pozisyon korunur.\n"
+            "4) MaxDD aşılırsa disiplinli çık."
         )
     else:
         verdict = "🟡 TEYİT BEKLE"
         action = (
-            "Ne yapayım?\n"
-            "• Giriş yok: 1 scan daha teyit.\n"
-            "• Teyit: up_ratio aynı kalır + drawdown büyümezse girişe döner.\n"
-            "• Risk: zayıf trendler ‘tek mum’ olup sönebilir."
+            "🎯 PLAN\n"
+            "1) Hemen giriş yok.\n"
+            "2) 1 sonraki scan’de skor korunursa izlemeye devam.\n"
+            "3) Up-ratio düşerse sinyal zayıflar."
         )
 
     prefix = "🧪 DRY-RUN\n" if (STEADY_TREND_DRY_RUN and STEADY_TREND_DRY_RUN_TAG) else ""
 
     msg = (
         prefix
-        + "🐳 STEADY TREND – Sessiz Tırmanış\n"
-        + "━━━━━━━━━━━━━━━━━━━━━━\n"
-        + f"🎯 Hisse: {sym}\n"
-        + f"💰 Fiyat: {fnum(price, 2)}\n"
-        + f"📈 Günlük: {fnum(day_pct, 2)}%\n"
-        + f"📊 Hacim (10g): {fnum(vs, 2)}x\n"
-        + f"🧭 Proxy: {fnum(proxy, 2)}\n"
-        + "━━━━━━━━━━━━━━━━━━━━━━\n"
-        + f"⏳ Pencere: {STEADY_WINDOW_MIN} dk\n"
-        + f"✅ Trend Getiri: {fnum(total_pct, 2)}%\n"
-        + f"✅ Up-Ratio: {fnum(up_ratio, 2)}\n"
-        + f"⚠️ Max Drawdown: {fnum(max_dd, 2)}%\n"
-        + f"⭐ Skor: {fnum(score, 2)}\n\n"
+        + "📈 STEADY TREND — Sessiz Tırmanış\n"
+        + f"⚡ Güven: {confidence}\n"
+        + "────────────────────\n"
+        + f"🧾 Hisse: {sym}\n"
+        + f"💰 Fiyat: {fnum(price)}\n"
+        + f"📊 Günlük: {fnum(day_pct)}%\n"
+        + f"🔥 Hacim(10g): {fnum(vs)}x\n"
+        + f"🧠 Proxy: {fnum(proxy)}\n"
+        + f"⭐ Skor: {fnum(score)}\n"
+        + "────────────────────\n"
+        + f"⏱ Pencere: {STEADY_WINDOW_MIN} dk\n"
+        + f"✅ Trend Getiri: {fnum(total_pct)}%\n"
+        + f"📈 Up-Ratio: {fnum(up_ratio)}\n"
+        + f"⚠️ Max Drawdown: {fnum(max_dd)}%\n"
+        + "────────────────────\n"
         + f"{verdict}\n\n"
-        + f"{action}\n\n"
-        + f"⏱ {datetime.now().strftime('%H:%M')}"
+        + f"{action}\n"
+        + "────────────────────\n"
+        + f"🕒 Saat: {datetime.now().strftime('%H:%M')}"
     )
 
     return msg
-
 
 # =========================================================
 # MAIN ENTRY (called from main.py via app.bot_data adapters)
@@ -865,4 +873,3 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
         bist_open_fn,
         fetch_rows_fn,
         telegram_send_fn,
-    )
