@@ -510,13 +510,16 @@ def _format_message(row: Dict[str, Any], layer: str, score: float, cont_count: i
     msg_lines = [
         prefix + f"🐳 WHALE ENGINE — {level} | Güven: {trust}",
         "",
-        f"Hisse: {sym}   Fiyat: {fnum(last, 2)}",
-        msg_lines.insert(0, "🧪 TEST: whale_engine.py format aktif (deploy kontrol)")
-        msg_lines.insert(1, "------------------------------")
-        f"Günlük: {pct:+.2f}%   Hacim(10g): {fnum(vs, 2)}x   Steady: {fnum(sp, 2)}   Skor: {fnum(score, 2)}",
-        f"Süreklilik: {int(cont_count)} scan   Katman: {layer}",
+        f"Hisse: {sym}  Fiyat: {fnum(last, 2)}",
+        f"Günlük: {pct:+.2f}%  Hacim(10g): {fnum(vs, 2)}x  Steady: {fnum(sp, 2)}  Skor: {fnum(score, 2)}",
+        f"Süreklilik: {int(cont_count)} scan  Katman: {layer}",
         "",
     ]
+
+    msg_lines.insert(0, "🧪 TEST: whale_engine.py format aktif (deploy kontrol)")
+    msg_lines.insert(1, "------------------------------")
+
+    msg_lines.extend(action_block)
     msg_lines.extend(action_block)
     msg_lines.append("")
     msg_lines.extend(risk_block)
