@@ -12,6 +12,8 @@ import requests
 
 logger = logging.getLogger("STEADY_TREND")
 
+logger.warning("STEADY FILE LOADED NEW VERSION")
+
 # =========================================================
 # ENV HELPERS
 # =========================================================
