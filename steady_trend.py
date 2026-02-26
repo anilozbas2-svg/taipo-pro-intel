@@ -906,10 +906,19 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
             return
 
         # 2) Ek sigorta: BIST açık fonksiyonu varsa kontrol et (fail-closed)
+        logger.info("STEADY scan tick")
+
+        force = os.getenv("STEADY_TREND_FORCE", "0") == "1"
+
         try:
-            if bist_open_fn and (not bist_open_fn()):
+            is_open = bist_open_fn() if bist_open_fn else None
+            logger.info("STEADY check: force=%s bist_open=%s", force, is_open)
+
+            if (not force) and bist_open_fn and (not is_open):
+                logger.info("STEADY exit: market closed")
                 return
-        except Exception:
+        except Exception as e:
+            logger.warning("STEADY exit: bist_open_fn error: %s", e)
             return
 
     # ---- Asıl steady job çağrısı
