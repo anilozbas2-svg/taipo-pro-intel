@@ -918,3 +918,4 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
         bist_open_fn,
         fetch_rows_fn,
         telegram_send_fn,
+        )
