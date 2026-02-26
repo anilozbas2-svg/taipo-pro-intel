@@ -481,6 +481,7 @@ def _steady_score(row: Dict[str, Any], m: Dict[str, float]) -> float:
 # MESSAGE FORMAT (with “Ne yapayım?”)
 # =========================================================
 def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
+    return "✅ PRO_FMT_V2 | steady_trend.py"
     def fnum(x: Any, nd: int = 2) -> str:
         try:
             return f"{float(x):.{nd}f}"
