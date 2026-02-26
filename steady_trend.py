@@ -487,7 +487,14 @@ def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
         except Exception:
             return "n/a"
 
-    sym = _norm_symbol(row.get("symbol", "n/a"))
+    def fint(x: Any) -> str:
+        try:
+            return str(int(x))
+        except Exception:
+            return "n/a"
+
+    sym = _norm_symbol(row.get("symbol") or row.get("ticker") or "n/a")
+
     price = row.get("last")
     day_pct = row.get("pct_day")
     vs = row.get("vol_spike_10g")
@@ -498,59 +505,96 @@ def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
     up_ratio = float(m.get("up_ratio") or 0.0)
     max_dd = float(m.get("max_drawdown_pct") or 0.0)
 
-    # --- Güven seviyesi ---
-    if score >= 13 and up_ratio >= 0.85:
-        confidence = "🟢 YÜKSEK"
-    elif score >= 10:
-        confidence = "🟡 ORTA"
-    else:
-        confidence = "🔴 DİKKAT"
+    # Katman (L1/L2/L3 gibi) varsa yaz
+    layer = row.get("layer") or row.get("katman") or ""
 
-    # --- Mentor kararı ---
-    if score >= 8:
-        verdict = "🟢 GİRİŞ ADAYI"
-        action = (
-            "🎯 PLAN\n"
-            "1) 5-10 dk kontrollü geri çekilme bekle.\n"
-            "2) Yukarı kırılım gelirse küçük lotla gir.\n"
-            "3) Skor düşmezse pozisyon korunur.\n"
-            "4) MaxDD aşılırsa disiplinli çık."
-        )
+    # Hızlı kalite etiketi
+    if score >= 13.0:
+        quality = "ÇOK YÜKSEK"
+    elif score >= 10.5:
+        quality = "YÜKSEK"
+    elif score >= 8.8:
+        quality = "ORTA"
     else:
+        quality = "DÜŞÜK"
+
+    # “Niye geldi?” kısa gerekçe
+    why = []
+    why.append(f"Trend {fnum(total_pct, 2)}% / {fint(STEADY_WINDOW_MIN)}dk")
+    why.append(f"Up {fnum(up_ratio, 2)}")
+    why.append(f"MaxDD {fnum(max_dd, 2)}%")
+    if vs not in (None, ""):
+        why.append(f"Hacim {fnum(vs, 2)}x")
+    if proxy not in (None, ""):
+        why.append(f"Proxy {fnum(proxy, 2)}")
+
+    # Mentor aksiyonu (daha net, daha “pro”)
+    # Not: “tavan kovalamıyoruz” yerine tetikleyicili plan veriyoruz.
+    if score >= 11.0 and up_ratio >= 0.85 and max_dd <= 1.2:
+        verdict = "🟢 GİRİŞ PLANI AKTİF"
+        plan = [
+            "1) 5–15 dk yatay / mini pullback bekle (kovalama yok).",
+            "2) Pullback sonrası önceki tepe üstü 1 kırılım görürsen küçük lotla gir.",
+            "3) 1 sonraki scan’de skor düşmez + UpRatio bozulmazsa ekleme değerlendir.",
+        ]
+    elif score >= 9.0:
         verdict = "🟡 TEYİT BEKLE"
-        action = (
-            "🎯 PLAN\n"
-            "1) Hemen giriş yok.\n"
-            "2) 1 sonraki scan’de skor korunursa izlemeye devam.\n"
-            "3) Up-ratio düşerse sinyal zayıflar."
-        )
+        plan = [
+            "1) Şimdilik giriş yok; 1–2 scan izleme.",
+            "2) Trend toplamı artıyor + MaxDD büyümüyorsa plan aktive olur.",
+            "3) Hacim (10g) 1.10x altına düşerse “izle” moduna dön.",
+        ]
+    else:
+        verdict = "🟠 İZLEME (ZAYIF ADAY)"
+        plan = [
+            "1) Skor/UpRatio güçlenmeden giriş yok.",
+            "2) Sadece listeye al: bir sonraki güçlü scan’i bekle.",
+        ]
 
-    prefix = "🧪 DRY-RUN\n" if (STEADY_TREND_DRY_RUN and STEADY_TREND_DRY_RUN_TAG) else ""
+    # Risk tetikleyicileri (somut)
+    risk = []
+    risk.append(f"MaxDD {fnum(max_dd, 2)}% üstüne çıkarsa disiplinle çık.")
+    if vs not in (None, ""):
+        risk.append("Hacim 1.10x altına düşerse momentum zayıflıyor olabilir.")
+    if day_pct not in (None, ""):
+        risk.append("Günlük +3.50% üstü hızlanırsa pump/volatilite riski artar.")
+    risk.append("Skor 1+ puan düşerse “balina zayıflıyor” ihtimali.")
 
-    msg = (
-        prefix
-        + "📈 STEADY TREND — Sessiz Tırmanış\n"
-        + f"⚡ Güven: {confidence}\n"
-        + "────────────────────\n"
-        + f"🧾 Hisse: {sym}\n"
-        + f"💰 Fiyat: {fnum(price)}\n"
-        + f"📊 Günlük: {fnum(day_pct)}%\n"
-        + f"🔥 Hacim(10g): {fnum(vs)}x\n"
-        + f"🧠 Proxy: {fnum(proxy)}\n"
-        + f"⭐ Skor: {fnum(score)}\n"
-        + "────────────────────\n"
-        + f"⏱ Pencere: {STEADY_WINDOW_MIN} dk\n"
-        + f"✅ Trend Getiri: {fnum(total_pct)}%\n"
-        + f"📈 Up-Ratio: {fnum(up_ratio)}\n"
-        + f"⚠️ Max Drawdown: {fnum(max_dd)}%\n"
-        + "────────────────────\n"
-        + f"{verdict}\n\n"
-        + f"{action}\n"
-        + "────────────────────\n"
-        + f"🕒 Saat: {datetime.now().strftime('%H:%M')}"
-    )
+    # DRY-RUN etiketi
+    prefix = ""
+    if STEADY_TREND_DRY_RUN and STEADY_TREND_DRY_RUN_TAG:
+        prefix = "🧪 DRY-RUN TEST\n"
 
-    return msg
+    # Başlık daha açıklayıcı
+    header = f"🐳 STEADY TREND — Sessiz Tırmanış | Güven: {quality}"
+    if layer:
+        header += f" | Katman: {layer}"
+
+    # Mesajı kompakt ama “anlatan” hale getir
+    msg_lines = []
+    msg_lines.append(prefix + header)
+    msg_lines.append("────────────────────────")
+    msg_lines.append(f"📌 Hisse: {sym}  |  💰 Fiyat: {fnum(price, 2)}  |  📈 Günlük: {fnum(day_pct, 2)}%")
+    msg_lines.append(f"📊 Hacim(10g): {fnum(vs, 2)}x  |  🧭 Proxy: {fnum(proxy, 2)}  |  ⭐ Skor: {fnum(score, 2)}")
+    msg_lines.append("────────────────────────")
+    msg_lines.append(f"🕒 Pencere: {fint(STEADY_WINDOW_MIN)} dk")
+    msg_lines.append(f"✅ Trend Getiri: {fnum(total_pct, 2)}%")
+    msg_lines.append(f"✅ Up-Ratio: {fnum(up_ratio, 2)}")
+    msg_lines.append(f"⚠️ Max Drawdown: {fnum(max_dd, 2)}%")
+    msg_lines.append("────────────────────────")
+    msg_lines.append(f"🧠 Karar: {verdict}")
+    msg_lines.append("🎯 Plan:")
+    for p in plan:
+        msg_lines.append(f"- {p}")
+    msg_lines.append("🧯 Risk Notu:")
+    for r in risk:
+        msg_lines.append(f"- {r}")
+    msg_lines.append("────────────────────────")
+    msg_lines.append("🔎 Neden geldi?")
+    msg_lines.append("- " + " | ".join(why))
+    msg_lines.append(f"⏱ Saat: {datetime.now().strftime('%H:%M')}")
+
+    return "\n".join(msg_lines)
 
 # =========================================================
 # MAIN ENTRY (called from main.py via app.bot_data adapters)
