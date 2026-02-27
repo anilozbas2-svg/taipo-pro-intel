@@ -3645,6 +3645,7 @@ def schedule_jobs(app: Application) -> None:
     # STEADY TREND (AĞIR TREN)
     # =========================
     try:
+        logger.warning("STEADY schedule block entered")
         # --- SAFE BIST OPEN FN (adı farklı olabilir, o yüzden garantiye alıyoruz)
         def _steady_bist_open_safe() -> bool:
             try:
@@ -3703,7 +3704,15 @@ def schedule_jobs(app: Application) -> None:
             bool(job_steady_trend_scan),
             STEADY_TREND_INTERVAL_MIN,
         )
-
+        
+        logger.warning(
+            "STEADY precheck enabled=%r chat_id=%r job_fn=%r interval_min=%r",
+            STEADY_TREND_ENABLED,
+            STEADY_TREND_CHAT_ID,
+            getattr(job_steady_trend_scan, "__name__", None) if job_steady_trend_scan else None,
+            STEADY_TREND_INTERVAL_MIN,
+        )
+        
         if STEADY_TREND_ENABLED and STEADY_TREND_CHAT_ID and job_steady_trend_scan:
             first_st = next_aligned_run(STEADY_TREND_INTERVAL_MIN)
 
@@ -3724,6 +3733,7 @@ def schedule_jobs(app: Application) -> None:
             logger.info("STEADY kapali veya chat_id yok veya import yok -> steady calismayacak.")
     except Exception as e:
         logger.exception("STEADY schedule failed (safe-skip): %s", e)
+        logger.warning("STEADY schedule exception: %r", e)
     
     # ==========================
     # WHALE ENGINE (BALİNA MOTORU)
