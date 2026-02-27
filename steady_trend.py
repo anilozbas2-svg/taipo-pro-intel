@@ -861,6 +861,7 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
 # Backward compatibility entrypoint (main.py schedule_jobs can call this)
 # =========================================================
 async def job_steady_trend_scan(context, *args, **kwargs) -> None:
+    logger.warning("STEADY RUNTIME ENTRY reached")
     logger.info(
         "STEADY_SCAN tick: enabled=%s chat_id=%s",
         STEADY_TREND_ENABLED,
