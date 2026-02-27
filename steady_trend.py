@@ -701,11 +701,13 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
 
     # Universe çöz
     universe: List[str] = _parse_tickers_env(STEADY_UNIVERSE_TICKERS)
+    logger.warning("STEADY CP2 universe_len=%d", len(universe) if universe else 0)
     if not universe and fetch_rows_fn:
         # fetch_rows_fn async olabilir: burada handle edelim
         try:
             if inspect.iscoroutinefunction(fetch_rows_fn):
                 rows = await fetch_rows_fn(ctx)
+                logger.warning("STEADY CP2 universe_rows=%d", len(rows) if rows else 0)
                 tickers: List[str] = []
                 for r in (rows or []):
                     t = (r.get("ticker") or r.get("symbol") or "").strip().upper()
@@ -716,6 +718,7 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
                 universe = _resolve_universe(fetch_rows_fn, ctx)
         except Exception:
             universe = []
+        logger.warning("STEADY EARLY RETURN: universe empty")
 
     if not universe:
         return
@@ -835,6 +838,11 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
 
         try:
             if inspect.iscoroutinefunction(telegram_send_fn):
+            logger.warning(
+                    "STEADY CP5 will_send=%r chat_id=%r",
+                    (not STEADY_TREND_DRY_RUN),
+                    STEADY_TREND_CHAT_ID,
+                )
                 await telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
             else:
                 telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
@@ -862,6 +870,7 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
 # =========================================================
 async def job_steady_trend_scan(context, *args, **kwargs) -> None:
     logger.warning("STEADY RUNTIME ENTRY reached")
+    logger.warning("STEADY CP4 dry_run=%r", STEADY_TREND_DRY_RUN)
     logger.info(
         "STEADY_SCAN tick: enabled=%s chat_id=%s",
         STEADY_TREND_ENABLED,
