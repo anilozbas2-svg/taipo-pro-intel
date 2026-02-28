@@ -2,11 +2,12 @@ import os
 import json
 import time
 import math
+import hashlib
 import logging
 import inspect
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
 import requests
 
@@ -63,7 +64,12 @@ def _safe_chat_id(raw: str) -> Optional[int]:
     except Exception:
         return None
 
+
+# =========================================================
+# TR TIME / MARKET GATE
+# =========================================================
 TR_TZ = ZoneInfo("Europe/Istanbul")
+
 
 def _steady_is_trading_time_tr() -> bool:
     now = datetime.now(TR_TZ)
@@ -77,14 +83,15 @@ def _steady_is_trading_time_tr() -> bool:
     # BIST normal seans 10:00 - 18:00 (TR)
     return 10 <= h < 18
 
+
 # =========================================================
 # TICKER NORMALIZATION
 # =========================================================
 def _tv_ticker(sym: str) -> str:
     """
     Converts:
-      THYAO.IS -> BIST:THYAO
-      THYAO    -> BIST:THYAO
+      THYAO.IS   -> BIST:THYAO
+      THYAO      -> BIST:THYAO
       BIST:THYAO -> BIST:THYAO
     """
     s = (sym or "").strip().upper()
@@ -141,33 +148,43 @@ STEADY_TREND_CHAT_ID = _safe_chat_id(os.getenv("STEADY_TREND_CHAT_ID", "").strip
 STEADY_TREND_INTERVAL_MIN = _env_int("STEADY_TREND_INTERVAL_MIN", 2)
 STEADY_TREND_COOLDOWN_MIN = _env_int("STEADY_TREND_COOLDOWN_MIN", 45)
 
-# “sessiz tırmanış” penceresi
+# Sessiz tırmanış penceresi
 STEADY_WINDOW_MIN = _env_int("STEADY_WINDOW_MIN", 120)
 STEADY_UP_RATIO_MIN = _env_float("STEADY_UP_RATIO_MIN", 0.65)
-STEADY_MAX_DRAWDOWN_PCT = _env_float("STEADY_MAX_DRAWDOWN_PCT", 0.80)  # 0.80% geri çekilme üstü riskli
+STEADY_MAX_DRAWDOWN_PCT = _env_float("STEADY_MAX_DRAWDOWN_PCT", 0.80)
 
-# toplam yükseliş bandı (2 saatlik pencere için)
+# Trend toplam yükseliş bandı (pencere içi)
 STEADY_TREND_MIN_PCT = _env_float("STEADY_TREND_MIN_PCT", 0.60)
-STEADY_TREND_MAX_PCT = _env_float("STEADY_TREND_MAX_PCT", 3.80)
+STEADY_TREND_MAX_PCT = _env_float("STEADY_TREND_MAX_PCT", 9.99)
 
-# hacim şartı (sessiz tırmanışta hacim patlaması istemeyebiliriz)
+# Hacim / proxy
 STEADY_TREND_MIN_VOL_SPIKE = _env_float("STEADY_TREND_MIN_VOL_SPIKE", 0.90)
 STEADY_TREND_PROXY_MIN_STEADY = _env_float("STEADY_TREND_PROXY_MIN_STEADY", 0.30)
 
+# Dry-run
 STEADY_TREND_DRY_RUN = _env_bool("STEADY_TREND_DRY_RUN", False)
 STEADY_TREND_DRY_RUN_TAG = _env_bool("STEADY_TREND_DRY_RUN_TAG", False)
 
+# TradingView
 TV_SCAN_URL = os.getenv("STEADY_TREND_TV_SCAN_URL", "https://scanner.tradingview.com/turkey/scan").strip()
 TV_TIMEOUT = _env_int("STEADY_TREND_TV_TIMEOUT", 12)
 
-# Chunk/batch ayarları (ban/rate-limit azaltır)
+# Chunk/batch (ban/rate-limit azaltır)
 STEADY_TV_BATCH_SIZE = _env_int("STEADY_TV_BATCH_SIZE", 80)
 STEADY_TV_BATCH_SLEEP_MS = _env_int("STEADY_TV_BATCH_SLEEP_MS", 350)
 STEADY_TV_RETRY = _env_int("STEADY_TV_RETRY", 2)
 STEADY_TV_RETRY_SLEEP_MS = _env_int("STEADY_TV_RETRY_SLEEP_MS", 700)
 
-# Universe tickers (env)
+# Universe tickers
 STEADY_UNIVERSE_TICKERS = os.getenv("STEADY_UNIVERSE_TICKERS", "").strip()
+
+# Spam-kill (ENV isimleri sende COOLDOWN_SEC / MAX_PER_TICK olarak var)
+# İstersen STEADY_SPAM_COOLDOWN_SEC / STEADY_MAX_PER_TICK de kullanabilirsin.
+STEADY_SPAM_COOLDOWN_SEC = _env_int("STEADY_SPAM_COOLDOWN_SEC", _env_int("COOLDOWN_SEC", 7200))
+STEADY_MAX_PER_TICK = _env_int("STEADY_MAX_PER_TICK", _env_int("MAX_PER_TICK", 3))
+
+# Force bypass market checks (test için)
+STEADY_TREND_FORCE = _env_bool("STEADY_TREND_FORCE", False)
 
 # State
 DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
@@ -179,11 +196,13 @@ STEADY_STATE_FILE = os.path.join(DATA_DIR, "steady_trend_state.json")
 # =========================================================
 def _default_state() -> dict:
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.2",
         "system": "steady_trend",
         "updated_utc": None,
-        "last_sent_utc": {},   # symbol -> iso
-        "series": {},          # symbol -> [{"t": iso, "p": price, "pct": day_pct, "vs": vol_spike}, ...]
+        "last_sent_utc": {},     # symbol -> iso
+        "sent_ts": {},           # symbol -> epoch (spam kill)
+        "sent_sig_ts": {},       # signature -> epoch (spam kill)
+        "series": {},            # symbol -> [{"t": iso, "p": price, "pct": day_pct, "vs": vol_spike}, ...]
     }
 
 
@@ -292,22 +311,15 @@ def _tv_scan_for_tickers_batch(tickers: List[str]) -> List[Dict[str, Any]]:
 
         if not sym or pct is None or vol is None or last is None:
             continue
-        
-        if not sym or pct is None or vol is None or last is None:
-            continue
 
-        # --- DEBUG: TV row check ---
+        # DEBUG: satır gerçekten geliyor mu?
         logger.info("TVROW %s pct=%s vol=%s av10=%s", sym, pct, vol, av10)
 
         vol_spike_10g = None
         if av10 is not None and av10 > 0:
             vol_spike_10g = vol / av10
 
-        vol_spike_10g = None
-        if av10 is not None and av10 > 0:
-            vol_spike_10g = vol / av10
-
-        # proxy: candle yok -> kontrollü skor
+        # proxy: OHLC yok -> kontrollü skor
         steady_proxy = 0.20
         if STEADY_TREND_MIN_PCT <= pct <= STEADY_TREND_MAX_PCT:
             steady_proxy += 0.45
@@ -330,7 +342,6 @@ def _tv_scan_for_tickers_batch(tickers: List[str]) -> List[Dict[str, Any]]:
 def _tv_scan_for_tickers_chunked(tickers: List[str]) -> List[Dict[str, Any]]:
     t = [_norm_symbol(x) for x in (tickers or [])]
     t = [x for x in t if x]
-
     if not t:
         return []
 
@@ -345,7 +356,6 @@ def _tv_scan_for_tickers_chunked(tickers: List[str]) -> List[Dict[str, Any]]:
         except Exception as e:
             logger.warning("STEADY_TREND: TV batch scan error: %s", e)
 
-        # batch arası mini sleep
         if i < (len(batches) - 1) and STEADY_TV_BATCH_SLEEP_MS > 0:
             time.sleep(float(STEADY_TV_BATCH_SLEEP_MS) / 1000.0)
 
@@ -372,7 +382,6 @@ def _series_push(state: dict, row: Dict[str, Any]) -> None:
         }
     )
 
-    # pencereden biraz fazla tut (window + 30dk)
     keep_min = max(30, int(STEADY_WINDOW_MIN) + 30)
     max_points = max(40, int(keep_min / max(1, STEADY_TREND_INTERVAL_MIN)) + 10)
     if len(arr) > max_points:
@@ -427,7 +436,7 @@ def _trend_metrics(arr: List[dict]) -> Optional[Dict[str, float]]:
 
 
 # =========================================================
-# FILTER & SCORE (final decision)
+# FILTER & SCORE
 # =========================================================
 def _passes_filters(row: Dict[str, Any]) -> bool:
     pct = _safe_float(row.get("pct_day"))
@@ -436,19 +445,13 @@ def _passes_filters(row: Dict[str, Any]) -> bool:
 
     if pct is None or proxy is None:
         return False
-
-    # Günlük değil: trend penceresi için bandı (min/max) kullanıyoruz
-    # ama TV day% zaten gün boyu; yine de “sessiz tırmanış” için soft filtre:
     if pct < 0:
         return False
 
     if vs is None:
-        # avg_vol dönmezse “sessiz” sinyal bozulmasın: yine de geçebilir
         vs = 0.0
 
     if vs < STEADY_TREND_MIN_VOL_SPIKE:
-        # sessiz tırmanışta hacim düşük olabilir; bu yüzden MIN_VOL_SPIKE’ı çok yüksek tutma.
-        # İstersen env ile 0.80-0.95 aralığı çalışır.
         return False
 
     if proxy < STEADY_TREND_PROXY_MIN_STEADY:
@@ -465,7 +468,6 @@ def _steady_score(row: Dict[str, Any], m: Dict[str, float]) -> float:
     up_ratio = float(m.get("up_ratio") or 0.0)
     max_dd = float(m.get("max_drawdown_pct") or 0.0)
 
-    # normalize
     pct_band = max(0.01, (STEADY_TREND_MAX_PCT - STEADY_TREND_MIN_PCT))
     pct_norm = max(0.0, min(1.0, (total_pct - STEADY_TREND_MIN_PCT) / pct_band))
     dd_norm = 1.0 - max(0.0, min(1.0, max_dd / max(0.01, STEADY_MAX_DRAWDOWN_PCT)))
@@ -480,24 +482,16 @@ def _steady_score(row: Dict[str, Any], m: Dict[str, float]) -> float:
 
 
 # =========================================================
-# MESSAGE FORMAT (with “Ne yapayım?”)
+# MESSAGE FORMAT (PRO + “Ne yapayım?”)
 # =========================================================
 def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
-    return "✅ PRO_FMT_V2 | steady_trend.py"
     def fnum(x: Any, nd: int = 2) -> str:
         try:
             return f"{float(x):.{nd}f}"
         except Exception:
             return "n/a"
 
-    def fint(x: Any) -> str:
-        try:
-            return str(int(x))
-        except Exception:
-            return "n/a"
-
-    sym = _norm_symbol(row.get("symbol") or row.get("ticker") or "n/a")
-
+    sym = _norm_symbol(row.get("symbol") or "n/a")
     price = row.get("last")
     day_pct = row.get("pct_day")
     vs = row.get("vol_spike_10g")
@@ -508,10 +502,6 @@ def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
     up_ratio = float(m.get("up_ratio") or 0.0)
     max_dd = float(m.get("max_drawdown_pct") or 0.0)
 
-    # Katman (L1/L2/L3 gibi) varsa yaz
-    layer = row.get("layer") or row.get("katman") or ""
-
-    # Hızlı kalite etiketi
     if score >= 13.0:
         quality = "ÇOK YÜKSEK"
     elif score >= 10.5:
@@ -521,99 +511,90 @@ def _format_msg(row: Dict[str, Any], m: Dict[str, float]) -> str:
     else:
         quality = "DÜŞÜK"
 
-    # “Niye geldi?” kısa gerekçe
-    why = []
-    why.append(f"Trend {fnum(total_pct, 2)}% / {fint(STEADY_WINDOW_MIN)}dk")
-    why.append(f"Up {fnum(up_ratio, 2)}")
-    why.append(f"MaxDD {fnum(max_dd, 2)}%")
-    if vs not in (None, ""):
-        why.append(f"Hacim {fnum(vs, 2)}x")
-    if proxy not in (None, ""):
-        why.append(f"Proxy {fnum(proxy, 2)}")
-
-    # Mentor aksiyonu (daha net, daha “pro”)
-    # Not: “tavan kovalamıyoruz” yerine tetikleyicili plan veriyoruz.
     if score >= 11.0 and up_ratio >= 0.85 and max_dd <= 1.2:
         verdict = "🟢 GİRİŞ PLANI AKTİF"
         plan = [
-            "1) 5–15 dk yatay / mini pullback bekle (kovalama yok).",
-            "2) Pullback sonrası önceki tepe üstü 1 kırılım görürsen küçük lotla gir.",
-            "3) 1 sonraki scan’de skor düşmez + UpRatio bozulmazsa ekleme değerlendir.",
+            "Pullback/yatay 5–15 dk bekle (kovalama yok).",
+            "Önceki tepe üstü kırılım gelirse küçük lotla giriş.",
+            "Sonraki scan’de skor düşmezse ekleme değerlendir.",
         ]
     elif score >= 9.0:
         verdict = "🟡 TEYİT BEKLE"
         plan = [
-            "1) Şimdilik giriş yok; 1–2 scan izleme.",
-            "2) Trend toplamı artıyor + MaxDD büyümüyorsa plan aktive olur.",
-            "3) Hacim (10g) 1.10x altına düşerse “izle” moduna dön.",
+            "1–2 scan izleme; acele giriş yok.",
+            "Trend artıyor + MaxDD büyümüyor ise plan aktive olur.",
+            "Hacim(10g) 1.10x altına düşerse izleme moduna dön.",
         ]
     else:
-        verdict = "🟠 İZLEME (ZAYIF ADAY)"
+        verdict = "🟠 İZLEME"
         plan = [
-            "1) Skor/UpRatio güçlenmeden giriş yok.",
-            "2) Sadece listeye al: bir sonraki güçlü scan’i bekle.",
+            "Skor/UpRatio güçlenmeden giriş yok.",
+            "Listeye al; güçlü scan’i bekle.",
         ]
 
-    # Risk tetikleyicileri (somut)
-    risk = []
-    risk.append(f"MaxDD {fnum(max_dd, 2)}% üstüne çıkarsa disiplinle çık.")
-    if vs not in (None, ""):
-        risk.append("Hacim 1.10x altına düşerse momentum zayıflıyor olabilir.")
-    if day_pct not in (None, ""):
-        risk.append("Günlük +3.50% üstü hızlanırsa pump/volatilite riski artar.")
-    risk.append("Skor 1+ puan düşerse “balina zayıflıyor” ihtimali.")
+    risks = [
+        f"MaxDD {fnum(max_dd, 2)}% üstüne çıkarsa disiplinle çık.",
+        "Skor 1+ puan düşerse momentum zayıflıyor olabilir.",
+    ]
+    if vs is not None:
+        risks.insert(1, "Hacim 1.10x altına düşerse momentum zayıflar.")
+    if day_pct is not None:
+        risks.insert(2, "Günlük +3.50% üstü hızlanırsa pump/volatilite riski artar.")
 
-    # DRY-RUN etiketi
+    why = [
+        f"Trend {fnum(total_pct, 2)}% / {STEADY_WINDOW_MIN}dk",
+        f"Up {fnum(up_ratio, 2)}",
+        f"MaxDD {fnum(max_dd, 2)}%",
+        f"Hacim {fnum(vs, 2)}x",
+        f"Proxy {fnum(proxy, 2)}",
+    ]
+
     prefix = ""
     if STEADY_TREND_DRY_RUN and STEADY_TREND_DRY_RUN_TAG:
         prefix = "🧪 DRY-RUN TEST\n"
 
-    # Başlık daha açıklayıcı
-    header = f"🐳 STEADY TREND — Sessiz Tırmanış | Güven: {quality}"
-    if layer:
-        header += f" | Katman: {layer}"
-
-    # Mesajı kompakt ama “anlatan” hale getir
-    msg_lines = []
-    msg_lines.append(prefix + header)
-    msg_lines.append("────────────────────────")
-    msg_lines.append(f"📌 Hisse: {sym}  |  💰 Fiyat: {fnum(price, 2)}  |  📈 Günlük: {fnum(day_pct, 2)}%")
-    msg_lines.append(f"📊 Hacim(10g): {fnum(vs, 2)}x  |  🧭 Proxy: {fnum(proxy, 2)}  |  ⭐ Skor: {fnum(score, 2)}")
-    msg_lines.append("────────────────────────")
-    msg_lines.append(f"🕒 Pencere: {fint(STEADY_WINDOW_MIN)} dk")
-    msg_lines.append(f"✅ Trend Getiri: {fnum(total_pct, 2)}%")
-    msg_lines.append(f"✅ Up-Ratio: {fnum(up_ratio, 2)}")
-    msg_lines.append(f"⚠️ Max Drawdown: {fnum(max_dd, 2)}%")
-    msg_lines.append("────────────────────────")
-    msg_lines.append(f"🧠 Karar: {verdict}")
-    msg_lines.append("🎯 Plan:")
+    lines: List[str] = []
+    lines.append(prefix + f"🐳 STEADY TREND — Sessiz Tırmanış | Güven: {quality}")
+    lines.append("────────────────────────")
+    lines.append(f"📌 Hisse: {sym}  |  💰 Fiyat: {fnum(price, 2)}  |  📈 Günlük: {fnum(day_pct, 2)}%")
+    lines.append(f"📊 Hacim(10g): {fnum(vs, 2)}x  |  🧭 Proxy: {fnum(proxy, 2)}  |  ⭐ Skor: {fnum(score, 2)}")
+    lines.append("────────────────────────")
+    lines.append(f"🕒 Pencere: {STEADY_WINDOW_MIN} dk")
+    lines.append(f"✅ Trend Getiri: {fnum(total_pct, 2)}%")
+    lines.append(f"✅ Up-Ratio: {fnum(up_ratio, 2)}")
+    lines.append(f"⚠️ Max Drawdown: {fnum(max_dd, 2)}%")
+    lines.append("────────────────────────")
+    lines.append(f"🧠 Karar: {verdict}")
+    lines.append("🎯 Ne yapayım?")
     for p in plan:
-        msg_lines.append(f"- {p}")
-    msg_lines.append("🧯 Risk Notu:")
-    for r in risk:
-        msg_lines.append(f"- {r}")
-    msg_lines.append("────────────────────────")
-    msg_lines.append("🔎 Neden geldi?")
-    msg_lines.append("- " + " | ".join(why))
-    msg_lines.append(f"⏱ Saat: {datetime.now().strftime('%H:%M')}")
+        lines.append(f"- {p}")
+    lines.append("🧯 Risk kontrol")
+    for r in risks:
+        lines.append(f"- {r}")
+    lines.append("────────────────────────")
+    lines.append("🔎 Neden geldi?")
+    lines.append("- " + " | ".join([x for x in why if x and x != "n/a"]))
+    lines.append(f"⏱ Saat: {datetime.now(TR_TZ).strftime('%H:%M')}")
 
-    return "\n".join(msg_lines)
+    return "\n".join(lines)
+
 
 # =========================================================
-# MAIN ENTRY (called from main.py via app.bot_data adapters)
+# UNIVERSE RESOLUTION
 # =========================================================
-def _resolve_universe(fetch_rows_fn, ctx) -> List[str]:
-    # 1) ENV varsa direkt onu kullan (en net kontrol)
+async def _get_universe(ctx, fetch_rows_fn) -> List[str]:
     env_list = _parse_tickers_env(STEADY_UNIVERSE_TICKERS)
     if env_list:
         return env_list
 
-    # 2) Yoksa main.py içindeki fetch_universe_rows adaptöründen al
+    if not fetch_rows_fn:
+        return []
+
     try:
         if inspect.iscoroutinefunction(fetch_rows_fn):
-            # Bu fonksiyon async ise, caller tarafında await edilecek; burada işleme sokmuyoruz.
-            return []
-        rows = fetch_rows_fn(ctx) if fetch_rows_fn else []
+            rows = await fetch_rows_fn(ctx)
+        else:
+            rows = fetch_rows_fn(ctx)
     except Exception:
         rows = []
 
@@ -625,70 +606,55 @@ def _resolve_universe(fetch_rows_fn, ctx) -> List[str]:
     return [_norm_symbol(x) for x in tickers if _norm_symbol(x)]
 
 
+# =========================================================
+# CORE JOB
+# =========================================================
 async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -> None:
     if not STEADY_TREND_ENABLED:
         return
 
-    # --- DEBUG: trading gate ---
+    if STEADY_TREND_CHAT_ID is None:
+        return
+
+    # Debug gate
     try:
-        now_dbg = datetime.now()
+        now_dbg = datetime.now(TR_TZ)
         logger.info(
-            "STEADY GATE now=%s weekday=%s hour=%s dry=%s",
+            "STEADY GATE now=%s weekday=%s hour=%s dry=%s force=%s",
             now_dbg.isoformat(),
             now_dbg.weekday(),
             now_dbg.hour,
             STEADY_TREND_DRY_RUN,
+            STEADY_TREND_FORCE,
         )
     except Exception:
         pass
 
-    if STEADY_TREND_CHAT_ID is None:
-        return
-
-    # Telegram adapter yoksa: scan çalışsın, mesaj basmasın
-    if not telegram_send_fn:
-        logger.warning("STEADY_TREND: no telegram_send_fn (scan will run, no messages)")
-
-    # --- HARD MARKET LOCK (double safety) ---
-    # DRY_RUN kapaliyken market disi zamanlarda steady kesin sus.
-    if not STEADY_TREND_DRY_RUN:
-        # 1) Saat + hafta sonu kilidi (garanti)
+    # HARD MARKET LOCK
+    if (not STEADY_TREND_DRY_RUN) and (not STEADY_TREND_FORCE):
         if not _steady_is_trading_time_tr():
+            logger.info("STEADY exit: out of trading time")
             return
 
-        # 2) Ek sigorta: BIST acik fonksiyonu varsa onu da kontrol et (fail-closed)
         try:
             if bist_open_fn:
                 ok = bool(bist_open_fn())
-                logger.info("STEADY GATE bist_open_fn=%s", ok)
+                logger.info("STEADY bist_open_fn=%s", ok)
                 if not ok:
+                    logger.info("STEADY exit: market closed")
                     return
+            else:
+                # bist_open_fn yoksa fail-closed
+                logger.info("STEADY exit: missing bist_open_fn (fail-closed)")
+                return
         except Exception as e:
-            logger.exception("STEADY GATE bist_open_fn error: %s", e)
+            logger.warning("STEADY exit: bist_open_fn error: %s", e)
             return
 
-    # --- ENV overrides (Spam Kill) ---
-    # ENV'den geliyor: COOLDOWN_SEC=7200, MAX_PER_TICK=3
-    try:
-        cooldown_sec = int(os.getenv("COOLDOWN_SEC", "7200"))
-    except Exception:
-        cooldown_sec = 7200
-
-    try:
-        max_per_tick = int(os.getenv("MAX_PER_TICK", "3"))
-    except Exception:
-        max_per_tick = 3
-
-    if max_per_tick < 0:
-        max_per_tick = 0
-
+    # State
+    state = _load_json(STEADY_STATE_FILE, _default_state())
     now_ts = int(time.time())
 
-    state = _load_json(STEADY_STATE_FILE, _default_state())
-
-    # --- Spam Kill state containers ---
-    # sent_ts: symbol bazlı son gönderim zamanı
-    # sent_sig_ts: msg signature bazlı son gönderim zamanı
     sent_ts = state.get("sent_ts")
     if not isinstance(sent_ts, dict):
         sent_ts = {}
@@ -699,40 +665,22 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         sent_sig_ts = {}
         state["sent_sig_ts"] = sent_sig_ts
 
-    # Universe çöz
-    universe: List[str] = _parse_tickers_env(STEADY_UNIVERSE_TICKERS)
-    logger.warning("STEADY CP2 universe_len=%d", len(universe) if universe else 0)
-    if not universe and fetch_rows_fn:
-        # fetch_rows_fn async olabilir: burada handle edelim
-        try:
-            if inspect.iscoroutinefunction(fetch_rows_fn):
-                rows = await fetch_rows_fn(ctx)
-                logger.warning("STEADY CP2 universe_rows=%d", len(rows) if rows else 0)
-                tickers: List[str] = []
-                for r in (rows or []):
-                    t = (r.get("ticker") or r.get("symbol") or "").strip().upper()
-                    if t:
-                        tickers.append(t)
-                universe = [_norm_symbol(x) for x in tickers if _norm_symbol(x)]
-            else:
-                universe = _resolve_universe(fetch_rows_fn, ctx)
-        except Exception:
-            universe = []
-        logger.warning("STEADY EARLY RETURN: universe empty")
-    logger.warning("STEADY EARLY RETURN: universe empty")
-    
+    # Universe
+    universe = await _get_universe(ctx, fetch_rows_fn)
+    logger.info("STEADY universe_len=%d", len(universe) if universe else 0)
     if not universe:
+        logger.warning("STEADY exit: universe empty")
         return
 
-    # TV scan (chunked)
+    # TV scan
     tv_rows = _tv_scan_for_tickers_chunked(universe)
     if not tv_rows:
+        logger.info("STEADY exit: tv_rows empty")
         return
 
     # Series push
     for r in tv_rows:
         _series_push(state, r)
-
     state["updated_utc"] = _utc_now_iso()
 
     picks: List[Dict[str, Any]] = []
@@ -746,7 +694,6 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         if not m:
             continue
 
-        # Asıl sessiz tırmanış koşulları
         total_pct = float(m.get("total_pct") or 0.0)
         up_ratio = float(m.get("up_ratio") or 0.0)
         max_dd = float(m.get("max_drawdown_pct") or 0.0)
@@ -757,8 +704,6 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
             continue
         if max_dd > STEADY_MAX_DRAWDOWN_PCT:
             continue
-
-        # hacim/proxy filtresi
         if not _passes_filters(r):
             continue
 
@@ -768,37 +713,34 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         r["steady_score"] = _steady_score(r, m)
         picks.append(r)
 
-    # state kaydet (mesaj olmasa bile seriyi koru)
     _save_json(STEADY_STATE_FILE, state)
 
     if not picks:
+        logger.info("STEADY: no picks")
         return
 
     picks.sort(key=lambda x: float(x.get("steady_score") or 0.0), reverse=True)
 
-    # MAX_PER_TICK kesin limit (0 ise tamamen sus)
+    max_per_tick = max(0, int(STEADY_MAX_PER_TICK))
     if max_per_tick == 0:
-        logger.info("STEADY_TREND: MAX_PER_TICK=0 -> no messages")
+        logger.info("STEADY: STEADY_MAX_PER_TICK=0 -> no messages")
         return
+
+    cooldown_sec = max(60, int(STEADY_SPAM_COOLDOWN_SEC))
 
     top = picks[: max(1, max_per_tick)]
 
-    def _make_sig(sym: str, r: Dict[str, Any]) -> str:
-        # Mesaj “aynı mı?” kontrolü için minimal imza
-        # (symbol + total_pct + up_ratio + max_dd + score) yuvarlanmış
+    def _make_sig(sym: str, rr: Dict[str, Any]) -> str:
         try:
-            tp = float(r.get("trend_total_pct") or 0.0)
-            ur = float(r.get("trend_up_ratio") or 0.0)
-            dd = float(r.get("trend_max_dd") or 0.0)
-            sc = float(r.get("steady_score") or 0.0)
+            tp = float(rr.get("trend_total_pct") or 0.0)
+            ur = float(rr.get("trend_up_ratio") or 0.0)
+            dd = float(rr.get("trend_max_dd") or 0.0)
+            sc = float(rr.get("steady_score") or 0.0)
         except Exception:
             tp, ur, dd, sc = 0.0, 0.0, 0.0, 0.0
-
         key = f"{sym}|{tp:.2f}|{ur:.2f}|{dd:.2f}|{sc:.2f}"
-        # kısa signature
         return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
 
-    # --- SEND LOOP (Spam Kill burada) ---
     sent_count = 0
 
     for r in top:
@@ -806,23 +748,19 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         if not sym:
             continue
 
-        # 1) Sym cooldown (fail-safe)
         last_sym_ts = int(sent_ts.get(sym) or 0)
         if (now_ts - last_sym_ts) < cooldown_sec:
             continue
 
-        # 2) Signature dedup cooldown
         sig = _make_sig(sym, r)
         last_sig_ts = int(sent_sig_ts.get(sig) or 0)
         if (now_ts - last_sig_ts) < cooldown_sec:
             continue
 
-        # 3) Senin mevcut cooldown fonksiyonun (varsa ek güvenlik)
         try:
             if not _cooldown_ok(state, sym):
                 continue
         except Exception:
-            # cooldown fonksiyonu patlarsa fail-open değil fail-safe (spam olmasın)
             continue
 
         m = {
@@ -833,25 +771,16 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
 
         msg = _format_msg(r, m)
 
-        # Telegram yoksa “scan var ama mesaj yok” kuralı
         if not telegram_send_fn:
             continue
 
         try:
             if inspect.iscoroutinefunction(telegram_send_fn):
-            logger.warning(
-                    "STEADY CP5 will_send=%r chat_id=%r",
-                    (not STEADY_TREND_DRY_RUN),
-                    STEADY_TREND_CHAT_ID,
-                )
                 await telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
             else:
                 telegram_send_fn(ctx, STEADY_TREND_CHAT_ID, msg)
 
-            # Başarılı send -> state işaretle
             _mark_sent(state, sym)
-
-            # Spam kill markers
             sent_ts[sym] = now_ts
             sent_sig_ts[sig] = now_ts
 
@@ -860,30 +789,25 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
                 break
 
         except Exception as e:
-            logger.warning("STEADY_TREND send error: %s", e)
+            logger.warning("STEADY send error: %s", e)
             continue
 
-    # son kez state kaydet (cooldown + spam kill işledi)
     _save_json(STEADY_STATE_FILE, state)
+    logger.info("STEADY: sent=%d", sent_count)
+
 
 # =========================================================
-# Backward compatibility entrypoint (main.py schedule_jobs can call this)
+# BACKWARD COMPAT ENTRYPOINT (main.py schedules this)
 # =========================================================
 async def job_steady_trend_scan(context, *args, **kwargs) -> None:
     logger.warning("STEADY RUNTIME ENTRY reached")
-    logger.warning("STEADY CP4 dry_run=%r", STEADY_TREND_DRY_RUN)
-    logger.info(
-        "STEADY_SCAN tick: enabled=%s chat_id=%s",
-        STEADY_TREND_ENABLED,
-        STEADY_TREND_CHAT_ID,
-    )
+    logger.info("STEADY_SCAN tick: enabled=%s chat_id=%s dry_run=%s force=%s", STEADY_TREND_ENABLED, STEADY_TREND_CHAT_ID, STEADY_TREND_DRY_RUN, STEADY_TREND_FORCE)
 
     app = getattr(context, "application", None)
     bot_data = getattr(app, "bot_data", {}) if app else {}
 
     bist_open_fn = bot_data.get("bist_session_open")
     fetch_rows_fn = bot_data.get("fetch_universe_rows")
-
     telegram_send_fn = (
         bot_data.get("telegram_send")
         or bot_data.get("telegram_send_fn")
@@ -891,7 +815,6 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
         or bot_data.get("tg_send")
     )
 
-    # ---- Adapter debug (KRİTİK)
     logger.info(
         "STEADY_ADAPTERS fetch_rows_fn=%s telegram_send_fn=%s bist_open_fn=%s",
         bool(fetch_rows_fn),
@@ -899,45 +822,33 @@ async def job_steady_trend_scan(context, *args, **kwargs) -> None:
         bool(bist_open_fn),
     )
 
-    # fetch adapter yoksa scan yapılamaz → mantıklı return
-    if not fetch_rows_fn:
-        logger.warning("STEADY_TREND: missing fetch_rows_fn adapter")
-        return
-
-    # telegram adapter yoksa sadece uyar → scan devam eder
+    # Burada return etmiyoruz: universe ENV varsa fetch olmasa da çalışabilir.
     if not telegram_send_fn:
-        logger.warning(
-            "STEADY_TREND: missing telegram_send adapter (scan will run, no messages)"
-        )
+        logger.warning("STEADY_TREND: missing telegram_send adapter (scan will run, no messages)")
 
-    # --- HARD MARKET LOCK (TR saat + hafta sonu) + BIST open sigortası
-    # DRY_RUN kapalıyken market dışı zamanda steady susar.
-    if not STEADY_TREND_DRY_RUN:
-
-        # 1) Saat + hafta sonu kilidi
+    # Market precheck (wrapper seviyesinde)
+    if (not STEADY_TREND_DRY_RUN) and (not STEADY_TREND_FORCE):
         if not _steady_is_trading_time_tr():
+            logger.info("STEADY wrapper exit: out of trading time")
             return
-
-        # 2) Ek sigorta: BIST açık fonksiyonu varsa kontrol et (fail-closed)
-        logger.info("STEADY scan tick")
-
-        force = os.getenv("STEADY_TREND_FORCE", "0") == "1"
 
         try:
-            is_open = bist_open_fn() if bist_open_fn else None
-            logger.info("STEADY check: force=%s bist_open=%s", force, is_open)
-
-            if (not force) and bist_open_fn and (not is_open):
-                logger.info("STEADY exit: market closed")
+            if bist_open_fn:
+                ok = bool(bist_open_fn())
+                logger.info("STEADY wrapper bist_open_fn=%s", ok)
+                if not ok:
+                    logger.info("STEADY wrapper exit: market closed")
+                    return
+            else:
+                logger.info("STEADY wrapper exit: missing bist_open_fn (fail-closed)")
                 return
         except Exception as e:
-            logger.warning("STEADY exit: bist_open_fn error: %s", e)
+            logger.warning("STEADY wrapper exit: bist_open_fn error: %s", e)
             return
 
-    # ---- Asıl steady job çağrısı
     await steady_trend_job(
         context,
         bist_open_fn,
         fetch_rows_fn,
         telegram_send_fn,
-        )
+    )
