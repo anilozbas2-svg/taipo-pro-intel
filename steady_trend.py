@@ -445,14 +445,22 @@ def _passes_filters(row: Dict[str, Any]) -> bool:
 
     if pct is None or proxy is None:
         return False
+
+    # Sessiz tırmanış: negatif gün içi performansta ele
     if pct < 0:
         return False
 
+    # avg_vol gelmezse sessiz sinyal bozulmasın (vs None -> 0)
     if vs is None:
         vs = 0.0
 
+    # Hacim modu:
+    # STRICT -> hacim şart (eleme)
+    # BONUS  -> eleme yok, skor belirleyecek
+    vol_mode = os.getenv("STEADY_VOL_MODE", "STRICT").strip().upper()
     if vs < STEADY_TREND_MIN_VOL_SPIKE:
-        return False
+        if vol_mode != "BONUS":
+            return False
 
     if proxy < STEADY_TREND_PROXY_MIN_STEADY:
         return False
@@ -468,16 +476,28 @@ def _steady_score(row: Dict[str, Any], m: Dict[str, float]) -> float:
     up_ratio = float(m.get("up_ratio") or 0.0)
     max_dd = float(m.get("max_drawdown_pct") or 0.0)
 
+    # normalize: pencere içi getiri bandına göre
     pct_band = max(0.01, (STEADY_TREND_MAX_PCT - STEADY_TREND_MIN_PCT))
     pct_norm = max(0.0, min(1.0, (total_pct - STEADY_TREND_MIN_PCT) / pct_band))
+
+    # drawdown iyi ise 1'e yakın
     dd_norm = 1.0 - max(0.0, min(1.0, max_dd / max(0.01, STEADY_MAX_DRAWDOWN_PCT)))
+
+    # Hacim ağırlığı: BONUS modda hacim “ödül” daha etkili
+    vol_mode = os.getenv("STEADY_VOL_MODE", "STRICT").strip().upper()
+    vs_w = 1.2 if vol_mode == "BONUS" else 1.0
 
     s = 0.0
     s += proxy * 2.5
-    s += min(vs, 3.0) * 1.0
+    s += min(vs, 3.0) * vs_w
     s += pct_norm * 3.0
     s += up_ratio * 2.0
     s += dd_norm * 1.5
+
+    # BONUS modda, hacim çok zayıfsa küçük ceza (spam/pseudo-sinyal azaltır)
+    if vol_mode == "BONUS" and vs < 0.75:
+        s -= 0.35
+
     return float(s)
 
 
