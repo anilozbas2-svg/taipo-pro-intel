@@ -178,6 +178,10 @@ STEADY_TV_RETRY_SLEEP_MS = _env_int("STEADY_TV_RETRY_SLEEP_MS", 700)
 # Universe tickers
 STEADY_UNIVERSE_TICKERS = os.getenv("STEADY_UNIVERSE_TICKERS", "").strip()
 
+STEADY_UNIVERSE_CHUNK_SIZE = _env_int("STEADY_UNIVERSE_CHUNK_SIZE", 60)
+STEADY_UNIVERSE_SHUFFLE_ON_WRAP = _env_bool("STEADY_UNIVERSE_SHUFFLE_ON_WRAP", False)
+STEADY_UNIVERSE_SEED = _env_int("STEADY_UNIVERSE_SEED", 20260227)
+
 # Spam-kill (ENV isimleri sende COOLDOWN_SEC / MAX_PER_TICK olarak var)
 # İstersen STEADY_SPAM_COOLDOWN_SEC / STEADY_MAX_PER_TICK de kullanabilirsin.
 STEADY_SPAM_COOLDOWN_SEC = _env_int("STEADY_SPAM_COOLDOWN_SEC", _env_int("COOLDOWN_SEC", 7200))
@@ -625,6 +629,31 @@ async def _get_universe(ctx, fetch_rows_fn) -> List[str]:
             tickers.append(t)
     return [_norm_symbol(x) for x in tickers if _norm_symbol(x)]
 
+def _rotate_universe(universe: List[str], state: dict) -> List[str]:
+    if not universe:
+        return []
+
+    chunk_size = max(1, int(STEADY_UNIVERSE_CHUNK_SIZE))
+    total = len(universe)
+
+    cursor = int(state.get("universe_cursor", 0))
+
+    if cursor >= total:
+        cursor = 0
+        if STEADY_UNIVERSE_SHUFFLE_ON_WRAP:
+            try:
+                import random
+                rnd = random.Random(STEADY_UNIVERSE_SEED)
+                rnd.shuffle(universe)
+            except Exception:
+                pass
+
+    end = cursor + chunk_size
+    chunk = universe[cursor:end]
+
+    state["universe_cursor"] = end
+
+    return chunk
 
 # =========================================================
 # CORE JOB
@@ -690,6 +719,50 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
     logger.info("STEADY universe_len=%d", len(universe) if universe else 0)
     if not universe:
         logger.warning("STEADY exit: universe empty")
+        return
+
+    # Universe çöz
+    universe: List[str] = _parse_tickers_env(STEADY_UNIVERSE_TICKERS)
+    logger.warning("STEADY CP2 universe_len=%d", len(universe) if universe else 0)
+
+    if not universe and fetch_rows_fn:
+        try:
+            if inspect.iscoroutinefunction(fetch_rows_fn):
+                rows = await fetch_rows_fn(ctx)
+                logger.warning("STEADY CP2 universe_rows=%d", len(rows) if rows else 0)
+                tickers: List[str] = []
+                for r in (rows or []):
+                    t = (r.get("ticker") or r.get("symbol") or "").strip().upper()
+                    if t:
+                        tickers.append(t)
+                universe = [_norm_symbol(x) for x in tickers if _norm_symbol(x)]
+            else:
+                universe = _resolve_universe(fetch_rows_fn, ctx)
+        except Exception:
+            universe = []
+
+    if not universe:
+        logger.warning("STEADY EARLY RETURN: universe empty")
+        return
+
+    # ✅ ROTATE: 150+ hisseyi parça parça taramak için
+    scan_universe = _rotate_universe(universe, state)
+    logger.warning(
+        "STEADY ROTATE cursor=%s total=%d chunk=%d",
+        state.get("universe_cursor"),
+        len(universe),
+        len(scan_universe),
+    )
+
+    # cursor state'ini kaybetmeyelim
+    _save_json(STEADY_STATE_FILE, state)
+
+    if not scan_universe:
+        return
+
+    # TV scan (chunked) -> artık SADECE scan_universe taranıyor
+    tv_rows = _tv_scan_for_tickers_chunked(scan_universe)
+    if not tv_rows:
         return
 
     # TV scan
