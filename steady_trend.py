@@ -719,7 +719,8 @@ async def steady_trend_job(ctx, bist_open_fn, fetch_rows_fn, telegram_send_fn) -
         except Exception:
             universe = []
         logger.warning("STEADY EARLY RETURN: universe empty")
-
+    logger.warning("STEADY EARLY RETURN: universe empty")
+    
     if not universe:
         return
 
