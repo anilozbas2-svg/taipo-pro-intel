@@ -143,16 +143,27 @@ WHALE_DEBUG_LOG = _env_bool("WHALE_DEBUG_LOG", True)
 WHALE_LOG_SCAN = _env_bool("WHALE_LOG_SCAN", True)
 WHALE_LOG_ROWS = _env_bool("WHALE_LOG_ROWS", False)
 
+# =========================================================
+# Secret filter (PRO)
+# =========================================================
+WHALE_SECRET_FILTER = _env_bool("WHALE_SECRET_FILTER", False)
+WHALE_SECRET_MIN_CONT = _env_int("WHALE_SECRET_MIN_CONT", 2)
+WHALE_SECRET_MIN_VS = _env_float("WHALE_SECRET_MIN_VS", 1.25)
+WHALE_SECRET_MIN_VS_DELTA = _env_float("WHALE_SECRET_MIN_VS_DELTA", 0.05)
+WHALE_SECRET_MIN_PCT_DELTA = _env_float("WHALE_SECRET_MIN_PCT_DELTA", 0.10)
+WHALE_SECRET_REJECT_DECAY = _env_bool("WHALE_SECRET_REJECT_DECAY", True)
+
 
 # =========================================================
 # State defaults
 # =========================================================
 def _default_whale_state() -> dict:
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "system": "whale_engine",
         "scan": {"last_scan_utc": None},
         "continuity": {},
+        "prev": {},  # last metrics by symbol (for secret filter)
     }
 
 
@@ -472,6 +483,52 @@ def _continuity_update(state: dict, symbols_seen: List[str]) -> Dict[str, int]:
 
 
 # =========================================================
+# Secret filter (PRO) - continuity + improvement gate
+# =========================================================
+def _secret_filter_pass(st: dict, row: Dict[str, Any], cont_count: int) -> bool:
+    if not WHALE_SECRET_FILTER:
+        return True
+
+    if cont_count < WHALE_SECRET_MIN_CONT:
+        return False
+
+    sym = _norm(row.get("symbol") or "")
+    if not sym:
+        return False
+
+    pct = float(row.get("pct") or 0.0)
+    vs = _safe_float(row.get("vol_spike_10g"))
+    if vs is None:
+        return False
+
+    if vs < WHALE_SECRET_MIN_VS:
+        return False
+
+    prev_map = (st.get("prev") or {})
+    prev = prev_map.get(sym) or {}
+
+    prev_pct = _safe_float(prev.get("pct"))
+    prev_vs = _safe_float(prev.get("vs"))
+
+    # After restart, prev may be missing. cont>=2 already gives some confirmation.
+    if prev_pct is None or prev_vs is None:
+        return True
+
+    d_pct = pct - prev_pct
+    d_vs = vs - prev_vs
+
+    # Must improve either price or volume-spike since previous scan
+    if d_pct < WHALE_SECRET_MIN_PCT_DELTA and d_vs < WHALE_SECRET_MIN_VS_DELTA:
+        return False
+
+    # Reject decay: if volume-spike is dropping, skip (often fake)
+    if WHALE_SECRET_REJECT_DECAY and d_vs < 0:
+        return False
+
+    return True
+
+
+# =========================================================
 # Alert decision (cooldown + hash)
 # =========================================================
 def _cooldown_ok(last_utc: Optional[str]) -> bool:
@@ -596,6 +653,17 @@ async def job_whale_engine_scan(context) -> None:
     symbols_seen = list(merged.keys())
     cont_counts = _continuity_update(st, symbols_seen)
 
+    # Update prev metrics (for secret filter)
+    prev_map = (st.get("prev") or {})
+    for sym, r in merged.items():
+        vs = _safe_float(r.get("vol_spike_10g"))
+        prev_map[sym] = {
+            "pct": float(r.get("pct") or 0.0),
+            "vs": float(vs) if vs is not None else None,
+            "utc": _utc_now_iso(),
+        }
+    st["prev"] = prev_map
+
     st["scan"]["last_scan_utc"] = _utc_now_iso()
     _save_json(WHALE_STATE_FILE, st)
 
@@ -612,11 +680,12 @@ async def job_whale_engine_scan(context) -> None:
         r["score"] = s
         r["cont"] = cc
         if s >= WHALE_SCORE_MIN:
-            scored.append((sym, s, r))
+            if _secret_filter_pass(st, r, cc):
+                scored.append((sym, s, r))
 
     if not scored:
         if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
-            logger.info("WHALE_ENGINE: no alerts (score below min)")
+            logger.info("WHALE_ENGINE: no alerts (score below min or secret filter)")
         return
 
     scored.sort(key=lambda x: x[1], reverse=True)
