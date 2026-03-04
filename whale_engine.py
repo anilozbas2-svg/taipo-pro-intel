@@ -139,6 +139,10 @@ PRIME_WATCHLIST_MAX = _env_int("PRIME_WATCHLIST_MAX", 180)
 # Debug logging
 WHALE_DEBUG_LOG = _env_bool("WHALE_DEBUG_LOG", True)
 
+# Patch: Scan log controls (Render ENV)
+WHALE_LOG_SCAN = _env_bool("WHALE_LOG_SCAN", True)
+WHALE_LOG_ROWS = _env_bool("WHALE_LOG_ROWS", False)
+
 
 # =========================================================
 # State defaults
@@ -228,20 +232,20 @@ def prime_watchlist_add(symbol: str) -> None:
 # =========================================================
 def _tv_scan(payload: dict, tag: str) -> List[Dict[str, Any]]:
     try:
-        if WHALE_DEBUG_LOG:
-            logger.warning("WHALE TV SCAN START tag=%s url=%s timeout=%s", tag, TV_SCAN_URL, TV_TIMEOUT)
+        if WHALE_DEBUG_LOG and WHALE_LOG_SCAN:
+            logger.info("WHALE TV SCAN START tag=%s url=%s timeout=%s", tag, TV_SCAN_URL, TV_TIMEOUT)
 
         r = requests.post(TV_SCAN_URL, json=payload, timeout=TV_TIMEOUT)
 
-        if WHALE_DEBUG_LOG:
-            logger.warning("WHALE TV SCAN HTTP tag=%s status=%s", tag, r.status_code)
+        if WHALE_DEBUG_LOG and WHALE_LOG_SCAN:
+            logger.info("WHALE TV SCAN HTTP tag=%s status=%s", tag, r.status_code)
 
         r.raise_for_status()
         js = r.json() or {}
 
         data = js.get("data") or []
-        if WHALE_DEBUG_LOG:
-            logger.warning("WHALE TV SCAN PARSED tag=%s data_len=%s", tag, len(data))
+        if WHALE_DEBUG_LOG and WHALE_LOG_SCAN:
+            logger.info("WHALE TV SCAN PARSED tag=%s data_len=%s", tag, len(data))
 
         out: List[Dict[str, Any]] = []
         for row in data:
@@ -276,8 +280,20 @@ def _tv_scan(payload: dict, tag: str) -> List[Dict[str, Any]]:
                 }
             )
 
-        if WHALE_DEBUG_LOG:
-            logger.warning("WHALE TV SCAN OUT tag=%s out_len=%s", tag, len(out))
+        if WHALE_DEBUG_LOG and WHALE_LOG_SCAN:
+            logger.info("WHALE TV SCAN OUT tag=%s out_len=%s", tag, len(out))
+
+        if WHALE_LOG_ROWS and WHALE_DEBUG_LOG:
+            for rr in out[:60]:
+                logger.info(
+                    "TVROW %s pct=%s vol=%s av10=%s v10=%s last=%s",
+                    rr.get("symbol"),
+                    rr.get("pct"),
+                    rr.get("volume"),
+                    rr.get("av10"),
+                    rr.get("vol_spike_10g"),
+                    rr.get("last"),
+                )
 
         return out
     except Exception as e:
@@ -537,7 +553,12 @@ async def job_whale_engine_scan(context) -> None:
     if (not WHALE_FORCE) and (not WHALE_DRY_RUN):
         try:
             if bist_open_fn and (not bist_open_fn()):
-                logger.warning("WHALE wrapper exit: market closed (force=%s dry_run=%s)", WHALE_FORCE, WHALE_DRY_RUN)
+                if WHALE_DEBUG_LOG and WHALE_LOG_SCAN:
+                    logger.info(
+                        "WHALE wrapper exit: market closed (force=%s dry_run=%s)",
+                        WHALE_FORCE,
+                        WHALE_DRY_RUN,
+                    )
                 return
         except Exception:
             pass
@@ -548,16 +569,20 @@ async def job_whale_engine_scan(context) -> None:
 
     # Layer 1 (ham erken uyarı havuzu)
     l1_rows = _tv_topn_rows(WHALE_TOPN)
-    logger.warning("WHALE rows_len TOPN=%s -> %s", WHALE_TOPN, len(l1_rows))
+    if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
+        logger.info("WHALE rows_len TOPN=%s -> %s", WHALE_TOPN, len(l1_rows))
     l1_candidates = [r for r in l1_rows if _passes_layer1(r)]
-    logger.warning("WHALE cand_len L1=%s", len(l1_candidates))
+    if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
+        logger.info("WHALE cand_len L1=%s", len(l1_candidates))
 
     # Layer 2 (kontrollü evren)
     universe = _parse_universe_env(UNIVERSE_TICKERS)
     l2_rows = _tv_universe_rows(universe) if universe else []
-    logger.warning("WHALE rows_len UNIVERSE=%s -> %s", len(universe), len(l2_rows))
+    if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
+        logger.info("WHALE rows_len UNIVERSE=%s -> %s", len(universe), len(l2_rows))
     l2_candidates = [r for r in l2_rows if _passes_layer2(r)]
-    logger.warning("WHALE cand_len L2=%s", len(l2_candidates))
+    if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
+        logger.info("WHALE cand_len L2=%s", len(l2_candidates))
 
     # Merge (L2 overwrite)
     merged: Dict[str, Dict[str, Any]] = {}
@@ -575,7 +600,8 @@ async def job_whale_engine_scan(context) -> None:
     _save_json(WHALE_STATE_FILE, st)
 
     if not merged:
-        logger.info("WHALE_ENGINE: no candidates")
+        if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
+            logger.info("WHALE_ENGINE: no candidates")
         return
 
     scored: List[Tuple[str, float, Dict[str, Any]]] = []
@@ -589,7 +615,8 @@ async def job_whale_engine_scan(context) -> None:
             scored.append((sym, s, r))
 
     if not scored:
-        logger.info("WHALE_ENGINE: no alerts (score below min)")
+        if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
+            logger.info("WHALE_ENGINE: no alerts (score below min)")
         return
 
     scored.sort(key=lambda x: x[1], reverse=True)
