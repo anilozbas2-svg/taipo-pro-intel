@@ -101,6 +101,13 @@ WHALE_L2_MAX_PCT = _env_float("WHALE_L2_MAX_PCT", 3.50)
 WHALE_L2_MIN_VOL_SPIKE = _env_float("WHALE_L2_MIN_VOL_SPIKE", 1.20)
 WHALE_L2_MIN_STEADY = _env_float("WHALE_L2_MIN_STEADY", 0.70)
 
+# Early Accum (stealth)
+WHALE_EARLY_ACCUM = _env_bool("WHALE_EARLY_ACCUM", False)
+WHALE_EARLY_ACCUM_PCT_MIN = _env_float("WHALE_EARLY_ACCUM_PCT_MIN", 0.35)
+WHALE_EARLY_ACCUM_PCT_MAX = _env_float("WHALE_EARLY_ACCUM_PCT_MAX", 1.20)
+WHALE_EARLY_ACCUM_VOL = _env_float("WHALE_EARLY_ACCUM_VOL", 1.08)
+WHALE_EARLY_ACCUM_STEADY = _env_float("WHALE_EARLY_ACCUM_STEADY", 0.80)
+
 # Score / bonus
 WHALE_SCORE_MIN = _env_float("WHALE_SCORE_MIN", 8.50)
 WHALE_CONT_BONUS_2 = _env_float("WHALE_CONT_BONUS_2", 0.50)
@@ -153,13 +160,33 @@ WHALE_SECRET_MIN_VS_DELTA = _env_float("WHALE_SECRET_MIN_VS_DELTA", 0.05)
 WHALE_SECRET_MIN_PCT_DELTA = _env_float("WHALE_SECRET_MIN_PCT_DELTA", 0.10)
 WHALE_SECRET_REJECT_DECAY = _env_bool("WHALE_SECRET_REJECT_DECAY", True)
 
+# Startup log (one-time visibility)
+if WHALE_DEBUG_LOG:
+    logger.info(
+        "WHALE EARLY_ACCUM enabled=%s pct=[%s,%s] vol>=%s steady>=%s",
+        WHALE_EARLY_ACCUM,
+        WHALE_EARLY_ACCUM_PCT_MIN,
+        WHALE_EARLY_ACCUM_PCT_MAX,
+        WHALE_EARLY_ACCUM_VOL,
+        WHALE_EARLY_ACCUM_STEADY,
+    )
+    logger.info(
+        "WHALE SECRET_FILTER enabled=%s min_cont=%s min_vs=%s d_vs=%s d_pct=%s reject_decay=%s",
+        WHALE_SECRET_FILTER,
+        WHALE_SECRET_MIN_CONT,
+        WHALE_SECRET_MIN_VS,
+        WHALE_SECRET_MIN_VS_DELTA,
+        WHALE_SECRET_MIN_PCT_DELTA,
+        WHALE_SECRET_REJECT_DECAY,
+    )
+
 
 # =========================================================
 # State defaults
 # =========================================================
 def _default_whale_state() -> dict:
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "system": "whale_engine",
         "scan": {"last_scan_utc": None},
         "continuity": {},
@@ -419,6 +446,23 @@ def _passes_layer2(row: Dict[str, Any]) -> bool:
     return True
 
 
+def _passes_early_accum(row: Dict[str, Any]) -> bool:
+    if not WHALE_EARLY_ACCUM:
+        return False
+
+    pct = float(row.get("pct") or 0.0)
+    vs = _safe_float(row.get("vol_spike_10g"))
+    sp = _steady_proxy(pct, vs)
+
+    if pct < WHALE_EARLY_ACCUM_PCT_MIN or pct > WHALE_EARLY_ACCUM_PCT_MAX:
+        return False
+    if vs is None or vs < WHALE_EARLY_ACCUM_VOL:
+        return False
+    if sp < WHALE_EARLY_ACCUM_STEADY:
+        return False
+    return True
+
+
 # =========================================================
 # Scoring + continuity
 # =========================================================
@@ -434,8 +478,13 @@ def _score(row: Dict[str, Any], layer: str, cont_count: int) -> float:
     pct_part = 0.0 if pct <= 0 else min(pct, 3.0) / 3.0
     s += pct_part * 2.0
 
-    # L2 = kontrollü evren, biraz daha kıymetli
-    s += 0.70 if layer == "L2" else 0.40
+    # Layer bonus
+    if layer == "L2":
+        s += 0.70
+    elif layer == "E":
+        s += 0.55
+    else:
+        s += 0.40
 
     if cont_count >= 3:
         s += WHALE_CONT_BONUS_3
@@ -484,8 +533,9 @@ def _continuity_update(state: dict, symbols_seen: List[str]) -> Dict[str, int]:
 
 # =========================================================
 # Secret filter (PRO) - continuity + improvement gate
+# NOTE: Must compare against previous scan metrics BEFORE updating them.
 # =========================================================
-def _secret_filter_pass(st: dict, row: Dict[str, Any], cont_count: int) -> bool:
+def _secret_filter_pass(prev_map: dict, row: Dict[str, Any], cont_count: int) -> bool:
     if not WHALE_SECRET_FILTER:
         return True
 
@@ -504,9 +554,7 @@ def _secret_filter_pass(st: dict, row: Dict[str, Any], cont_count: int) -> bool:
     if vs < WHALE_SECRET_MIN_VS:
         return False
 
-    prev_map = (st.get("prev") or {})
-    prev = prev_map.get(sym) or {}
-
+    prev = (prev_map or {}).get(sym) or {}
     prev_pct = _safe_float(prev.get("pct"))
     prev_vs = _safe_float(prev.get("vs"))
 
@@ -565,7 +613,7 @@ def _format_message_3lines(row: Dict[str, Any], layer: str, score: float, cont_c
         tag = "IZLE"
         trust = "O"
 
-    # Mentor B favourisi (3. madde): pullback + teyit
+    # Mentor B favourisi: pullback + teyit
     teyit_ok = (score >= 9.5 and cont_count >= 2 and (vs is not None and vs >= 1.30))
 
     if teyit_ok:
@@ -575,7 +623,8 @@ def _format_message_3lines(row: Dict[str, Any], layer: str, score: float, cont_c
 
     prefix = "DRY " if (WHALE_DRY_RUN and WHALE_DRY_RUN_TAG) else ""
 
-    line1 = f"🐳 {prefix}WHALE {tag}({trust}) {sym} L{layer[-1]} Cont:{int(cont_count)}"
+    layer_tag = "E" if layer == "E" else layer[-1]
+    line1 = f"🐳 {prefix}WHALE {tag}({trust}) {sym} L{layer_tag} Cont:{int(cont_count)}"
     line2 = f"F:{fnum(last, 2)}  %:{pct:+.2f}  V10:{fnum(vs, 2)}x  Steady:{fnum(sp, 2)}  S:{fnum(score, 2)}"
     line3 = hint
 
@@ -621,6 +670,8 @@ async def job_whale_engine_scan(context) -> None:
             pass
 
     st = _load_json(WHALE_STATE_FILE, _default_whale_state())
+    prev_map_before = dict(st.get("prev") or {})
+
     la = _load_json(WHALE_LAST_ALERT_FILE, _default_last_alert())
     last_map = la.get("last_alert_by_symbol") or {}
 
@@ -628,20 +679,26 @@ async def job_whale_engine_scan(context) -> None:
     l1_rows = _tv_topn_rows(WHALE_TOPN)
     if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
         logger.info("WHALE rows_len TOPN=%s -> %s", WHALE_TOPN, len(l1_rows))
+
     l1_candidates = [r for r in l1_rows if _passes_layer1(r)]
     if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
         logger.info("WHALE cand_len L1=%s", len(l1_candidates))
+
+    early_candidates = [r for r in l1_rows if _passes_early_accum(r)]
+    if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
+        logger.info("WHALE cand_len EARLY=%s", len(early_candidates))
 
     # Layer 2 (kontrollü evren)
     universe = _parse_universe_env(UNIVERSE_TICKERS)
     l2_rows = _tv_universe_rows(universe) if universe else []
     if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
         logger.info("WHALE rows_len UNIVERSE=%s -> %s", len(universe), len(l2_rows))
+
     l2_candidates = [r for r in l2_rows if _passes_layer2(r)]
     if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
         logger.info("WHALE cand_len L2=%s", len(l2_candidates))
 
-    # Merge (L2 overwrite)
+    # Merge (L2 overwrite, EARLY fills gaps)
     merged: Dict[str, Dict[str, Any]] = {}
     for r in l1_candidates:
         merged[r["symbol"]] = dict(r)
@@ -649,28 +706,21 @@ async def job_whale_engine_scan(context) -> None:
     for r in l2_candidates:
         merged[r["symbol"]] = dict(r)
         merged[r["symbol"]]["layer"] = "L2"
-
-    symbols_seen = list(merged.keys())
-    cont_counts = _continuity_update(st, symbols_seen)
-
-    # Update prev metrics (for secret filter)
-    prev_map = (st.get("prev") or {})
-    for sym, r in merged.items():
-        vs = _safe_float(r.get("vol_spike_10g"))
-        prev_map[sym] = {
-            "pct": float(r.get("pct") or 0.0),
-            "vs": float(vs) if vs is not None else None,
-            "utc": _utc_now_iso(),
-        }
-    st["prev"] = prev_map
-
-    st["scan"]["last_scan_utc"] = _utc_now_iso()
-    _save_json(WHALE_STATE_FILE, st)
+    for r in early_candidates:
+        sym = r["symbol"]
+        if sym not in merged:
+            merged[sym] = dict(r)
+            merged[sym]["layer"] = "E"
 
     if not merged:
         if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
             logger.info("WHALE_ENGINE: no candidates")
+        st["scan"]["last_scan_utc"] = _utc_now_iso()
+        _save_json(WHALE_STATE_FILE, st)
         return
+
+    symbols_seen = list(merged.keys())
+    cont_counts = _continuity_update(st, symbols_seen)
 
     scored: List[Tuple[str, float, Dict[str, Any]]] = []
     for sym, r in merged.items():
@@ -679,9 +729,23 @@ async def job_whale_engine_scan(context) -> None:
         s = _score(r, layer, cc)
         r["score"] = s
         r["cont"] = cc
-        if s >= WHALE_SCORE_MIN:
-            if _secret_filter_pass(st, r, cc):
-                scored.append((sym, s, r))
+
+        if s >= WHALE_SCORE_MIN and _secret_filter_pass(prev_map_before, r, cc):
+            scored.append((sym, s, r))
+
+    # Update prev metrics AFTER scoring/filtering (so deltas work next scan)
+    now_utc = _utc_now_iso()
+    prev_map_after = dict(prev_map_before)
+    for sym, r in merged.items():
+        vs = _safe_float(r.get("vol_spike_10g"))
+        prev_map_after[sym] = {
+            "pct": float(r.get("pct") or 0.0),
+            "vs": float(vs) if vs is not None else None,
+            "utc": now_utc,
+        }
+    st["prev"] = prev_map_after
+    st["scan"]["last_scan_utc"] = now_utc
+    _save_json(WHALE_STATE_FILE, st)
 
     if not scored:
         if WHALE_LOG_SCAN and WHALE_DEBUG_LOG:
