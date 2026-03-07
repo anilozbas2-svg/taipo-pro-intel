@@ -1856,6 +1856,24 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 continue
 
             out.append(r)
+            # BREAKOUT READY kontrolü
+            try:
+                breakout_ready = build_breakout_ready_list([{
+                    "ticker": r.get("ticker"),
+                    "price": r.get("close"),
+                    "band_pct": band,
+                    "volume_ratio": ratio,
+                    "continuity": r.get("continuity", 3),
+                    "resistance": r.get("resistance", r.get("close"))
+                }])
+
+                if breakout_ready:
+                    r["breakout_ready"] = True
+                else:
+                    r["breakout_ready"] = False
+
+            except Exception:
+                r["breakout_ready"] = False
 
         out.sort(key=tomorrow_score, reverse=True)
         return out[:max(1, TOMORROW_MAX)]
@@ -2518,6 +2536,28 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         thresh_s,
         reg,
     )
+    
+    # BREAKOUT READY bloğu
+    try:
+        breakout_rows = [r for r in (tom_rows or []) if r.get("breakout_ready")]
+
+        if breakout_rows:
+            breakout_lines = []
+            for r in breakout_rows[:6]:
+                t = (r.get("ticker") or "").strip()
+                close_v = r.get("close")
+                ratio_v = r.get("ratio")
+                band_v = r.get("band_pct")
+
+                close_s = f"{float(close_v):.2f}" if close_v == close_v else "n/a"
+                ratio_s = f"{float(ratio_v):.2f}x" if ratio_v == ratio_v else "n/a"
+                band_s = f"%{float(band_v):.0f}" if band_v == band_v else "n/a"
+
+                breakout_lines.append(f"• {t} | Fyt:{close_s} | Hcm:{ratio_s} | Band:{band_s}")
+
+            msg += "\n\n🔥 <b>BREAKOUT READY</b>\n" + "\n".join(breakout_lines)
+    except Exception as e:
+        logger.warning("BREAKOUT READY block failed: %s", e)
 
     # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
