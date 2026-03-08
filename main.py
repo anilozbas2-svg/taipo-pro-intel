@@ -9,7 +9,7 @@ import inspect
 from datetime import datetime, timedelta, time as dtime, date
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Any, Tuple, Optional
-from tomorrow_breakout import build_breakout_ready_list, compute_breakout_score
+from tomorrow_breakout import build_breakout_ready_list, compute_breakout_score, compute_accumulation_score
 
 import requests
 from telegram import Update
@@ -1899,8 +1899,9 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "price": r.get("close"),
                     "band_pct": band,
                     "volume_ratio": ratio,
-                    "continuity": r.get("continuity", 3),
+                    "continuity": r.get("continuity", 1),
                     "resistance": resistance,
+                    "pct_change": r.get("change"),
                 }
 
                 breakout_ready = build_breakout_ready_list([breakout_input])
@@ -1913,9 +1914,13 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 # BREAKOUT SCORE
                 r["breakout_score"] = compute_breakout_score(breakout_input)
 
+                # ACCUMULATION SCORE
+                r["accumulation_score"] = compute_accumulation_score(breakout_input)
+
             except Exception:
                 r["breakout_ready"] = False
                 r["breakout_score"] = 0
+                r["accumulation_score"] = 0
 
         out.sort(key=tomorrow_score, reverse=True)
         return out[:max(1, TOMORROW_MAX)]
