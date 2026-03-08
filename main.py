@@ -1823,6 +1823,40 @@ def _relax_thresholds(min_ratio: float, max_band: float) -> Tuple[float, float]:
     mb = max(0.0, min(95.0, mb))
     return mr, mb
 
+def compute_resistance_from_stats(st: Dict[str, Any], current_price: Any = None) -> float:
+    """
+    Tomorrow breakout için basit direnç hesabı.
+    Öncelik:
+      1) max_close / max
+      2) avg üstü ama max'a yakın alan
+    """
+    cur = safe_float(current_price)
+
+    max_close = safe_float(st.get("max_close"))
+    if max_close is None:
+        max_close = safe_float(st.get("max"))
+
+    avg_close = safe_float(st.get("avg_close"))
+    if avg_close is None:
+        avg_close = safe_float(st.get("avg"))
+
+    min_close = safe_float(st.get("min_close"))
+    if min_close is None:
+        min_close = safe_float(st.get("min"))
+
+    # En sağlam aday: arşiv tepe
+    if max_close is not None and max_close > 0:
+        return float(max_close)
+
+    # Yedek: avg mevcutsa onu kullan
+    if avg_close is not None and avg_close > 0:
+        return float(avg_close)
+
+    # Son yedek: current price
+    if cur is not None and cur > 0:
+        return float(cur)
+
+    return 0.0
 
 def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     def _pass(relaxed: bool) -> List[Dict[str, Any]]:
