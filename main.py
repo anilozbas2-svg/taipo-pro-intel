@@ -2605,6 +2605,44 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             msg += "\n\n🔥 <b>BREAKOUT READY</b>\n" + "\n".join(breakout_lines)
     except Exception as e:
         logger.warning("BREAKOUT READY block failed: %s", e)
+    
+    # ACCUMULATION RADAR bloğu
+    try:
+        accumulation_rows = [
+            r for r in (tom_rows or [])
+            if (r.get("accumulation_score", 0) >= 6)
+        ]
+
+        if accumulation_rows:
+            accumulation_rows = sorted(
+                accumulation_rows,
+                key=lambda x: x.get("accumulation_score", 0),
+                reverse=True,
+            )
+
+            accumulation_lines = []
+            for r in accumulation_rows[:6]:
+                t = (r.get("ticker") or "").strip()
+                close_v = r.get("close")
+                ratio_v = r.get("ratio")
+                band_v = r.get("band_pct")
+                score_v = r.get("accumulation_score", 0)
+                pct_v = r.get("change")
+
+                close_s = f"{float(close_v):.2f}" if close_v == close_v else "n/a"
+                ratio_s = f"{float(ratio_v):.2f}x" if ratio_v == ratio_v else "n/a"
+                band_s = f"%{float(band_v):.0f}" if band_v == band_v else "n/a"
+                pct_s = f"{float(pct_v):+.2f}%" if pct_v == pct_v else "n/a"
+                score_s = f"{int(score_v)}/10"
+
+                accumulation_lines.append(
+                    f"• {t} | Skor:{score_s} | %:{pct_s} | Fyt:{close_s} | Hcm:{ratio_s} | Band:{band_s}"
+                )
+
+            msg += "\n\n🐳 <b>ACCUMULATION RADAR</b>\n" + "\n".join(accumulation_lines)
+
+    except Exception as e:
+        logger.warning("ACCUMULATION RADAR block failed: %s", e)
 
     # ✅ ALTIN canlı performans bloğu (/tomorrow'a ek)
     try:
