@@ -1917,6 +1917,14 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 # ACCUMULATION SCORE
                 r["accumulation_score"] = compute_accumulation_score(breakout_input)
 
+                logger.info(
+                    "SCORE DEBUG %s | breakout=%s | b_score=%s | a_score=%s",
+                    r.get("ticker"),
+                    r.get("breakout_ready"),
+                    r.get("breakout_score"),
+                    r.get("accumulation_score"),
+                )
+
             except Exception:
                 r["breakout_ready"] = False
                 r["breakout_score"] = 0
