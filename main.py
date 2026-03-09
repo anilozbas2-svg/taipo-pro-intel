@@ -2529,16 +2529,11 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )[:8]
         r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
 
-    if REJIM_GATE_TOMORROW and reg.get("block"):
+    if trade_blocked:
         msg = (
-            f"🌙 <b>ERTESİ GÜNE TOPLAMA - RAPOR</b>\n"
-            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
-            f"{format_regime_line(reg)}\n\n"
-            f"⛔ <b>Rejim BLOK olduğu için Tomorrow listesi üretilmedi.</b>\n"
-            f"• REJIM_BLOCK_ON: <code>{', '.join(REJIM_BLOCK_ON) if REJIM_BLOCK_ON else 'YOK'}</code>"
-        )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        return
+            "⚠️ <b>TRADE MODE: OFF</b>\n"
+            "• Rejim riskli, radar izleme amaçlıdır\n\n"
+        ) + msg
 
     tom_rows = build_tomorrow_rows(rows)
     cand_rows = build_candidate_rows(rows, tom_rows)
@@ -3093,20 +3088,11 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         LAST_REGIME = reg
 
-        if REJIM_GATE_TOMORROW and reg.get("block"):
+        if trade_blocked:
             msg = (
-                f"🌙 <b>ERTESİ GÜNE TOPLAMA – RAPOR</b>\n"
-                f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
-                f"{format_regime_line(reg)}\n\n"
-                f"⛔️ <b>Rejim BLOK olduğu için Tomorrow listesi gönderilmedi.</b>"
-            )
-            await context.bot.send_message(
-                chat_id=int(ALARM_CHAT_ID),
-                text=msg,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            return
+                "⚠️ <b>TRADE MODE: OFF</b>\n"
+                "• Rejim riskli, radar izleme amaçlıdır\n\n"
+            ) + msg
 
         rows = await build_rows_from_is_list(bist200_list, xu_change)
         update_history_from_rows(rows)
