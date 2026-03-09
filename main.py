@@ -1878,8 +1878,8 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 continue
 
             ratio = st.get("ratio", float("nan"))
-                    band = st.get("band_pct", 50.0)
-                    resistance = compute_resistance_from_stats(st, r.get("close"))
+            band = st.get("band_pct", 50.0)
+            resistance = compute_resistance_from_stats(st, r.get("close"))
 
             min_ratio, max_band, _ = _tomorrow_thresholds_for(st)
             if relaxed:
