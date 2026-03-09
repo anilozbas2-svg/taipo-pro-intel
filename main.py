@@ -2499,15 +2499,17 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=ParseMode.HTML
     )
 
-
 async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
+
     await update.message.reply_text("⏳ Ertesi gün listesi hazırlanıyor...")
+
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
+
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
 
     global LAST_REGIME
@@ -2515,50 +2517,93 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     rows = await build_rows_from_is_list(bist200_list, xu_change)
     update_history_from_rows(rows)
+
     min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
     thresh_s = format_threshold(min_vol)
 
     # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
     r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
     r0_block = ""
+
     if r0_rows:
         r0_rows = sorted(
             r0_rows,
             key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
             reverse=True
         )[:8]
-        r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True) + "\n\n"
+
+        r0_block = make_table(
+            r0_rows,
+            "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>",
+            include_kind=True
+        ) + "\n\n"
+
+    # TRADE MODE kontrolü (3 kademe)
+    regime_name = str(reg.get("name", "") or "").upper()
+    trade_blocked = bool(REJIM_GATE_TOMORROW and reg.get("block"))
 
     if trade_blocked:
-        msg = (
-            "⚠️ <b>TRADE MODE: OFF</b>\n"
-            "• Rejim riskli, radar izleme amaçlıdır\n\n"
-        ) + msg
+        trade_mode = "OFF"
+    elif regime_name in {"CHOP", "MIXED", "RISK_ON_WATCH", "WATCH"}:
+        trade_mode = "WATCH"
+    else:
+        trade_mode = "ON"
 
     tom_rows = build_tomorrow_rows(rows)
     cand_rows = build_candidate_rows(rows, tom_rows)
+
     save_tomorrow_(tom_rows, cand_rows, xu_change)
-    
-    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz (dict standard)
+
+    # Ana mesajı oluştur
+    msg = (
+        "📊 <b>ERTESİ GÜNE TOPLAMA RAPORU</b>\n\n"
+        f"📈 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n\n"
+        f"{format_regime_line(reg)}\n\n"
+        f"{r0_block}"
+    )
+
+    # TRADE MODE banner
+    if trade_mode == "OFF":
+        msg = (
+            "🔴 <b>TRADE MODE: OFF</b>\n"
+            "• Rejim riskli, agresif trade önerilmez\n"
+            "• Radar listesi izleme amaçlıdır\n\n"
+        ) + msg
+    elif trade_mode == "WATCH":
+        msg = (
+            "🟡 <b>TRADE MODE: WATCH</b>\n"
+            "• Rejim kararsız / temkin modu\n"
+            "• Radar aktif, seçici olunmalı\n\n"
+        ) + msg
+    else:
+        msg = (
+            "🟢 <b>TRADE MODE: ON</b>\n"
+            "• Rejim uygun, radar + trade birlikte değerlendirilebilir\n\n"
+        ) + msg
+
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+
+    # 🧠 TOMORROW_CHAINS'i RAM'e garanti yaz
     try:
         global TOMORROW_CHAINS
 
-        # Her zaman dict standardına zorla
         if not isinstance(TOMORROW_CHAINS, dict):
             TOMORROW_CHAINS = {}
 
         TOMORROW_CHAINS.clear()
 
-        # En yaygın kullanım: { ref_day_key: [rows...] }
         ref_day_key = today_key_tradingday()
-
-        # tom_rows list ise direkt koy
         TOMORROW_CHAINS[ref_day_key] = list(tom_rows or [])
 
         logger.info(
-            "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d",
+            "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d mode=%s",
             ref_day_key,
             len(TOMORROW_CHAINS[ref_day_key]),
+            trade_mode,
         )
 
     except Exception as e:
@@ -2566,7 +2611,6 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "CMD_TOMORROW | Failed to update TOMORROW_CHAINS in-memory: %s",
             e,
         )
-    
     
 # ✅ Tomorrow chain aç (ALTIN liste üzerinden takip edilir)
     try:
@@ -3088,12 +3132,6 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         LAST_REGIME = reg
 
-        if trade_blocked:
-            msg = (
-                "⚠️ <b>TRADE MODE: OFF</b>\n"
-                "• Rejim riskli, radar izleme amaçlıdır\n\n"
-            ) + msg
-
         rows = await build_rows_from_is_list(bist200_list, xu_change)
         update_history_from_rows(rows)
         min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
@@ -3102,6 +3140,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         # ✅ R0 bloğu (otomatik gönderimde de üstte görünsün)
         r0_rows = [r for r in rows if r.get("signal_text") == "UÇAN (R0)"]
         r0_block = ""
+
         if r0_rows:
             r0_rows = sorted(
                 r0_rows,
@@ -3110,10 +3149,26 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
                 else 0,
                 reverse=True,
             )[:8]
+
             r0_block = (
-                make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>", include_kind=True)
+                make_table(
+                    r0_rows,
+                    "🚀 <b>R0 – UÇANLAR (Erken Yakalananlar)</b>",
+                    include_kind=True,
+                )
                 + "\n\n"
             )
+
+        # TRADE MODE kontrolü (3 kademe)
+        regime_name = str(reg.get("name", "") or "").upper()
+        trade_blocked = bool(REJIM_GATE_TOMORROW and reg.get("block"))
+
+        if trade_blocked:
+            trade_mode = "OFF"
+        elif regime_name in {"CHOP", "MIXED", "RISK_ON_WATCH", "WATCH"}:
+            trade_mode = "WATCH"
+        else:
+            trade_mode = "ON"
 
         tom_rows = build_tomorrow_rows(rows)
         cand_rows = build_candidate_rows(rows, tom_rows)
@@ -3122,7 +3177,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         # ==============================
         # ✅ TOMORROW ZİNCİRİ RAM'E YAZ
         # ==============================
-        key = today_key_tradingday()  # follow ile aynı key
+        key = today_key_tradingday()
 
         TOMORROW_CHAINS[key] = {
             "ts": time.time(),
@@ -3135,9 +3190,10 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         }
 
         logger.info(
-            "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d",
+            "Tomorrow zinciri RAM'e yazıldı | key=%s | rows=%d | mode=%s",
             key,
             len(tom_rows),
+            trade_mode,
         )
 
         msg = r0_block + build_tomorrow_message(
@@ -3148,6 +3204,25 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
             thresh_s,
             reg,
         )
+
+        # TRADE MODE banner
+        if trade_mode == "OFF":
+            msg = (
+                "🔴 <b>TRADE MODE: OFF</b>\n"
+                "• Rejim riskli, agresif trade önerilmez\n"
+                "• Radar listesi izleme amaçlıdır\n\n"
+            ) + msg
+        elif trade_mode == "WATCH":
+            msg = (
+                "🟡 <b>TRADE MODE: WATCH</b>\n"
+                "• Rejim kararsız / temkin modu\n"
+                "• Radar aktif, seçici olunmalı\n\n"
+            ) + msg
+        else:
+            msg = (
+                "🟢 <b>TRADE MODE: ON</b>\n"
+                "• Rejim uygun, radar + trade birlikte değerlendirilebilir\n\n"
+            ) + msg
 
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
