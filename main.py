@@ -2587,6 +2587,8 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # BREAKOUT READY bloğu
     try:
         breakout_rows = [r for r in (tom_rows or []) if r.get("breakout_ready")]
+        
+        logger.info("DEBUG BREAKOUT COUNT = %s", len(breakout_rows))
 
         if breakout_rows:
             breakout_lines = []
@@ -2612,6 +2614,8 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             r for r in (tom_rows or [])
             if (r.get("accumulation_score", 0) >= 6)
         ]
+        
+        logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
 
         if accumulation_rows:
             accumulation_rows = sorted(
