@@ -171,44 +171,60 @@ def compute_accumulation_score(
     max_pct_change: float = 2.0,
     min_continuity: int = 2,
 ) -> int:
+
     score = 0
 
     band_pct = _safe_float(row.get("band_pct"))
     volume_ratio = _safe_float(row.get("volume_ratio"))
+
     pct_change = _safe_float(row.get("pct_change"))
+    if pct_change is None:
+        pct_change = _safe_float(row.get("change"))
+
     continuity = _safe_int(row.get("continuity"), 0)
 
     # 1) Dar bant / sıkışma
     if band_pct is not None:
+
         if band_pct <= 15:
             score += 3
+
         elif band_pct <= 25:
             score += 2
+
         elif band_pct <= max_band_pct:
             score += 1
 
     # 2) Hacim baskısı
     if volume_ratio is not None:
+
         if volume_ratio >= 1.60:
             score += 3
+
         elif volume_ratio >= 1.35:
             score += 2
+
         elif volume_ratio >= min_volume_ratio:
             score += 1
 
     # 3) Fiyat çok kaçmamışsa accumulation için iyi
     if pct_change is not None:
+
         abs_pct = abs(pct_change)
+
         if abs_pct <= 0.60:
             score += 3
+
         elif abs_pct <= 1.20:
             score += 2
+
         elif abs_pct <= max_pct_change:
             score += 1
 
-    # 4) Continuity
+    # 4) Continuity (yatay kalma süresi)
     if continuity >= (min_continuity + 1):
         score += 2
+
     elif continuity >= min_continuity:
         score += 1
 
