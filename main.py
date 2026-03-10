@@ -1501,25 +1501,37 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
 # =========================================================
 def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = False) -> str:
     if include_kind:
-        header = f"{'HIS':<5} {'S':<1} {'K':<3} {'%':>6} {'FYT':>8} {'HCM':>6}"
+        header = f"{'HIS':<5} {'S':<1} {'K':<3} {'%':>6} {'FYT':>8} {'HCM':>6} {'SCR':>5}"
     else:
-        header = f"{'HIS':<5} {'S':<1} {'%':>6} {'FYT':>8} {'HCM':>6}"
+        header = f"{'HIS':<5} {'S':<1} {'%':>6} {'FYT':>8} {'HCM':>6} {'SCR':>5}"
+
     sep = "-" * len(header)
     lines = [title, "<pre>", header, sep]
+
     for r in rows:
         t = (r.get("ticker", "n/a") or "n/a")[:5]
         sig = (r.get("signal", "-") or "-")[:1]
+
         ch = r.get("change", float("nan"))
         cl = r.get("close", float("nan"))
         vol = r.get("volume", float("nan"))
+        score = r.get("accumulation_score", 0)
+
         ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
         vol_s = format_volume(vol)[:6]
+
+        try:
+            score_s = f"{int(score)}/10" if score is not None else "-"
+        except Exception:
+            score_s = "-"
+
         if include_kind:
             k = st_short(r.get("signal_text", ""))
-            lines.append(f"{t:<5} {sig:<1} {k:<3} {ch_s:>6} {cl_s:>8} {vol_s:>6}")
+            lines.append(f"{t:<5} {sig:<1} {k:<3} {ch_s:>6} {cl_s:>8} {vol_s:>6} {score_s:>5}")
         else:
-            lines.append(f"{t:<5} {sig:<1} {ch_s:>6} {cl_s:>8} {vol_s:>6}")
+            lines.append(f"{t:<5} {sig:<1} {ch_s:>6} {cl_s:>8} {vol_s:>6} {score_s:>5}")
+
     lines.append("</pre>")
     return "\n".join(lines)
 
