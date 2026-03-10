@@ -1899,7 +1899,7 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "price": r.get("close"),
                     "band_pct": band,
                     "volume_ratio": ratio,
-                    "continuity": r.get("continuity", 1),
+                    "continuity": r.get("continuity", 1) or 0,
                     "resistance": resistance,
                     "pct_change": r.get("change"),
                 }
@@ -2661,7 +2661,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             r for r in (tom_rows or [])
             if (r.get("accumulation_score", 0) >= 6)
         ]
-        
+
         logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
 
         if accumulation_rows:
@@ -2674,16 +2674,17 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             accumulation_lines = []
             for r in accumulation_rows[:6]:
                 t = (r.get("ticker") or "").strip()
+
                 close_v = r.get("close")
                 ratio_v = r.get("ratio")
                 band_v = r.get("band_pct")
                 score_v = r.get("accumulation_score", 0)
                 pct_v = r.get("change")
 
-                close_s = f"{float(close_v):.2f}" if close_v == close_v else "n/a"
-                ratio_s = f"{float(ratio_v):.2f}x" if ratio_v == ratio_v else "n/a"
-                band_s = f"%{float(band_v):.0f}" if band_v == band_v else "n/a"
-                pct_s = f"{float(pct_v):+.2f}%" if pct_v == pct_v else "n/a"
+                close_s = f"{float(close_v):.2f}" if close_v is not None else "n/a"
+                ratio_s = f"{float(ratio_v):.2f}x" if ratio_v is not None else "n/a"
+                band_s = f"%{float(band_v):.0f}" if band_v is not None else "n/a"
+                pct_s = f"{float(pct_v):+.2f}%" if pct_v is not None else "n/a"
                 score_s = f"{int(score_v)}/10"
 
                 accumulation_lines.append(
