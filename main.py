@@ -2867,7 +2867,31 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
-     
+
+async def cmd_band_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("⏳ Band taraması hazırlanıyor...")
+
+    rows_5 = build_band_scan_rows(days_window=5, limit=30)
+    rows_20 = build_band_scan_rows(days_window=20, limit=30)
+
+    part_5 = make_band_scan_table(
+        rows_5,
+        "📦 <b>5 GÜNLÜK DAR BANT – İLK 30</b>"
+    ) if rows_5 else "❌ <b>5 GÜNLÜK bant listesi boş.</b>"
+
+    part_20 = make_band_scan_table(
+        rows_20,
+        "📦 <b>20 GÜNLÜK DAR BANT – İLK 30</b>"
+    ) if rows_20 else "❌ <b>20 GÜNLÜK bant listesi boş.</b>"
+
+    msg = part_5 + "\n\n" + part_20
+
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     watch = parse_watch_args(context.args)
     if not watch:
@@ -4255,6 +4279,7 @@ def main() -> None:
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("status", cmd_stats))
     app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
+    app.add_handler(CommandHandler("band_scan", cmd_band_scan))
     app.add_handler(CommandHandler("whale", cmd_whale))
     app.add_handler(CommandHandler("bootstrap", cmd_bootstrap))
     app.add_handler(CommandHandler("watch", cmd_watch))
