@@ -1298,6 +1298,148 @@ def compute_30d_stats(ticker: str) -> Optional[Dict[str, Any]]:
         "samples_vol": len(vols),
     }
 
+def compute_stats_for_days(ticker: str, days_window: int) -> Optional[Dict[str, Any]]:
+    t = (ticker or "").strip().upper()
+    if not t:
+        return None
+
+    price_hist = _load_json(PRICE_HISTORY_FILE)
+    vol_hist = _load_json(VOLUME_HISTORY_FILE)
+
+    if not isinstance(price_hist, dict) or not isinstance(vol_hist, dict):
+        return None
+
+    all_days = sorted(set(list(price_hist.keys()) + list(vol_hist.keys())))
+    if not all_days:
+        return None
+
+    days = all_days[-max(1, int(days_window)):]
+    closes: List[float] = []
+    vols: List[float] = []
+
+    today = today_key_tradingday()
+    today_close = None
+    today_vol = None
+
+    for d in days:
+        pd = price_hist.get(d, {})
+        vd = vol_hist.get(d, {})
+
+        if isinstance(pd, dict) and t in pd:
+            c = safe_float(pd.get(t))
+            if c == c:
+                closes.append(c)
+                if d == today:
+                    today_close = c
+
+        if isinstance(vd, dict) and t in vd:
+            v = safe_float(vd.get(t))
+            if v == v:
+                vols.append(v)
+                if d == today:
+                    today_vol = v
+
+    if len(closes) < min(3, days_window) or len(vols) < min(3, days_window):
+        return None
+
+    mn = float(min(closes))
+    mx = float(max(closes))
+    avg_close = float(sum(closes) / len(closes))
+    avg_vol = float(sum(vols) / len(vols))
+
+    if today_close is None:
+        today_close = closes[-1]
+    if today_vol is None:
+        today_vol = vols[-1]
+
+    ratio = (today_vol / avg_vol) if avg_vol > 0 else float("nan")
+
+    if mx > mn:
+        band_pct = ((today_close - mn) / (mx - mn)) * 100.0
+        band_pct = max(0.0, min(100.0, band_pct))
+    else:
+        band_pct = 50.0
+
+    return {
+        "min": mn,
+        "max": mx,
+        "avg_close": avg_close,
+        "avg_vol": avg_vol,
+        "today_close": float(today_close),
+        "today_vol": float(today_vol),
+        "ratio": float(ratio),
+        "band_pct": float(band_pct),
+        "days_used": len(days),
+        "samples_close": len(closes),
+        "samples_vol": len(vols),
+    }
+
+
+def build_band_scan_rows(days_window: int, limit: int = 30) -> List[Dict[str, Any]]:
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return []
+
+    rows: List[Dict[str, Any]] = []
+
+    for ticker in bist200_list:
+        t = (ticker or "").strip().upper()
+        if not t:
+            continue
+
+        st = compute_stats_for_days(t, days_window)
+        if not st:
+            continue
+
+        band = st.get("band_pct", float("nan"))
+        close = st.get("today_close", float("nan"))
+        ratio = st.get("ratio", float("nan"))
+        avg_vol = st.get("avg_vol", float("nan"))
+        today_vol = st.get("today_vol", float("nan"))
+
+        if band != band or close != close:
+            continue
+
+        rows.append({
+            "ticker": t,
+            "band_pct": band,
+            "close": close,
+            "ratio": ratio,
+            "avg_vol": avg_vol,
+            "today_vol": today_vol,
+            "days_window": days_window,
+        })
+
+    rows.sort(
+        key=lambda x: (
+            x.get("band_pct", 999.0),
+            -(x.get("ratio", 0.0) if x.get("ratio", 0.0) == x.get("ratio", 0.0) else 0.0),
+        )
+    )
+
+    return rows[:max(1, int(limit))]
+
+
+def make_band_scan_table(rows: List[Dict[str, Any]], title: str) -> str:
+    header = f"{'HIS':<5} {'BAND':>6} {'FYT':>8} {'HCM':>6}"
+    sep = "-" * len(header)
+    lines = [title, "<pre>", header, sep]
+
+    for r in rows:
+        t = (r.get("ticker", "n/a") or "n/a")[:5]
+        band = r.get("band_pct", float("nan"))
+        close = r.get("close", float("nan"))
+        ratio = r.get("ratio", float("nan"))
+
+        band_s = "n/a" if (band != band) else f"%{band:.0f}"
+        close_s = "n/a" if (close != close) else f"{close:.2f}"
+        ratio_s = "n/a" if (ratio != ratio) else f"{ratio:.2f}x"
+
+        lines.append(f"{t:<5} {band_s:>6} {close_s:>8} {ratio_s:>6}")
+
+    lines.append("</pre>")
+    return "\n".join(lines)
+
 def soft_plan_line(stats: Dict[str, Any], current_close: float) -> str:
     if not stats:
         return "Plan: Veri yetersiz (arşiv dolsun)."
@@ -2061,7 +2203,7 @@ def build_tomorrow_message(
         "• +%2–%4 kademeli çıkış\n"
         "• Ters mum gelirse: disiplin (zarar büyütme yok)"
     )
-    return head + "\n" + gold_table + "\n\n" + cand_table + "\n" + notes + foot
+    return head + "\n" + gold_table + "\n\n" + cand_table
 
 
 def save_tomorrow_(
