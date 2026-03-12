@@ -217,7 +217,7 @@ TORPIL_MAX_BAND = float(os.getenv("TORPIL_MAX_BAND", "75"))
 # ===============================
 
 BOOTSTRAP_ON_START = os.getenv("BOOTSTRAP_ON_START", "1").strip() == "1"
-BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "400"))
+BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "90"))
 BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"
 
 YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
@@ -2640,7 +2640,7 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             days = int(re.sub(r"\D+", "", context.args[0]))
         except Exception:
             days = BOOTSTRAP_DAYS
-    days = max(20, min(400, days))
+    days = max(20, min(90, days))
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
