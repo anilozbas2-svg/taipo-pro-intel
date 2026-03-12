@@ -1903,6 +1903,54 @@ def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, in
     _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
     return (filled, total_points)
 
+async def tradingview_bootstrap_fill_today(tickers: List[str]) -> Tuple[int, int]:
+    if not tickers:
+        return (0, 0)
+
+    try:
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(
+            today_key_tradingday(),
+            xu_close,
+            xu_change,
+            xu_vol,
+            xu_open,
+        )
+    except Exception as e:
+        logger.warning("BOOTSTRAP TV | xu100 summary alınamadı: %s", e)
+        xu_change = 0.0
+
+    rows = await build_rows_from_is_list(tickers, xu_change)
+
+    valid_rows: List[Dict[str, Any]] = []
+    for r in (rows or []):
+        t = (r.get("ticker") or "").strip().upper()
+        cl = r.get("close", float("nan"))
+        vol = r.get("volume", float("nan"))
+
+        if not t:
+            continue
+        if cl != cl or vol != vol:
+            continue
+
+        valid_rows.append(r)
+
+    logger.info(
+        "BOOTSTRAP TV | input_tickers=%s rows=%s valid_rows=%s",
+        len(tickers),
+        0 if not rows else len(rows),
+        len(valid_rows),
+    )
+
+    if not valid_rows:
+        return (0, 0)
+
+    update_history_from_rows(valid_rows)
+
+    filled = len(valid_rows)
+    points = len(valid_rows)
+    return (filled, points)
+
 async def yahoo_bootstrap_if_needed() -> str:
     try:
         ph = _load_json(PRICE_HISTORY_FILE)
@@ -2634,40 +2682,81 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-
 async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    mode = "tv"
     days = BOOTSTRAP_DAYS
+
     if context.args:
-        try:
-            days = int(re.sub(r"\D+", "", context.args[0]))
-        except Exception:
-            days = BOOTSTRAP_DAYS
+        for arg in context.args:
+            a = (arg or "").strip().lower()
+
+            if a in ("tv", "tradingview"):
+                mode = "tv"
+                continue
+
+            if a in ("yahoo", "yh", "y"):
+                mode = "yahoo"
+                continue
+
+            try:
+                n = int(re.sub(r"\D+", "", a))
+                if n > 0:
+                    days = n
+            except Exception:
+                pass
+
     days = max(20, min(90, days))
     bist200_list = env_csv("BIST200_TICKERS")
-    
+
     logger.info("BOOTSTRAP raw bist200 count=%s", len(bist200_list))
-    
+
     if not bist200_list:
-        await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
+        await update.message.reply_text(
+            "❌ BIST200_TICKERS env boş. Render → Environment’a ekle."
+        )
         return
-    await update.message.reply_text(f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum (1 defalık).")
-    tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
-    tickers = tickers[:5]
+
+    tickers = [
+        normalize_is_ticker(x).split(":")[-1]
+        for x in bist200_list
+        if x and x.strip()
+    ]
+
     logger.info("BOOTSTRAP parsed ticker count=%s", len(tickers))
     logger.info("BOOTSTRAP first10=%s", tickers[:10])
-    filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, days)
-    
+
+    if mode == "yahoo":
+        await update.message.reply_text(
+            f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum."
+        )
+        filled, points = await asyncio.to_thread(
+            yahoo_bootstrap_fill_history,
+            tickers,
+            days,
+        )
+    else:
+        await update.message.reply_text(
+            "⏳ Bootstrap başlıyor… TradingView snapshot ile bugünkü close/hacim yazıyorum."
+        )
+        filled, points = await tradingview_bootstrap_fill_today(tickers)
+
     logger.info(
-        "BOOTSTRAP done filled=%s total_points=%s disk=%s history_days=%s",
+        "BOOTSTRAP done mode=%s filled=%s total_points=%s disk=%s history_days=%s",
+        mode,
         filled,
         points,
         EFFECTIVE_DATA_DIR,
         HISTORY_DAYS,
     )
-    
+
     await update.message.reply_text(
-        f"✅ Bootstrap tamam!\n• Dolu hisse: <b>{filled}</b>\n• Nokta: <b>{points}</b>\n• Disk: <code>{EFFECTIVE_DATA_DIR}</code>\n• HISTORY_DAYS: <b>{HISTORY_DAYS}</b>",
-        parse_mode=ParseMode.HTML
+        f"✅ Bootstrap tamam!\n"
+        f"• Mod: <b>{mode.upper()}</b>\n"
+        f"• Dolu hisse: <b>{filled}</b>\n"
+        f"• Nokta: <b>{points}</b>\n"
+        f"• Disk: <code>{EFFECTIVE_DATA_DIR}</code>\n"
+        f"• HISTORY_DAYS: <b>{HISTORY_DAYS}</b>",
+        parse_mode=ParseMode.HTML,
     )
 
 async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
