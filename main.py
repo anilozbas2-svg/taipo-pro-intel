@@ -1877,9 +1877,11 @@ def yahoo_bootstrap_fill_history(tickers: List[str], days: int) -> Tuple[int, in
             continue
 
         sym = _to_yahoo_symbol_bist(short)
+        logger.info("BOOTSTRAP fetching short=%s sym=%s days=%s", short, sym, days)
 
         # ✅ Bootstrap = parametre days (genelde 400)
         data = yahoo_fetch_history_sync(sym, days)
+        logger.info("BOOTSTRAP fetched sym=%s data_len=%s", sym, 0 if not data else len(data))
 
         if not data:
             time.sleep(YAHOO_SLEEP_SEC)
@@ -2642,12 +2644,26 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             days = BOOTSTRAP_DAYS
     days = max(20, min(90, days))
     bist200_list = env_csv("BIST200_TICKERS")
+    
+    logger.info("BOOTSTRAP raw bist200 count=%s", len(bist200_list))
+    
     if not bist200_list:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
     await update.message.reply_text(f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum (1 defalık).")
     tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
+    logger.info("BOOTSTRAP parsed ticker count=%s", len(tickers))
+    logger.info("BOOTSTRAP first10=%s", tickers[:10])
     filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, days)
+    
+    logger.info(
+        "BOOTSTRAP done filled=%s total_points=%s disk=%s history_days=%s",
+        filled,
+        points,
+        EFFECTIVE_DATA_DIR,
+        HISTORY_DAYS,
+    )
+    
     await update.message.reply_text(
         f"✅ Bootstrap tamam!\n• Dolu hisse: <b>{filled}</b>\n• Nokta: <b>{points}</b>\n• Disk: <code>{EFFECTIVE_DATA_DIR}</code>\n• HISTORY_DAYS: <b>{HISTORY_DAYS}</b>",
         parse_mode=ParseMode.HTML
