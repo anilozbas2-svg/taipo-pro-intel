@@ -2652,6 +2652,7 @@ async def cmd_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     await update.message.reply_text(f"⏳ Bootstrap başlıyor… Yahoo’dan {days} gün çekiyorum (1 defalık).")
     tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
+    tickers = tickers[:5]
     logger.info("BOOTSTRAP parsed ticker count=%s", len(tickers))
     logger.info("BOOTSTRAP first10=%s", tickers[:10])
     filled, points = await asyncio.to_thread(yahoo_bootstrap_fill_history, tickers, days)
