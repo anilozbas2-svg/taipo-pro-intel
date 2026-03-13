@@ -220,6 +220,10 @@ BOOTSTRAP_ON_START = os.getenv("BOOTSTRAP_ON_START", "1").strip() == "1"
 BOOTSTRAP_DAYS = int(os.getenv("BOOTSTRAP_DAYS", "90"))
 BOOTSTRAP_FORCE = os.getenv("BOOTSTRAP_FORCE", "0").strip() == "1"
 
+TV_SNAPSHOT_ENABLED = os.getenv("TV_SNAPSHOT_ENABLED", "1").strip() == "1"
+TV_SNAPSHOT_HOUR = int(os.getenv("TV_SNAPSHOT_HOUR", "18"))
+TV_SNAPSHOT_MINUTE = int(os.getenv("TV_SNAPSHOT_MINUTE", "5"))
+
 YAHOO_TIMEOUT = int(os.getenv("YAHOO_TIMEOUT", "15"))
 YAHOO_SLEEP_SEC = float(os.getenv("YAHOO_SLEEP_SEC", "0.15"))
 YAHOO_MAX_ATTEMPTS = int(os.getenv("YAHOO_MAX_ATTEMPTS", "3"))
@@ -1069,6 +1073,53 @@ def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     _prune_days(vol_hist, HISTORY_DAYS)
     _atomic_write_json(PRICE_HISTORY_FILE, price_hist)
     _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
+
+async def tv_snapshot_save_daily(context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        if not TV_SNAPSHOT_ENABLED:
+            logger.info("TV SNAPSHOT | disabled")
+            return
+
+        bist200_list = env_csv("BIST200_TICKERS")
+        if not bist200_list:
+            logger.warning("TV SNAPSHOT | BIST200_TICKERS empty")
+            return
+
+        tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
+        logger.info("TV SNAPSHOT | start ticker_count=%s", len(tickers))
+
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        update_index_history(
+            today_key_tradingday(),
+            xu_close,
+            xu_change,
+            xu_vol,
+            xu_open,
+        )
+
+        rows = await build_rows_from_is_list(tickers, xu_change)
+
+        valid_rows = [
+            r for r in rows
+            if (r.get("close") == r.get("close")) and (r.get("volume") == r.get("volume"))
+        ]
+
+        logger.info(
+            "TV SNAPSHOT | fetched rows=%s valid_rows=%s",
+            len(rows),
+            len(valid_rows),
+        )
+
+        update_history_from_rows(valid_rows)
+
+        logger.info(
+            "TV SNAPSHOT | saved day=%s valid_rows=%s",
+            today_key_tradingday(),
+            len(valid_rows),
+        )
+
+    except Exception as e:
+        logger.exception("TV SNAPSHOT | error: %s", e)
 
 # =========================================================
 # Index (XU100) history + regime
@@ -3942,7 +3993,27 @@ def schedule_jobs(app: Application) -> None:
         logger.info(
             "ALARM kapali veya ALARM_CHAT_ID yok -> otomatik alarm/tomorrow gonderilmeyecek."
         )
-        
+    
+    if TV_SNAPSHOT_ENABLED and jq is not None:
+        jq.run_daily(
+            tv_snapshot_save_daily,
+            time=dtime(
+                hour=TV_SNAPSHOT_HOUR,
+                minute=TV_SNAPSHOT_MINUTE,
+                tzinfo=TZ,
+            ),
+            name="tv_snapshot_daily",
+        )
+        logger.info(
+            "TV SNAPSHOT scheduled daily at %02d:%02d.",
+            TV_SNAPSHOT_HOUR,
+            TV_SNAPSHOT_MINUTE,
+        )
+    else:
+        logger.info(
+            "TV SNAPSHOT kapalı veya job_queue yok -> günlük snapshot çalışmayacak."
+        )
+    
     # --------------------------
     # MOMO MODÜLLERİNİ UYGULAMAYA REGISTER ET (SAFE)
     # --------------------------
