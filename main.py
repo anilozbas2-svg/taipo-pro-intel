@@ -1425,6 +1425,178 @@ def compute_stats_for_days(ticker: str, days_window: int) -> Optional[Dict[str, 
         "samples_vol": len(vols),
     }
 
+def get_ticker_series_days(ticker: str, days_window: int) -> Optional[List[Dict[str, Any]]]:
+    t = (ticker or "").strip().upper()
+    if not t:
+        return None
+
+    if t.endswith(".IS"):
+        t = t[:-3]
+
+    price_hist = _load_json(PRICE_HISTORY_FILE)
+    vol_hist = _load_json(VOLUME_HISTORY_FILE)
+
+    if not isinstance(price_hist, dict) or not isinstance(vol_hist, dict):
+        return None
+
+    all_days = sorted(set(list(price_hist.keys()) + list(vol_hist.keys())))
+    if not all_days:
+        return None
+
+    days = all_days[-max(1, int(days_window)):]
+    rows: List[Dict[str, Any]] = []
+
+    for d in days:
+        close = price_hist.get(d, {}).get(t)
+        vol = vol_hist.get(d, {}).get(t)
+        if close is None or vol is None:
+            continue
+        try:
+            close_f = float(close)
+            vol_f = float(vol)
+        except Exception:
+            continue
+        if close_f != close_f or vol_f != vol_f:
+            continue
+        rows.append({
+            "day": d,
+            "close": close_f,
+            "volume": vol_f,
+        })
+
+    min_need = max(5, min(10, int(days_window) // 2))
+    if len(rows) < min_need:
+        return None
+
+    return rows
+
+
+def compute_balina_metrics(ticker: str, days_window: int) -> Optional[Dict[str, Any]]:
+    rows = get_ticker_series_days(ticker, days_window)
+    if not rows:
+        return None
+
+    closes = [r["close"] for r in rows]
+    vols = [r["volume"] for r in rows]
+
+    if not closes or not vols:
+        return None
+
+    last_close = closes[-1]
+    last_vol = vols[-1]
+
+    if last_close < BALINA_MIN_PRICE:
+        return None
+
+    avg_vol = sum(vols) / len(vols)
+    if avg_vol < BALINA_MIN_AVG_VOL:
+        return None
+
+    mn = min(closes)
+    mx = max(closes)
+    if mn <= 0:
+        return None
+
+    band_pct = ((mx - mn) / mn) * 100.0
+    vol_ratio = (last_vol / avg_vol) if avg_vol > 0 else 0.0
+
+    close_pos = 0.0
+    if mx > mn:
+        close_pos = ((last_close - mn) / (mx - mn)) * 100.0
+
+    return {
+        "ticker": ticker,
+        "days": len(rows),
+        "last_day": rows[-1]["day"],
+        "last_close": last_close,
+        "avg_vol": avg_vol,
+        "last_vol": last_vol,
+        "vol_ratio": vol_ratio,
+        "band_pct": band_pct,
+        "close_pos": close_pos,
+        "min_close": mn,
+        "max_close": mx,
+    }
+
+
+def score_balina(m: Dict[str, Any]) -> float:
+    band_pct = float(m.get("band_pct", 999))
+    vol_ratio = float(m.get("vol_ratio", 0))
+    close_pos = float(m.get("close_pos", 0))
+    avg_vol = float(m.get("avg_vol", 0))
+
+    score = 0.0
+
+    if band_pct <= 10:
+        score += 35
+    elif band_pct <= 14:
+        score += 28
+    elif band_pct <= 18:
+        score += 20
+    elif band_pct <= 22:
+        score += 10
+
+    if vol_ratio >= 2.0:
+        score += 30
+    elif vol_ratio >= 1.5:
+        score += 24
+    elif vol_ratio >= 1.25:
+        score += 18
+    elif vol_ratio >= 1.10:
+        score += 10
+
+    if close_pos >= 80:
+        score += 15
+    elif close_pos >= 65:
+        score += 10
+    elif close_pos >= 50:
+        score += 5
+
+    if avg_vol >= 50_000_000:
+        score += 10
+    elif avg_vol >= 20_000_000:
+        score += 7
+    elif avg_vol >= 10_000_000:
+        score += 5
+
+    return round(score, 2)
+
+
+def build_balina_list() -> List[Dict[str, Any]]:
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return []
+
+    tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
+    out: List[Dict[str, Any]] = []
+
+    for raw in tickers:
+        t = (raw or "").strip().upper().replace("BIST:", "")
+        if t.endswith(".IS"):
+            t = t[:-3]
+
+        m = compute_balina_metrics(t, BALINA_MIN_DAYS)
+        if not m:
+            continue
+
+        if m["band_pct"] > BALINA_MAX_BAND_PCT:
+            continue
+
+        if m["vol_ratio"] < BALINA_MIN_VOL_RATIO:
+            continue
+
+        m["score"] = score_balina(m)
+        out.append(m)
+
+    out.sort(
+        key=lambda x: (
+            x["score"],
+            x["vol_ratio"],
+            -x["band_pct"],
+        ),
+        reverse=True
+    )
+    return out[:BALINA_TOP_N]
 
 def build_band_scan_rows(days_window: int, limit: int = 30) -> List[Dict[str, Any]]:
     bist200_list = env_csv("BIST200_TICKERS")
