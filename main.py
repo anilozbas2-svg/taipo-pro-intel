@@ -1074,7 +1074,7 @@ def update_history_from_rows(rows: List[Dict[str, Any]]) -> None:
     _atomic_write_json(PRICE_HISTORY_FILE, price_hist)
     _atomic_write_json(VOLUME_HISTORY_FILE, vol_hist)
 
-async def tv_snapshot_save_daily(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def tv_snapshot_save_daily(context: ContextTypes.DEFAULT_TYPE = None) -> None:
     try:
         if not TV_SNAPSHOT_ENABLED:
             logger.info("TV SNAPSHOT | disabled")
