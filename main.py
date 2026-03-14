@@ -3197,6 +3197,51 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         disable_web_page_preview=True,
     )
 
+async def cmd_balina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not BALINA_ENABLED:
+        await update.message.reply_text("❌ Balina radar kapalı.")
+        return
+
+    await update.message.reply_text("🐋 Balina radar tarıyor...")
+
+    try:
+        items = await asyncio.to_thread(build_balina_list)
+
+        if not items:
+            await update.message.reply_text(
+                "Uygun balina setup bulunamadı.\n"
+                f"Gün: {BALINA_MIN_DAYS}\n"
+                f"Max band: %{BALINA_MAX_BAND_PCT}\n"
+                f"Min hacim oranı: {BALINA_MIN_VOL_RATIO:.2f}x"
+            )
+            return
+
+        lines = []
+        lines.append("🐋 BALİNA RADAR")
+        lines.append(
+            f"Gün: {BALINA_MIN_DAYS} | "
+            f"Max band: %{BALINA_MAX_BAND_PCT} | "
+            f"Min hacim: {BALINA_MIN_VOL_RATIO:.2f}x"
+        )
+        lines.append("")
+
+        for i, x in enumerate(items, 1):
+            lines.append(
+                f"{i}) {x['ticker']} | Skor {x['score']:.1f}\n"
+                f"Band %{x['band_pct']:.1f} | "
+                f"Hacim {x['vol_ratio']:.2f}x | "
+                f"Fiyat {x['last_close']:.2f}"
+            )
+            lines.append("")
+
+        msg = "\n".join(lines[:120])
+
+        await update.message.reply_text(msg)
+
+    except Exception as e:
+        logger.exception("/balina error: %s", e)
+        await update.message.reply_text(f"/balina hata: {e}")
+
 async def cmd_band_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Band taraması hazırlanıyor...")
 
@@ -4628,6 +4673,7 @@ def main() -> None:
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("status", cmd_stats))
     app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
+    app.add_handler(CommandHandler("balina", cmd_balina))
     app.add_handler(CommandHandler("band_scan", cmd_band_scan))
     app.add_handler(CommandHandler("whale", cmd_whale))
     app.add_handler(CommandHandler("bootstrap", cmd_bootstrap))
