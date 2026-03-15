@@ -330,6 +330,15 @@ WHALE_MAX_DRAWDOWN_PCT = float(os.getenv("WHALE_MAX_DRAWDOWN_PCT", "-0.70"))
 WHALE_INDEX_BONUS = os.getenv("WHALE_INDEX_BONUS", "1").strip() == "1"
 WHALE_MIN_POSITIVE_WHEN_INDEX_BAD = float(os.getenv("WHALE_MIN_POSITIVE_WHEN_INDEX_BAD", "0.30"))
 
+# Balina radar
+BALINA_ENABLED = os.getenv("BALINA_ENABLED", "1").strip() == "1"
+BALINA_MIN_DAYS = int(os.getenv("BALINA_MIN_DAYS", "20"))
+BALINA_MAX_BAND_PCT = float(os.getenv("BALINA_MAX_BAND_PCT", "18"))
+BALINA_MIN_AVG_VOL = float(os.getenv("BALINA_MIN_AVG_VOL", "5000000"))
+BALINA_MIN_PRICE = float(os.getenv("BALINA_MIN_PRICE", "2"))
+BALINA_MIN_VOL_RATIO = float(os.getenv("BALINA_MIN_VOL_RATIO", "1.10"))
+BALINA_TOP_N = int(os.getenv("BALINA_TOP_N", "12"))
+
 # -----------------------------
 # ✅ REJİM MODU (Endeks + Vol + Gap + Trend)
 # -----------------------------
