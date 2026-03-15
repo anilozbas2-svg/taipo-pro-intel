@@ -339,6 +339,12 @@ BALINA_MIN_PRICE = float(os.getenv("BALINA_MIN_PRICE", "2"))
 BALINA_MIN_VOL_RATIO = float(os.getenv("BALINA_MIN_VOL_RATIO", "1.10"))
 BALINA_TOP_N = int(os.getenv("BALINA_TOP_N", "12"))
 
+# v2
+BALINA_MIN_SQUEEZE_DAYS = int(os.getenv("BALINA_MIN_SQUEEZE_DAYS", "5"))
+BALINA_LOOKBACK_MAX_DAYS = int(os.getenv("BALINA_LOOKBACK_MAX_DAYS", "20"))
+BALINA_SQUEEZE_BAND_PCT = float(os.getenv("BALINA_SQUEEZE_BAND_PCT", "18"))
+BALINA_MIN_BURST_RATIO = float(os.getenv("BALINA_MIN_BURST_RATIO", "1.15"))
+
 # -----------------------------
 # ✅ REJİM MODU (Endeks + Vol + Gap + Trend)
 # -----------------------------
@@ -1479,9 +1485,8 @@ def get_ticker_series_days(ticker: str, days_window: int) -> Optional[List[Dict[
 
     return rows
 
-
 def compute_balina_metrics(ticker: str, days_window: int) -> Optional[Dict[str, Any]]:
-    rows = get_ticker_series_days(ticker, days_window)
+    rows = get_ticker_rows_days(ticker, days_window)
     if not rows:
         return None
 
@@ -1491,8 +1496,8 @@ def compute_balina_metrics(ticker: str, days_window: int) -> Optional[Dict[str, 
     if not closes or not vols:
         return None
 
-    last_close = closes[-1]
-    last_vol = vols[-1]
+    last_close = float(closes[-1])
+    last_vol = float(vols[-1])
 
     if last_close < BALINA_MIN_PRICE:
         return None
@@ -1509,9 +1514,27 @@ def compute_balina_metrics(ticker: str, days_window: int) -> Optional[Dict[str, 
     band_pct = ((mx - mn) / mn) * 100.0
     vol_ratio = (last_vol / avg_vol) if avg_vol > 0 else 0.0
 
+    prev_vols = vols[:-1][-5:]
+    prev_avg_vol = (sum(prev_vols) / len(prev_vols)) if prev_vols else avg_vol
+    burst_ratio = (last_vol / prev_avg_vol) if prev_avg_vol > 0 else 0.0
+
     close_pos = 0.0
     if mx > mn:
         close_pos = ((last_close - mn) / (mx - mn)) * 100.0
+
+    squeeze_days = count_squeeze_days(
+        rows,
+        BALINA_LOOKBACK_MAX_DAYS,
+        BALINA_SQUEEZE_BAND_PCT,
+    )
+
+    chg_3 = 0.0
+    if len(closes) >= 4 and closes[-4] > 0:
+        chg_3 = ((last_close / closes[-4]) - 1.0) * 100.0
+
+    chg_5 = 0.0
+    if len(closes) >= 6 and closes[-6] > 0:
+        chg_5 = ((last_close / closes[-6]) - 1.0) * 100.0
 
     return {
         "ticker": ticker,
@@ -1521,42 +1544,67 @@ def compute_balina_metrics(ticker: str, days_window: int) -> Optional[Dict[str, 
         "avg_vol": avg_vol,
         "last_vol": last_vol,
         "vol_ratio": vol_ratio,
+        "burst_ratio": burst_ratio,
         "band_pct": band_pct,
         "close_pos": close_pos,
         "min_close": mn,
         "max_close": mx,
+        "squeeze_days": squeeze_days,
+        "chg_3": chg_3,
+        "chg_5": chg_5,
     }
-
 
 def score_balina(m: Dict[str, Any]) -> float:
     band_pct = float(m.get("band_pct", 999))
     vol_ratio = float(m.get("vol_ratio", 0))
+    burst_ratio = float(m.get("burst_ratio", 0))
     close_pos = float(m.get("close_pos", 0))
     avg_vol = float(m.get("avg_vol", 0))
+    squeeze_days = int(m.get("squeeze_days", 0))
 
     score = 0.0
 
-    # Bant ne kadar dar, o kadar iyi
-    if band_pct <= 10:
+    # Sıkışma gün sayısı
+    if squeeze_days >= 20:
         score += 35
-    elif band_pct <= 14:
+    elif squeeze_days >= 10:
         score += 28
-    elif band_pct <= 18:
+    elif squeeze_days >= 5:
         score += 20
-    elif band_pct <= 22:
+    elif squeeze_days >= 3:
         score += 10
 
-    # Hacim oranı
-    if vol_ratio >= 2.0:
-        score += 30
-    elif vol_ratio >= 1.5:
-        score += 24
-    elif vol_ratio >= 1.25:
+    # Bant darlığı
+    if band_pct <= 10:
+        score += 25
+    elif band_pct <= 14:
         score += 18
-    elif vol_ratio >= 1.10:
+    elif band_pct <= 18:
         score += 10
+    elif band_pct <= 22:
+        score += 5
 
-    # Kapanış bandın üst yarısına yakınsa daha iyi
+    # Ortalama hacme göre bugünkü oran
+    if vol_ratio >= 2.0:
+        score += 22
+    elif vol_ratio >= 1.5:
+        score += 18
+    elif vol_ratio >= 1.25:
+        score += 12
+    elif vol_ratio >= 1.10:
+        score += 6
+
+    # Son 5 güne göre hacim spike
+    if burst_ratio >= 2.0:
+        score += 18
+    elif burst_ratio >= 1.5:
+        score += 12
+    elif burst_ratio >= 1.25:
+        score += 7
+    elif burst_ratio >= 1.10:
+        score += 3
+
+    # Kapanış bandın üst yarısına yakın mı
     if close_pos >= 80:
         score += 15
     elif close_pos >= 65:
@@ -1597,17 +1645,26 @@ def build_balina_list() -> List[Dict[str, Any]]:
         if m["vol_ratio"] < BALINA_MIN_VOL_RATIO:
             continue
 
+        if m["burst_ratio"] < BALINA_MIN_BURST_RATIO:
+            continue
+
+        if m["squeeze_days"] < BALINA_MIN_SQUEEZE_DAYS:
+            continue
+
         m["score"] = score_balina(m)
         out.append(m)
 
     out.sort(
         key=lambda x: (
             x["score"],
+            x["squeeze_days"],
+            x["burst_ratio"],
             x["vol_ratio"],
             -x["band_pct"],
         ),
-        reverse=True
+        reverse=True,
     )
+
     return out[:BALINA_TOP_N]
 
 def build_band_scan_rows(days_window: int, limit: int = 30) -> List[Dict[str, Any]]:
@@ -3222,36 +3279,49 @@ async def cmd_balina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if not items:
             await update.message.reply_text(
                 "Uygun balina setup bulunamadı.\n"
-                f"Gün: {BALINA_MIN_DAYS}\n"
+                f"Min sıkışma: {BALINA_MIN_SQUEEZE_DAYS} gün\n"
                 f"Max band: %{BALINA_MAX_BAND_PCT}\n"
-                f"Min hacim oranı: {BALINA_MIN_VOL_RATIO:.2f}x"
+                f"Min hacim oranı: {BALINA_MIN_VOL_RATIO:.2f}x\n"
+                f"Min burst oranı: {BALINA_MIN_BURST_RATIO:.2f}x"
             )
             return
 
         lines = []
-        lines.append("🐋 BALİNA RADAR")
+        lines.append("🐋 <b>BALİNA RADAR v2</b>")
         lines.append(
             f"Gün: {BALINA_MIN_DAYS} | "
-            f"Max band: %{BALINA_MAX_BAND_PCT} | "
-            f"Min hacim: {BALINA_MIN_VOL_RATIO:.2f}x"
+            f"Min sıkışma: {BALINA_MIN_SQUEEZE_DAYS}g | "
+            f"Max band: %{BALINA_MAX_BAND_PCT:.1f}"
+        )
+        lines.append(
+            f"Min hacim: {BALINA_MIN_VOL_RATIO:.2f}x | "
+            f"Min burst: {BALINA_MIN_BURST_RATIO:.2f}x"
         )
         lines.append("")
 
         for i, x in enumerate(items, 1):
             lines.append(
-                f"{i}) {x['ticker']} | Skor {x['score']:.1f}\n"
+                f"{i}) <b>{x['ticker']}</b> | Skor <b>{x['score']:.1f}</b>\n"
+                f"Sıkışma {x['squeeze_days']}g | "
                 f"Band %{x['band_pct']:.1f} | "
                 f"Hacim {x['vol_ratio']:.2f}x | "
+                f"Burst {x['burst_ratio']:.2f}x\n"
+                f"KapanışPoz %{x['close_pos']:.0f} | "
+                f"3g %{x['chg_3']:+.2f} | "
+                f"5g %{x['chg_5']:+.2f} | "
                 f"Fiyat {x['last_close']:.2f}"
             )
             lines.append("")
 
         msg = "\n".join(lines[:120])
-
-        await update.message.reply_text(msg)
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     except Exception as e:
-        logger.exception("/balina error: %s", e)
+        logger.exception("balina error: %s", e)
         await update.message.reply_text(f"/balina hata: {e}")
 
 async def cmd_band_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
