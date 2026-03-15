@@ -403,6 +403,41 @@ TOMORROW_CHAINS: Dict[str, Any] = {}
 # Helpers
 # =========================================================
 
+def calc_band_pct_from_closes(closes: List[float]) -> float:
+    if not closes:
+        return float("nan")
+    mn = min(closes)
+    mx = max(closes)
+    if mn <= 0:
+        return float("nan")
+    return ((mx - mn) / mn) * 100.0
+
+
+def count_squeeze_days(rows: List[Dict[str, Any]], max_days: int, band_limit_pct: float) -> int:
+    if len(rows) < 2:
+        return 0
+
+    closes = []
+    for r in rows:
+        c = r.get("close")
+        if c == c:
+            closes.append(float(c))
+
+    if len(closes) < 2:
+        return 0
+
+    usable = min(len(closes), max_days)
+    best = 0
+
+    for k in range(2, usable + 1):
+        pct = calc_band_pct_from_closes(closes[-k:])
+        if pct == pct and pct <= band_limit_pct:
+            best = k
+        else:
+            break
+
+    return best
+
 def write_trade_log(record: dict) -> None:
     """
     Appends one JSON object per line into TRADE_LOG_FILE (jsonl).
