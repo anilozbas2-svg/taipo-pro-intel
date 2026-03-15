@@ -1536,6 +1536,7 @@ def score_balina(m: Dict[str, Any]) -> float:
 
     score = 0.0
 
+    # Bant ne kadar dar, o kadar iyi
     if band_pct <= 10:
         score += 35
     elif band_pct <= 14:
@@ -1545,6 +1546,7 @@ def score_balina(m: Dict[str, Any]) -> float:
     elif band_pct <= 22:
         score += 10
 
+    # Hacim oranı
     if vol_ratio >= 2.0:
         score += 30
     elif vol_ratio >= 1.5:
@@ -1554,6 +1556,7 @@ def score_balina(m: Dict[str, Any]) -> float:
     elif vol_ratio >= 1.10:
         score += 10
 
+    # Kapanış bandın üst yarısına yakınsa daha iyi
     if close_pos >= 80:
         score += 15
     elif close_pos >= 65:
@@ -1561,6 +1564,7 @@ def score_balina(m: Dict[str, Any]) -> float:
     elif close_pos >= 50:
         score += 5
 
+    # Likidite bonusu
     if avg_vol >= 50_000_000:
         score += 10
     elif avg_vol >= 20_000_000:
@@ -1569,7 +1573,6 @@ def score_balina(m: Dict[str, Any]) -> float:
         score += 5
 
     return round(score, 2)
-
 
 def build_balina_list() -> List[Dict[str, Any]]:
     bist200_list = env_csv("BIST200_TICKERS")
