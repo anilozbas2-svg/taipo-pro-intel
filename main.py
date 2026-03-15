@@ -403,6 +403,55 @@ TOMORROW_CHAINS: Dict[str, Any] = {}
 # Helpers
 # =========================================================
 
+def get_ticker_rows_days(ticker: str, days_window: int) -> Optional[List[Dict[str, Any]]]:
+    t = (ticker or "").strip().upper()
+    if not t:
+        return None
+
+    if t.endswith(".IS"):
+        t = t[:-3]
+
+    price_hist = _load_json(PRICE_HISTORY_FILE)
+    vol_hist = _load_json(VOLUME_HISTORY_FILE)
+
+    if not isinstance(price_hist, dict) or not isinstance(vol_hist, dict):
+        return None
+
+    all_days = sorted(set(list(price_hist.keys()) + list(vol_hist.keys())))
+    if not all_days:
+        return None
+
+    days = all_days[-max(1, int(days_window)):]
+    rows: List[Dict[str, Any]] = []
+
+    for day in days:
+        close = price_hist.get(day, {}).get(t)
+        vol = vol_hist.get(day, {}).get(t)
+
+        if close is None or vol is None:
+            continue
+
+        try:
+            close_f = float(close)
+            vol_f = float(vol)
+        except Exception:
+            continue
+
+        if close_f != close_f or vol_f != vol_f:
+            continue
+
+        rows.append({
+            "day": day,
+            "close": close_f,
+            "volume": vol_f,
+        })
+
+    min_need = max(3, min(10, int(days_window) // 2))
+    if len(rows) < min_need:
+        return None
+
+    return rows
+
 def calc_band_pct_from_closes(closes: List[float]) -> float:
     if not closes:
         return float("nan")
