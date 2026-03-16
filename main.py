@@ -1751,6 +1751,97 @@ def build_balina_list() -> List[Dict[str, Any]]:
 
     return out[:BALINA_TOP_N]
 
+def build_balina_breakout_list() -> List[Dict[str, Any]]:
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return []
+
+    tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
+    out: List[Dict[str, Any]] = []
+
+    for raw in tickers:
+        t = (raw or "").strip().upper().replace("BIST:", "")
+        if t.endswith(".IS"):
+            t = t[:-3]
+
+        m = compute_balina_metrics(t, BALINA_MIN_DAYS)
+        if not m:
+            continue
+
+        # BREAKOUT filtreleri
+        if m["close_pos"] < 70:
+            continue
+
+        if m["chg_3"] < -1:
+            continue
+
+        if m["burst_ratio"] < 1.40:
+            continue
+
+        if m["squeeze_days"] < 4:
+            continue
+
+        if m["band_pct"] > 12:
+            continue
+
+        m["score"] = score_balina(m)
+        out.append(m)
+
+    out.sort(
+        key=lambda x: (
+            x["score"],
+            x["burst_ratio"],
+            x["vol_ratio"],
+            x["squeeze_days"],
+            -x["band_pct"],
+        ),
+        reverse=True,
+    )
+
+    return out[:BALINA_TOP_N]
+
+def build_balina_swing_list() -> List[Dict[str, Any]]:
+    bist200_list = env_csv("BIST200_TICKERS")
+    if not bist200_list:
+        return []
+
+    tickers = [normalize_is_ticker(x).split(":")[-1] for x in bist200_list if x.strip()]
+    out: List[Dict[str, Any]] = []
+
+    for raw in tickers:
+        t = (raw or "").strip().upper().replace("BIST:", "")
+        if t.endswith(".IS"):
+            t = t[:-3]
+
+        m = compute_balina_metrics(t, BALINA_MIN_DAYS)
+        if not m:
+            continue
+
+        # SWING filtreleri
+        if m["squeeze_days"] < 15:
+            continue
+
+        if m["band_pct"] > 18:
+            continue
+
+        if m["vol_ratio"] < 1.20:
+            continue
+
+        m["score"] = score_balina(m)
+        out.append(m)
+
+    out.sort(
+        key=lambda x: (
+            x["score"],
+            x["squeeze_days"],
+            x["vol_ratio"],
+            -x["band_pct"],
+        ),
+        reverse=True,
+    )
+
+    return out[:BALINA_TOP_N]
+
 def build_band_scan_rows(days_window: int, limit: int = 30) -> List[Dict[str, Any]]:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
@@ -3358,46 +3449,47 @@ async def cmd_balina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("🐋 Balina radar tarıyor...")
 
     try:
-        items = await asyncio.to_thread(build_balina_list)
-
-        if not items:
-            await update.message.reply_text(
-                "Uygun balina setup bulunamadı.\n"
-                f"Min sıkışma: {BALINA_MIN_SQUEEZE_DAYS} gün\n"
-                f"Max band: %{BALINA_MAX_BAND_PCT}\n"
-                f"Min hacim oranı: {BALINA_MIN_VOL_RATIO:.2f}x\n"
-                f"Min burst oranı: {BALINA_MIN_BURST_RATIO:.2f}x"
-            )
-            return
+        breakout_items = await asyncio.to_thread(build_balina_breakout_list)
+        swing_items = await asyncio.to_thread(build_balina_swing_list)
 
         lines = []
-        lines.append("🐋 <b>BALİNA RADAR v2</b>")
-        lines.append(
-            f"Gün: {BALINA_MIN_DAYS} | "
-            f"Min sıkışma: {BALINA_MIN_SQUEEZE_DAYS}g | "
-            f"Max band: %{BALINA_MAX_BAND_PCT:.1f}"
-        )
-        lines.append(
-            f"Min hacim: {BALINA_MIN_VOL_RATIO:.2f}x | "
-            f"Min burst: {BALINA_MIN_BURST_RATIO:.2f}x"
-        )
+        lines.append("🐋 <b>BALİNA RADAR v3</b>")
         lines.append("")
 
-        for i, x in enumerate(items, 1):
-            lines.append(
-                f"{i}) <b>{x['ticker']}</b> | Skor <b>{x['score']:.1f}</b>\n"
-                f"Sıkışma {x['squeeze_days']}g | "
-                f"Band %{x['band_pct']:.1f} | "
-                f"Hacim {x['vol_ratio']:.2f}x | "
-                f"Burst {x['burst_ratio']:.2f}x\n"
-                f"KapanışPoz %{x['close_pos']:.0f} | "
-                f"3g %{x['chg_3']:+.2f} | "
-                f"5g %{x['chg_5']:+.2f} | "
-                f"Fiyat {x['last_close']:.2f}"
-            )
+        lines.append("🚀 <b>BALİNA BREAKOUT</b> (1-2 gün hareket)")
+        if breakout_items:
+            for i, x in enumerate(breakout_items, 1):
+                lines.append(
+                    f"{i}) <b>{x['ticker']}</b> | Skor {x['score']:.1f}\n"
+                    f"Sıkışma {x['squeeze_days']}g | "
+                    f"Band %{x['band_pct']:.1f} | "
+                    f"Hacim {x['vol_ratio']:.2f}x | "
+                    f"Burst {x['burst_ratio']:.2f}x | "
+                    f"ClosePos %{x['close_pos']:.0f}\n"
+                    f"3g %{x['chg_3']:+.2f} | 5g %{x['chg_5']:+.2f}"
+                )
+                lines.append("")
+        else:
+            lines.append("Uygun breakout setup bulunamadı.")
+            lines.append("")
+
+        lines.append("📈 <b>BALİNA SWING</b> (3-10 gün hareket)")
+        if swing_items:
+            for i, x in enumerate(swing_items, 1):
+                lines.append(
+                    f"{i}) <b>{x['ticker']}</b> | Skor {x['score']:.1f}\n"
+                    f"Sıkışma {x['squeeze_days']}g | "
+                    f"Band %{x['band_pct']:.1f} | "
+                    f"Hacim {x['vol_ratio']:.2f}x\n"
+                    f"3g %{x['chg_3']:+.2f} | 5g %{x['chg_5']:+.2f}"
+                )
+                lines.append("")
+        else:
+            lines.append("Uygun swing setup bulunamadı.")
             lines.append("")
 
         msg = "\n".join(lines[:120])
+
         await update.message.reply_text(
             msg,
             parse_mode=ParseMode.HTML,
