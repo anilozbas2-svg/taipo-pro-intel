@@ -487,6 +487,8 @@ def count_squeeze_days(rows: List[Dict[str, Any]], max_days: int, band_limit_pct
 
     return best
 
+
+
 def write_trade_log(record: dict) -> None:
     """
     Appends one JSON object per line into TRADE_LOG_FILE (jsonl).
@@ -3386,7 +3388,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         accumulation_rows = [
             r for r in (tom_rows or [])
-            if (r.get("accumulation_score", 0) >= 6)
+            if (r.get("accumulation_score", 0) >= 5)
         ]
 
         logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
