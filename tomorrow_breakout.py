@@ -184,16 +184,16 @@ def compute_accumulation_score(
 
     # 🔹 1) BAND (SIKIŞMA KALİTESİ)
     if band_pct is not None:
-        if band_pct <= 10:
+        if band_pct <= 12:
             score += 3
-        elif band_pct <= 18:
+        elif band_pct <= 22:
             score += 2
         elif band_pct <= max_band_pct:
             score += 1
 
     # 🔹 2) HACİM (TAHTACI TOPLAMA)
     if volume_ratio is not None:
-        if 1.4 <= volume_ratio <= 3:
+        if 1.25 <= volume_ratio <= 3.5:
             score += 3   # ideal toplama
         elif volume_ratio >= 1.2:
             score += 2
@@ -208,7 +208,7 @@ def compute_accumulation_score(
     if pct_change is not None:
         abs_pct = abs(pct_change)
 
-        if abs_pct <= 0.5:
+        if abs_pct <= 0.8:
             score += 3
         elif abs_pct <= 1.2:
             score += 2
@@ -227,7 +227,7 @@ def compute_accumulation_score(
 
     # 🔹 5) FAKE BREAKOUT FİLTRESİ
     breakout_score = _safe_float(row.get("breakout_score"))
-    if breakout_score is not None and breakout_score > 7:
+    if breakout_score is not None and breakout_score > 8:
         score -= 1
 
     return max(0, min(score, 10))
