@@ -227,7 +227,7 @@ def compute_accumulation_score(
 
     # 🔹 5) FAKE BREAKOUT FİLTRESİ
     breakout_score = _safe_float(row.get("breakout_score"))
-    if breakout_score is not None and breakout_score > 8:
+    if breakout_score is not None and breakout_score > 5:
         score -= 1
 
     return max(0, min(score, 10))
