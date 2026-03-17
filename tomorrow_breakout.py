@@ -176,56 +176,58 @@ def compute_accumulation_score(
 
     band_pct = _safe_float(row.get("band_pct"))
     volume_ratio = _safe_float(row.get("volume_ratio"))
-
     pct_change = _safe_float(row.get("pct_change"))
     if pct_change is None:
         pct_change = _safe_float(row.get("change"))
 
     continuity = _safe_int(row.get("continuity"), 0)
 
-    # 1) Dar bant / sıkışma
+    # 🔹 1) BAND (SIKIŞMA KALİTESİ)
     if band_pct is not None:
-
-        if band_pct <= 15:
+        if band_pct <= 10:
             score += 3
-
-        elif band_pct <= 25:
+        elif band_pct <= 18:
             score += 2
-
         elif band_pct <= max_band_pct:
             score += 1
 
-    # 2) Hacim baskısı
+    # 🔹 2) HACİM (TAHTACI TOPLAMA)
     if volume_ratio is not None:
-
-        if volume_ratio >= 1.60:
-            score += 3
-
-        elif volume_ratio >= 1.35:
+        if 1.4 <= volume_ratio <= 3:
+            score += 3   # ideal toplama
+        elif volume_ratio >= 1.2:
             score += 2
-
-        elif volume_ratio >= min_volume_ratio:
+        elif volume_ratio >= 1.05:
             score += 1
 
-    # 3) Fiyat çok kaçmamışsa accumulation için iyi
-    if pct_change is not None:
+        # ⚠️ aşırı hacim = breakout olabilir (toplama değil)
+        if volume_ratio > 4:
+            score -= 1
 
+    # 🔹 3) FİYAT HAREKETİ (SAKİN TOPLAMA)
+    if pct_change is not None:
         abs_pct = abs(pct_change)
 
-        if abs_pct <= 0.60:
+        if abs_pct <= 0.5:
             score += 3
-
-        elif abs_pct <= 1.20:
+        elif abs_pct <= 1.2:
             score += 2
-
         elif abs_pct <= max_pct_change:
             score += 1
 
-    # 4) Continuity (yatay kalma süresi)
-    if continuity >= (min_continuity + 1):
-        score += 2
+        # ⚠️ fazla oynak = accumulation değil
+        if abs_pct > 3:
+            score -= 1
 
+    # 🔹 4) CONTINUITY (YATAY SÜRE)
+    if continuity >= 6:
+        score += 2
     elif continuity >= min_continuity:
         score += 1
 
-    return min(score, 10)
+    # 🔹 5) FAKE BREAKOUT FİLTRESİ
+    breakout_score = _safe_float(row.get("breakout_score"))
+    if breakout_score is not None and breakout_score > 7:
+        score -= 1
+
+    return max(0, min(score, 10))
