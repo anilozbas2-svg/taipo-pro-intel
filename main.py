@@ -3388,7 +3388,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         accumulation_rows = [
             r for r in (tom_rows or [])
-            if (r.get("accumulation_score", 0) >= 5)
+            if (r.get("accumulation_score", 0) >= 4)
         ]
 
         logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
