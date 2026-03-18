@@ -231,3 +231,42 @@ def compute_accumulation_score(
         score -= 1
 
     return max(0, min(score, 10))
+    
+def compute_v5_entry_score(
+    row: Dict[str, Any],
+    min_close_pos: float = 80.0,
+    strong_close_pos: float = 90.0,
+    min_burst: float = 1.80,
+    soft_max_pct_change: float = 3.0,
+    hard_volume_spike: float = 4.0,
+) -> int:
+    score = 0
+
+    close_pos = _safe_float(row.get("close_pos"))
+    burst = _safe_float(row.get("burst"))
+    volume_ratio = _safe_float(row.get("volume_ratio"))
+
+    pct_change = _safe_float(row.get("pct_change"))
+    if pct_change is None:
+        pct_change = _safe_float(row.get("change"))
+
+    # 1) Üst banda yakın kapanış
+    if close_pos is not None:
+        if close_pos >= strong_close_pos:
+            score += 2
+        elif close_pos >= min_close_pos:
+            score += 1
+
+    # 2) Ani ivme / burst
+    if burst is not None and burst >= min_burst:
+        score += 1
+
+    # 3) Aşırı hacim spike cezası
+    if volume_ratio is not None and volume_ratio > hard_volume_spike:
+        score -= 1
+
+    # 4) Aşırı günlük kaçış cezası
+    if pct_change is not None and abs(pct_change) > soft_max_pct_change:
+        score -= 1
+
+    return max(0, min(score, 3))
