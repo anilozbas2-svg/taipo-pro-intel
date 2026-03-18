@@ -9,7 +9,12 @@ import inspect
 from datetime import datetime, timedelta, time as dtime, date
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Any, Tuple, Optional
-from tomorrow_breakout import build_breakout_ready_list, compute_breakout_score, compute_accumulation_score
+from tomorrow_breakout import (
+    build_breakout_ready_list,
+    compute_breakout_score,
+    compute_accumulation_score,
+    compute_v5_entry_score,
+)
 
 import requests
 from telegram import Update
@@ -196,9 +201,9 @@ HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "400"))
 ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))
 
 # Tomorrow list filtreleri
-TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "12"))
-TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.20"))
-TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "65"))
+TOMORROW_MAX = int(os.getenv("TOMORROW_MAX", "20"))
+TOMORROW_MIN_VOL_RATIO = float(os.getenv("TOMORROW_MIN_VOL_RATIO", "1.03"))
+TOMORROW_MAX_BAND = float(os.getenv("TOMORROW_MAX_BAND", "88"))
 TOMORROW_INCLUDE_AYRISMA = os.getenv("TOMORROW_INCLUDE_AYRISMA", "0").strip() == "1"
 
 CANDIDATE_MAX = int(os.getenv("CANDIDATE_MAX", "20"))
@@ -2590,6 +2595,14 @@ def build_tomorrow_rows(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 # ACCUMULATION SCORE
                 r["accumulation_score"] = compute_accumulation_score(breakout_input)
 
+                r["v5_score"] = compute_v5_entry_score(breakout_input)
+
+                r["final_score"] = (
+                    float(r.get("breakout_score", 0) or 0)
+                    + float(r.get("accumulation_score", 0) or 0)
+                    + float(r.get("v5_score", 0) or 0)
+                )
+
                 logger.info(
                     "SCORE DEBUG %s | breakout=%s | b_score=%s | a_score=%s",
                     r.get("ticker"),
@@ -3396,7 +3409,12 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if accumulation_rows:
             accumulation_rows = sorted(
                 accumulation_rows,
-                key=lambda x: x.get("accumulation_score", 0),
+                key=lambda x: (
+                    x.get("final_score", 0),
+                    x.get("v5_score", 0),
+                    x.get("accumulation_score", 0),
+                    x.get("breakout_score", 0),
+                ),
                 reverse=True,
             )
 
