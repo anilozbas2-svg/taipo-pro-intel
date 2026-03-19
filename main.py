@@ -1776,19 +1776,19 @@ def build_balina_breakout_list() -> List[Dict[str, Any]]:
             continue
 
         # BREAKOUT filtreleri
-        if m["close_pos"] < 70:
+        if m["close_pos"] < 65:
             continue
 
-        if m["chg_3"] < -1:
+        if m["chg_3"] < -2:
             continue
 
-        if m["burst_ratio"] < 1.40:
+        if m["burst_ratio"] < 1.25:
             continue
 
-        if m["squeeze_days"] < 4:
+        if m["squeeze_days"] < 3:
             continue
 
-        if m["band_pct"] > 12:
+        if m["band_pct"] > 16:
             continue
 
         m["score"] = score_balina(m)
