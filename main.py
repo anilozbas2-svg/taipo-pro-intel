@@ -2952,22 +2952,56 @@ def build_whale_message(items: List[Dict[str, Any]], xu_close: float, xu_change:
 # =========================================================
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (
-        f"🤖 <b>TAIPO PRO INTEL</b> • <b>{BOT_VERSION}</b>\n\n"
-        "✅ <b>Komutlar</b>\n"
-        "• /ping → bot çalışıyor mu?\n"
-        "• /chatid → chat id\n"
-        "• /watch → watchlist radar (örn: /watch AKBNK,CANTE)\n"
-        "• /radar → BIST200 radar parça (örn: /radar 1)\n"
-        "• /eod → manuel EOD raporu\n"
-        "• /tomorrow → ertesi güne altın + aday liste\n"
-        "• /whale → balina devam testi (dün altın listeye göre)\n"
-        "• /alarm → alarm durumu/ayarlar\n"
-        "• /stats → arşiv istatistik (örn: /stats AKBNK)\n"
-        "• /bootstrap → Yahoo’dan geçmiş doldurma (1 defa)\n"
-        "• /rejim → rejim durumu (R1/R2/R3 + MOMO)\n"
-    )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        "🤖 <b>TAIPO PRO INTEL</b>\n"
+        f"📦 <b>Sürüm:</b> {BOT_VERSION}\n\n"
 
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📌 <b>TEMEL KOMUTLAR</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "/ping → Bot çalışıyor mu kontrol et\n"
+        "/help → Komut menüsünü aç\n"
+        "/chatid → Chat ID öğren\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📡 <b>ANA RADAR SİSTEMLERİ</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "/tomorrow → Ertesi gün ALTIN + aday liste\n"
+        "/balina → Balina breakout & swing radar\n"
+        "/whale → Balina devam testi (dünün altın listesine göre)\n"
+        "/watch AKBNK,CANTE → Watchlist radar\n"
+        "/radar 1 → BIST200 radar parça tarama\n"
+        "/band_scan → Band / sıkışma tarama\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "⚙️ <b>SİSTEM & DURUM</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "/alarm → Alarm durumu / ayarlar\n"
+        "/rejim → Piyasa rejimi (R1 / R2 / R3 + MOMO)\n"
+        "/stats AKBNK → Arşiv istatistik\n"
+        "/status → Sistem genel durum\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📅 <b>RAPOR & TEST</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "/eod → Manuel EOD raporu\n"
+        "/steadytest → Stabilite testi\n"
+        "/whaletest → Balina test modu\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🛠 <b>VERİ & YÖNETİM</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "/bootstrap → Yahoo geçmiş veri doldurma\n"
+        "/alarm_run → Alarmı manuel tetikle\n"
+        "/altin_follow → ALTIN zincir takip\n\n"
+
+        "🚀 <b>TAIPO ENGINE AKTİF</b>"
+    )
+
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_help(update, context)
