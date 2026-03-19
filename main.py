@@ -161,6 +161,11 @@ ALARM_CHAT_ID = os.getenv("ALARM_CHAT_ID", "").strip()  # -100...
 ALARM_INTERVAL_MIN = int(os.getenv("ALARM_INTERVAL_MIN", "30"))
 ALARM_COOLDOWN_MIN = int(os.getenv("ALARM_COOLDOWN_MIN", "60"))
 
+BALINA_AUTO_ENABLED = os.getenv("BALINA_AUTO_ENABLED", "1").strip() == "1"
+BALINA_AUTO_HOUR = int(os.getenv("BALINA_AUTO_HOUR", "17"))
+BALINA_AUTO_MINUTE = int(os.getenv("BALINA_AUTO_MINUTE", "30"))
+BALINA_AUTO_CHAT_ID = int(os.getenv("BALINA_AUTO_CHAT_ID", str(ALARM_CHAT_ID or 0)))
+
 ALARM_START_HOUR = int(os.getenv("ALARM_START_HOUR", "10"))
 ALARM_START_MIN = int(os.getenv("ALARM_START_MIN", "0"))
 ALARM_END_HOUR = int(os.getenv("ALARM_END_HOUR", "17"))
@@ -3461,6 +3466,47 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         disable_web_page_preview=True,
     )
 
+async def build_balina_message() -> str:
+    breakout_items = await asyncio.to_thread(build_balina_breakout_list)
+    swing_items = await asyncio.to_thread(build_balina_swing_list)
+
+    lines = []
+    lines.append("🐋 <b>BALİNA RADAR v3</b>")
+    lines.append("")
+
+    lines.append("🚀 <b>BALİNA BREAKOUT</b> (1-2 gün hareket)")
+    if breakout_items:
+        for i, x in enumerate(breakout_items, 1):
+            lines.append(
+                f"{i}) <b>{x['ticker']}</b> | Skor {x['score']:.1f}\n"
+                f"Sıkışma {x['squeeze_days']}g | "
+                f"Band %{x['band_pct']:.1f} | "
+                f"Hacim {x['vol_ratio']:.2f}x | "
+                f"Burst {x['burst_ratio']:.2f}x | "
+                f"ClosePos %{x['close_pos']:.0f}\n"
+                f"3g %{x['chg_3']:+.2f} | 5g %{x['chg_5']:+.2f}"
+            )
+            lines.append("")
+    else:
+        lines.append("Uygun breakout setup bulunamadı.")
+        lines.append("")
+
+    lines.append("📈 <b>BALİNA SWING</b> (3-10 gün hareket)")
+    if swing_items:
+        for i, x in enumerate(swing_items, 1):
+            lines.append(
+                f"{i}) <b>{x['ticker']}</b> | Skor {x['score']:.1f}\n"
+                f"Sıkışma {x['squeeze_days']}g | "
+                f"Band %{x['band_pct']:.1f} | "
+                f"Hacim {x['vol_ratio']:.2f}x\n"
+                f"3g %{x['chg_3']:+.2f} | 5g %{x['chg_5']:+.2f}"
+            )
+            lines.append("")
+    else:
+        lines.append("Uygun swing setup bulunamadı.")
+
+    return "\n".join(lines[:120])
+
 async def cmd_balina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not BALINA_ENABLED:
         await update.message.reply_text("❌ Balina radar kapalı.")
@@ -3469,46 +3515,7 @@ async def cmd_balina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("🐋 Balina radar tarıyor...")
 
     try:
-        breakout_items = await asyncio.to_thread(build_balina_breakout_list)
-        swing_items = await asyncio.to_thread(build_balina_swing_list)
-
-        lines = []
-        lines.append("🐋 <b>BALİNA RADAR v3</b>")
-        lines.append("")
-
-        lines.append("🚀 <b>BALİNA BREAKOUT</b> (1-2 gün hareket)")
-        if breakout_items:
-            for i, x in enumerate(breakout_items, 1):
-                lines.append(
-                    f"{i}) <b>{x['ticker']}</b> | Skor {x['score']:.1f}\n"
-                    f"Sıkışma {x['squeeze_days']}g | "
-                    f"Band %{x['band_pct']:.1f} | "
-                    f"Hacim {x['vol_ratio']:.2f}x | "
-                    f"Burst {x['burst_ratio']:.2f}x | "
-                    f"ClosePos %{x['close_pos']:.0f}\n"
-                    f"3g %{x['chg_3']:+.2f} | 5g %{x['chg_5']:+.2f}"
-                )
-                lines.append("")
-        else:
-            lines.append("Uygun breakout setup bulunamadı.")
-            lines.append("")
-
-        lines.append("📈 <b>BALİNA SWING</b> (3-10 gün hareket)")
-        if swing_items:
-            for i, x in enumerate(swing_items, 1):
-                lines.append(
-                    f"{i}) <b>{x['ticker']}</b> | Skor {x['score']:.1f}\n"
-                    f"Sıkışma {x['squeeze_days']}g | "
-                    f"Band %{x['band_pct']:.1f} | "
-                    f"Hacim {x['vol_ratio']:.2f}x\n"
-                    f"3g %{x['chg_3']:+.2f} | 5g %{x['chg_5']:+.2f}"
-                )
-                lines.append("")
-        else:
-            lines.append("Uygun swing setup bulunamadı.")
-            lines.append("")
-
-        msg = "\n".join(lines[:120])
+        msg = await build_balina_message()
 
         await update.message.reply_text(
             msg,
@@ -3519,6 +3526,34 @@ async def cmd_balina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as e:
         logger.exception("balina error: %s", e)
         await update.message.reply_text(f"/balina hata: {e}")
+
+async def job_balina_report(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not BALINA_AUTO_ENABLED:
+        return
+
+    if not BALINA_AUTO_CHAT_ID:
+        logger.warning("BALINA AUTO chat_id yok, job atlandi.")
+        return
+
+    try:
+        msg = await build_balina_message()
+
+        await context.bot.send_message(
+            chat_id=int(BALINA_AUTO_CHAT_ID),
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+        logger.info(
+            "BALINA AUTO gonderildi. chat_id=%s saat=%02d:%02d",
+            BALINA_AUTO_CHAT_ID,
+            BALINA_AUTO_HOUR,
+            BALINA_AUTO_MINUTE,
+        )
+
+    except Exception as e:
+        logger.exception("BALINA AUTO job error: %s", e)
 
 async def cmd_band_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Band taraması hazırlanıyor...")
@@ -4856,6 +4891,32 @@ def schedule_jobs(app: Application) -> None:
             "KILIT schedule error: %s",
             e
         )
+    
+    # ============================
+    # BALINA AUTO DAILY REPORT
+    # ============================
+    try:
+        if BALINA_AUTO_ENABLED and BALINA_AUTO_CHAT_ID:
+            jq.run_daily(
+                job_balina_report,
+                time=dtime(
+                    hour=BALINA_AUTO_HOUR,
+                    minute=BALINA_AUTO_MINUTE,
+                    tzinfo=TZ,
+                ),
+                name="balina_daily_report",
+            )
+            logger.info(
+                "BALINA AUTO scheduled daily at %02d:%02d",
+                BALINA_AUTO_HOUR,
+                BALINA_AUTO_MINUTE,
+            )
+        else:
+            logger.info(
+                "BALINA AUTO kapali veya chat_id yok -> calismayacak."
+            )
+    except Exception as e:
+        logger.exception("BALINA AUTO schedule error: %s", e)
     
 # =============================
 # REJIM TRANSITION (R1 → R2 → R3 mesaj)
