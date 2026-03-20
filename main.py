@@ -2954,49 +2954,97 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (
         "🤖 <b>TAIPO PRO INTEL</b>\n"
         f"⚙️ <b>Versiyon:</b> {BOT_VERSION}\n"
-        "🧠 <i>Akıllı BIST Radar & Balina Tespit Sistemi</i>\n\n"
+        "🧠 <i>Akıllı BIST Radar, Balina ve Ertesi Gün Sinyal Sistemi</i>\n\n"
 
         "══════════════════════\n"
         "📌 <b>TEMEL KOMUTLAR</b>\n"
         "══════════════════════\n"
-        "• /ping → Bot aktif mi kontrol et\n"
-        "• /help → Komut menüsünü aç\n"
-        "• /chatid → Chat ID öğren\n\n"
+        "• <b>/start</b> → Botu başlatır\n"
+        "• <b>/help</b> → Tüm komutları ve kullanım şeklini gösterir\n"
+        "• <b>/ping</b> → Bot aktif mi hızlı kontrol eder\n"
+        "• <b>/chatid</b> → Bulunduğun sohbetin Chat ID bilgisini verir\n\n"
 
         "══════════════════════\n"
-        "📡 <b>ANA RADAR SİSTEMLERİ</b>\n"
+        "📡 <b>ANA RADAR KOMUTLARI</b>\n"
         "══════════════════════\n"
-        "• /tomorrow → ALTIN + aday liste (T+1)\n"
-        "• /balina → Breakout & swing radar\n"
-        "• /whale → Balina devam senaryosu\n"
-        "• /watch AKBNK,CANTE → Watchlist radar\n"
-        "• /radar 1 → BIST200 radar parça tarama\n"
-        "• /band_scan → Band / sıkışma tarama\n\n"
+        "• <b>/tomorrow</b> → Ertesi gün için ALTIN + aday liste üretir\n"
+        "  Kullanım: <code>/tomorrow</code>\n\n"
+
+        "• <b>/balina</b> → Balina breakout ve swing radar listesini üretir\n"
+        "  Kullanım: <code>/balina</code>\n\n"
+
+        "• <b>/whale</b> → Dünkü altın listeye göre balina devam senaryosunu kontrol eder\n"
+        "  Kullanım: <code>/whale</code>\n\n"
+
+        "• <b>/watch</b> → Kendi seçtiğin hisseler için watchlist radar çalıştırır\n"
+        "  Kullanım: <code>/watch AKBNK,CANTE,SISE</code>\n\n"
+
+        "• <b>/radar</b> → BIST200 evrenini parça parça tarar\n"
+        "  Kullanım: <code>/radar 1</code>\n"
+        "  Not: Parça numarası verilerek segment bazlı tarama yapılır\n\n"
+
+        "• <b>/band_scan</b> → Band / sıkışma / patlama adaylarını tarar\n"
+        "  Kullanım: <code>/band_scan</code>\n\n"
 
         "══════════════════════\n"
-        "⚙️ <b>SİSTEM & DURUM</b>\n"
+        "⚙️ <b>SİSTEM & DURUM KOMUTLARI</b>\n"
         "══════════════════════\n"
-        "• /alarm → Alarm sistemi kontrol\n"
-        "• /rejim → Piyasa modu (R1 / R2 / R3 + MOMO)\n"
-        "• /stats AKBNK → Hisse geçmiş performans\n"
-        "• /status → Sistem genel durumu\n\n"
+        "• <b>/alarm</b> → Alarm sistemi durumu ve temel ayarları gösterir\n"
+        "  Kullanım: <code>/alarm</code>\n\n"
+
+        "• <b>/alarm_run</b> → Alarm mantığını manuel olarak bir kez tetikler\n"
+        "  Kullanım: <code>/alarm_run</code>\n\n"
+
+        "• <b>/rejim</b> → Aktif piyasa rejimini gösterir\n"
+        "  Kullanım: <code>/rejim</code>\n"
+        "  İçerik: R1 / R2 / R3 + MOMO bilgileri\n\n"
+
+        "• <b>/status</b> → Botun genel sistem durumunu gösterir\n"
+        "  Kullanım: <code>/status</code>\n\n"
+
+        "• <b>/stats</b> → Hisseye ait arşiv / geçmiş performans bilgisini getirir\n"
+        "  Kullanım: <code>/stats AKBNK</code>\n\n"
 
         "══════════════════════\n"
-        "📅 <b>RAPOR & TEST</b>\n"
+        "📅 <b>RAPOR & TEST KOMUTLARI</b>\n"
         "══════════════════════\n"
-        "• /eod → Gün sonu raporu\n"
-        "• /steadytest → Stabilite testi\n"
-        "• /whaletest → Balina test modu\n\n"
+        "• <b>/eod</b> → Manuel gün sonu raporu üretir\n"
+        "  Kullanım: <code>/eod</code>\n\n"
+
+        "• <b>/steadytest</b> → Stabilite / steady test çıktısı verir\n"
+        "  Kullanım: <code>/steadytest</code>\n\n"
+
+        "• <b>/whaletest</b> → Balina test modu çıktısı verir\n"
+        "  Kullanım: <code>/whaletest</code>\n\n"
 
         "══════════════════════\n"
-        "🛠 <b>VERİ & YÖNETİM</b>\n"
+        "🛠 <b>VERİ & YÖNETİM KOMUTLARI</b>\n"
         "══════════════════════\n"
-        "• /bootstrap → Geçmiş veri yükleme\n"
-        "• /alarm_run → Alarm manuel tetikleme\n"
-        "• /altin_follow → ALTIN zincir takibi\n\n"
+        "• <b>/bootstrap</b> → Yahoo üzerinden geçmiş veri doldurma işlemi yapar\n"
+        "  Kullanım: <code>/bootstrap</code>\n"
+        "  Not: Genelde ilk kurulum veya veri eksikliği sonrası kullanılır\n\n"
+
+        "• <b>/altin_follow</b> → ALTIN zincir takibini çalıştırır / kontrol eder\n"
+        "  Kullanım: <code>/altin_follow</code>\n\n"
+
+        "══════════════════════\n"
+        "🧩 <b>EK MODÜLLER</b>\n"
+        "══════════════════════\n"
+        "• MOMO PRIME, MOMO FLOW ve MOMO KİLİT modülleri sistemde kayıtlıysa\n"
+        "  ilgili komutlar ayrıca aktif olabilir\n"
+        "• Bu modüller register fonksiyonları ile yüklenir\n\n"
+
+        "══════════════════════\n"
+        "🎯 <b>NASIL KULLANILIR?</b>\n"
+        "══════════════════════\n"
+        "• Günlük başlangıç için: <code>/balina</code>\n"
+        "• Ertesi gün fırsatları için: <code>/tomorrow</code>\n"
+        "• Kendi hisselerini izlemek için: <code>/watch AKBNK,SISE</code>\n"
+        "• Sistemin durumunu görmek için: <code>/rejim</code> ve <code>/alarm</code>\n"
+        "• Arşiv kontrolü için: <code>/stats HİSSE</code>\n\n"
 
         "🚀 <b>TAIPO ENGINE AKTİF</b>\n"
-        "⚡ <i>V5 Accumulation + Breakout + Momentum sistemi çalışıyor</i>"
+        "⚡ <i>Breakout + Accumulation + Momentum + Rejim filtreleri çalışıyor</i>"
     )
 
     await update.message.reply_text(
