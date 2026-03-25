@@ -88,9 +88,9 @@ def is_breakout_ready(
 
 def build_breakout_ready_list(
     rows: List[Dict[str, Any]],
-    max_band_pct: float = 3.0,
-    max_distance_pct: float = 1.0,
-    min_volume_ratio: float = 1.4,
+    max_band_pct: float = 2.4,
+    max_distance_pct: float = 0.75,
+    min_volume_ratio: float = 1.25,
     min_continuity: int = 3,
 ) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -226,9 +226,12 @@ def compute_accumulation_score(
         score += 1
 
     # 🔹 5) FAKE BREAKOUT FİLTRESİ
-    breakout_score = _safe_float(row.get("breakout_score"))
-    if breakout_score is not None and breakout_score > 5:
-        score -= 1
+        breakout_score = _safe_float(row.get("breakout_score"))
+        if breakout_score is not None:
+            if breakout_score > 7:
+                score -= 2
+            elif breakout_score > 5:
+                score -= 1
 
     return max(0, min(score, 10))
     
@@ -250,6 +253,8 @@ def compute_v5_entry_score(
     if pct_change is None:
         pct_change = _safe_float(row.get("change"))
 
+    breakout_score = _safe_float(row.get("breakout_score"))
+
     # 1) Üst banda yakın kapanış
     if close_pos is not None:
         if close_pos >= strong_close_pos:
@@ -262,11 +267,47 @@ def compute_v5_entry_score(
         score += 1
 
     # 3) Aşırı hacim spike cezası
-    if volume_ratio is not None and volume_ratio > hard_volume_spike:
-        score -= 1
+    if volume_ratio is not None:
+        if volume_ratio > 4.0:
+            score -= 1
+        elif volume_ratio >= 3.5:
+            score -= 1
 
-    # 4) Aşırı günlük kaçış cezası
-    if pct_change is not None and abs(pct_change) > soft_max_pct_change:
-        score -= 1
+    # 4) Günlük kaçış cezası
+    if pct_change is not None:
+        abs_pct = abs(pct_change)
+
+        if abs_pct >= 3.0:
+            score -= 2
+        elif abs_pct >= 2.2:
+            score -= 2
+        elif abs_pct >= 1.6:
+            score -= 1
+
+    # 5) Fake breakout cezası
+    if breakout_score is not None:
+        if breakout_score > 7:
+            score -= 2
+        elif breakout_score > 5:
+            score -= 1
 
     return max(0, min(score, 3))
+    
+def is_quality_entry_candidate(row: Dict[str, Any]) -> bool:
+    close_pos = _safe_float(row.get("close_pos"))
+    volume_ratio = _safe_float(row.get("volume_ratio"))
+
+    pct_change = _safe_float(row.get("pct_change"))
+    if pct_change is None:
+        pct_change = _safe_float(row.get("change"))
+
+    if close_pos is None or close_pos < 80:
+        return False
+
+    if volume_ratio is None or not (1.20 <= volume_ratio <= 3.20):
+        return False
+
+    if pct_change is None or abs(pct_change) > 1.80:
+        return False
+
+    return True
