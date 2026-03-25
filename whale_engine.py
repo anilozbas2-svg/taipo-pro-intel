@@ -445,7 +445,6 @@ def _passes_layer2(row: Dict[str, Any]) -> bool:
         return False
     return True
 
-
 def _passes_early_accum(row: Dict[str, Any]) -> bool:
     if not WHALE_EARLY_ACCUM:
         return False
@@ -456,12 +455,22 @@ def _passes_early_accum(row: Dict[str, Any]) -> bool:
 
     if pct < WHALE_EARLY_ACCUM_PCT_MIN or pct > WHALE_EARLY_ACCUM_PCT_MAX:
         return False
+
     if vs is None or vs < WHALE_EARLY_ACCUM_VOL:
         return False
+
+    # Çok patlamış hacmi erken birikim sayma
+    if vs >= 3.60:
+        return False
+
     if sp < WHALE_EARLY_ACCUM_STEADY:
         return False
-    return True
 
+    # 1.8 üstü artık çoğu zaman geç görünürlük
+    if pct >= 1.80:
+        return False
+
+    return True
 
 # =========================================================
 # Scoring + continuity
@@ -472,11 +481,38 @@ def _score(row: Dict[str, Any], layer: str, cont_count: int) -> float:
     sp = _steady_proxy(pct, _safe_float(vs))
 
     s = 0.0
+
+    # Ana gövde: steady + kontrollü hacim
     s += sp * 6.0
     s += min(vs, 3.0) * 2.0
 
-    pct_part = 0.0 if pct <= 0 else min(pct, 3.0) / 3.0
+    # Erken bant ödülü / geç bant cezası
+    if pct <= 0:
+        pct_part = 0.0
+    elif pct <= 0.80:
+        pct_part = 1.15
+    elif pct <= 1.20:
+        pct_part = 1.00
+    elif pct <= 1.60:
+        pct_part = 0.70
+    elif pct <= 2.20:
+        pct_part = 0.25
+    else:
+        pct_part = -0.40
+
     s += pct_part * 2.0
+
+    # Geç kalmış breakout cezası
+    if pct >= 2.20:
+        s -= 1.25
+    elif pct >= 1.60:
+        s -= 0.60
+
+    # Aşırı hacim spike = geç görünürlük riski
+    if vs >= 3.50:
+        s -= 0.75
+    elif vs >= 3.00:
+        s -= 0.35
 
     # Layer bonus
     if layer == "L2":
@@ -486,13 +522,13 @@ def _score(row: Dict[str, Any], layer: str, cont_count: int) -> float:
     else:
         s += 0.40
 
+    # Continuity bonus
     if cont_count >= 3:
         s += WHALE_CONT_BONUS_3
     elif cont_count >= 2:
         s += WHALE_CONT_BONUS_2
 
     return float(s)
-
 
 def _continuity_update(state: dict, symbols_seen: List[str]) -> Dict[str, int]:
     cont = (state.get("continuity") or {})
