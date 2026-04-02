@@ -4546,20 +4546,20 @@ def schedule_jobs(app: Application) -> None:
     # -------------------------
     # ALARM scan repeating + Tomorrow daily
     # -------------------------
-    if ALARM_ENABLED and ALARM_CHAT_ID:
-        first_alarm = next_aligned_run(ALARM_INTERVAL_MIN)
-
-        jq.run_repeating(
-            job_alarm_scan,
-            interval=ALARM_INTERVAL_MIN * 60,
-            first=first_alarm,
-            name="alarm_scan_repeating",
-        )
-        logger.info(
-            "Alarm scan scheduled every %d min. First=%s",
-            ALARM_INTERVAL_MIN,
-            first_alarm.isoformat(),
-        )
+    if False and ALARM_ENABLED and ALARM_CHAT_ID:
+    first_alarm = next_aligned_run(ALARM_INTERVAL_MIN)
+    jq.run_repeating(
+        job_alarm_scan,
+        interval=ALARM_INTERVAL_MIN * 60,
+        first=first_alarm,
+        name="alarm_scan_repeating",
+    )
+    logger.info(
+        "Alarm scan scheduled every %d min. First=%s",
+        ALARM_INTERVAL_MIN, first_alarm.isoformat(),
+    )
+else:
+    logger.info("ALARM gecici olarak koddan kapatildi.")
 
         jq.run_daily(
             job_tomorrow_list,
