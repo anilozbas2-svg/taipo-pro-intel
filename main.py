@@ -4544,38 +4544,27 @@ def schedule_jobs(app: Application) -> None:
         return
         
     # -------------------------
-    # ALARM scan repeating + Tomorrow daily
+    # ALARM scan repeating (GEÇİCİ KAPALI)
     # -------------------------
-    if False and ALARM_ENABLED and ALARM_CHAT_ID:
-    first_alarm = next_aligned_run(ALARM_INTERVAL_MIN)
-    jq.run_repeating(
-        job_alarm_scan,
-        interval=ALARM_INTERVAL_MIN * 60,
-        first=first_alarm,
-        name="alarm_scan_repeating",
-    )
-    logger.info(
-        "Alarm scan scheduled every %d min. First=%s",
-        ALARM_INTERVAL_MIN, first_alarm.isoformat(),
-    )
-else:
     logger.info("ALARM gecici olarak koddan kapatildi.")
 
-        jq.run_daily(
-            job_tomorrow_list,
-            time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
-            name="tomorrow_daily_at_eod_time",
-        )
-        logger.info(
-            "Tomorrow scheduled daily at %02d:%02d",
-            EOD_HOUR,
-            EOD_MINUTE,
-        )
-    else:
-        logger.info(
-            "ALARM kapali veya ALARM_CHAT_ID yok -> otomatik alarm/tomorrow gonderilmeyecek."
-        )
-    
+    # -------------------------
+    # Tomorrow daily (AKTİF)
+    # -------------------------
+    jq.run_daily(
+        job_tomorrow_list,
+        time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
+        name="tomorrow_daily_at_eod_time",
+    )
+    logger.info(
+        "Tomorrow scheduled daily at %02d:%02d",
+        EOD_HOUR,
+        EOD_MINUTE,
+    )
+
+    # -------------------------
+    # TV Snapshot daily
+    # -------------------------
     if TV_SNAPSHOT_ENABLED and jq is not None:
         jq.run_daily(
             tv_snapshot_save_daily,
