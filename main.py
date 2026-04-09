@@ -173,7 +173,7 @@ ALARM_END_MIN = int(os.getenv("ALARM_END_MIN", "30"))
 
 # EOD / Tomorrow
 EOD_HOUR = int(os.getenv("EOD_HOUR", "17"))
-EOD_MINUTE = int(os.getenv("EOD_MINUTE", "50"))
+EOD_MINUTE = int(os.getenv("EOD_MINUTE", "30"))
 TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))
 
 # ===============================
@@ -851,7 +851,7 @@ def format_tomorrow_section(
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━")
     lines.append(f"✅ <b>ALTIN LİSTE – TOMORROW</b>  <code>#{chain_id}</code>")
-    lines.append(f"📌 <b>Ref</b>: <code>{ref_day_key} 17:50</code> • <b>{day_tag}</b>")
+    lines.append(f"📌 <b>Ref</b>: <code>{ref_day_key} {EOD_HOUR}:{EOD_MINUTE:02d}</code> • <b>{day_tag}</b>")
     lines.append("")
 
     for i, r in enumerate(tomorrow_rows[:max_items], start=1):
