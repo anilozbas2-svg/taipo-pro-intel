@@ -1749,19 +1749,19 @@ def build_balina_breakout_list() -> List[Dict[str, Any]]:
             continue
 
         # BREAKOUT filtreleri
-        if m["close_pos"] < 65:
+        if m["close_pos"] < 75:
             continue
 
-        if m["chg_3"] < -2:
+        if m["chg_3"] < 1.0:
             continue
 
-        if m["burst_ratio"] < 1.25:
+        if m["burst_ratio"] < 1.40:
             continue
 
-        if m["squeeze_days"] < 3:
+        if m["squeeze_days"] < 4:
             continue
 
-        if m["band_pct"] > 16:
+        if m["band_pct"] > 15:
             continue
 
         m["score"] = score_balina(m)
@@ -1798,13 +1798,25 @@ def build_balina_swing_list() -> List[Dict[str, Any]]:
             continue
 
         # SWING filtreleri
-        if m["squeeze_days"] < 15:
+        if m["close_pos"] < 55:
             continue
 
-        if m["band_pct"] > 18:
+        if m["chg_5"] < 2.0:
             continue
 
         if m["vol_ratio"] < 1.20:
+            continue
+
+        if m["squeeze_days"] < 3:
+            continue
+
+        if m["band_pct"] > 20:
+            continue
+          
+        if m["chg_3"] < 0:
+            continue
+  
+        if m["burst_ratio"] >= 2.0 and m["close_pos"] >= 85:
             continue
 
         m["score"] = score_balina(m)
@@ -3550,14 +3562,14 @@ async def build_balina_message() -> str:
                 f"{i}) <b>{x['ticker']}</b> | Skor {x['score']:.1f}\n"
                 f"Sıkışma {x['squeeze_days']}g | "
                 f"Band %{x['band_pct']:.1f} | "
-                f"Hacim {x['vol_ratio']:.2f}x\n"
+                f"Hacim {x['vol_ratio']:.2f}x | ClosePos %{x['close_pos']:.0f}\n"
                 f"3g %{x['chg_3']:+.2f} | 5g %{x['chg_5']:+.2f}"
             )
             lines.append("")
     else:
         lines.append("Uygun swing setup bulunamadı.")
 
-    return "\n".join(lines[:120])
+    return "\n".join(lines)
 
 async def cmd_balina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not BALINA_ENABLED:
