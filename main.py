@@ -3515,7 +3515,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
 
-        if accumulation_rows:
+            if accumulation_rows:
             accumulation_rows = sorted(
                 accumulation_rows,
                 key=lambda x: (
