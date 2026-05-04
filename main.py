@@ -3476,7 +3476,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         accumulation_rows = []
 
-        for r in (cand_rows or []):
+        for r in (rows or []):
             t = (r.get("ticker") or "").strip().upper()
             if not t:
                 continue
