@@ -3468,54 +3468,54 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     # ACCUMULATION RADAR bloğu
     try:
-            gold_tickers = {
-                (r.get("ticker") or "").strip().upper()
-                for r in (tom_rows or [])
-                if (r.get("ticker") or "").strip()
-            }
+        gold_tickers = {
+            (r.get("ticker") or "").strip().upper()
+            for r in (tom_rows or [])
+            if (r.get("ticker") or "").strip()
+        }
 
-            accumulation_rows = []
+        accumulation_rows = []
 
-            for r in (cand_rows or []):
-                t = (r.get("ticker") or "").strip().upper()
-                if not t:
-                    continue
+        for r in (cand_rows or []):
+            t = (r.get("ticker") or "").strip().upper()
+            if not t:
+                continue
 
-                if t in gold_tickers:
-                    continue
+            if t in gold_tickers:
+                continue
 
-                score_v = float(r.get("accumulation_score", r.get("score", 0)) or 0)
-                pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
-                ratio_v = float(r.get("ratio", r.get("vol_ratio", 0)) or 0)
-                band_v = float(r.get("band_pct", 100) or 100)
+            score_v = float(r.get("accumulation_score", r.get("score", 0)) or 0)
+            pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
+            ratio_v = float(r.get("ratio", r.get("vol_ratio", 0)) or 0)
+            band_v = float(r.get("band_pct", 100) or 100)
 
-                if score_v < 3:
-                    continue
+            if score_v < 3:
+                continue
 
-                if pct_v > 1.50:
-                    continue
+            if pct_v > 1.50:
+                continue
 
-                if pct_v < -3.50:
-                    continue
+            if pct_v < -3.50:
+                continue
 
-                if ratio_v < 1.00:
-                    continue
+            if ratio_v < 1.00:
+                continue
 
-                if band_v > 90:
-                    continue
+            if band_v > 90:
+                continue
 
-                r["acc_pro_score"] = (
-                    score_v
-                    + min(ratio_v, 3.0) * 1.5
-                    + max(0, 90 - band_v) * 0.03
-                    + max(0, 1.5 - pct_v) * 0.5
-                )
+            r["acc_pro_score"] = (
+                score_v
+                + min(ratio_v, 3.0) * 1.5
+                + max(0, 90 - band_v) * 0.03
+                + max(0, 1.5 - pct_v) * 0.5
+            )
 
-                accumulation_rows.append(r)
+            accumulation_rows.append(r)
 
-            logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
+        logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
 
-            if accumulation_rows:
+        if accumulation_rows:
             accumulation_rows = sorted(
                 accumulation_rows,
                 key=lambda x: (
@@ -3529,28 +3529,27 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             accumulation_lines = []
 
-            top_acc = accumulation_rows[0] if accumulation_rows else None
-            if top_acc:
-                t = (top_acc.get("ticker") or "").strip()
-                acc_v = top_acc.get("acc_pro_score", top_acc.get("accumulation_score", 0))
-                pct_v = top_acc.get("change", top_acc.get("pct_change"))
-                close_v = top_acc.get("close")
-                ratio_v = top_acc.get("ratio", top_acc.get("vol_ratio"))
-                band_v = top_acc.get("band_pct")
+            top_acc = accumulation_rows[0]
+            t = (top_acc.get("ticker") or "").strip()
+            acc_v = top_acc.get("acc_pro_score", top_acc.get("accumulation_score", 0))
+            pct_v = top_acc.get("change", top_acc.get("pct_change"))
+            close_v = top_acc.get("close")
+            ratio_v = top_acc.get("ratio", top_acc.get("vol_ratio"))
+            band_v = top_acc.get("band_pct")
 
-                acc_s = f"{float(acc_v):.1f}" if acc_v is not None else "n/a"
-                pct_s = f"{float(pct_v):+.2f}%" if pct_v is not None else "n/a"
-                close_s = f"{float(close_v):.2f}" if close_v is not None else "n/a"
-                ratio_s = f"{float(ratio_v):.2f}x" if ratio_v is not None else "n/a"
-                band_s = f"%{float(band_v):.1f}" if band_v is not None else "n/a"
+            acc_s = f"{float(acc_v):.1f}" if acc_v is not None else "n/a"
+            pct_s = f"{float(pct_v):+.2f}%" if pct_v is not None else "n/a"
+            close_s = f"{float(close_v):.2f}" if close_v is not None else "n/a"
+            ratio_s = f"{float(ratio_v):.2f}x" if ratio_v is not None else "n/a"
+            band_s = f"%{float(band_v):.1f}" if band_v is not None else "n/a"
 
-                accumulation_lines.append(
-                    f"🔥 <b>TOP PICK</b>\n"
-                    f"{t} | Acc:{acc_s} | {pct_s} | Fyt:{close_s} | Hcm:{ratio_s} | Band:{band_s}"
-                )
-                accumulation_lines.append("")
+            accumulation_lines.append(
+                f"🔥 <b>TOP PICK</b>\n"
+                f"{t} | Acc:{acc_s} | {pct_s} | Fyt:{close_s} | Hcm:{ratio_s} | Band:{band_s}"
+            )
+            accumulation_lines.append("")
 
-            for i, r in enumerate(accumulation_rows[:5], 1):
+            for i, r in enumerate(accumulation_rows, 1):
                 t = (r.get("ticker") or "").strip()
                 acc_v = r.get("acc_pro_score", r.get("accumulation_score", 0))
                 pct_v = r.get("change", r.get("pct_change"))
@@ -3574,6 +3573,9 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
                 + "\n".join(accumulation_lines)
             )
+
+    except Exception as e:
+        logger.warning("ACCUMULATION RADAR block failed: %s", e)
 
     except Exception as e:
         logger.warning("ACCUMULATION RADAR block failed: %s", e)
