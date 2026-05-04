@@ -3468,59 +3468,52 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     # ACCUMULATION RADAR bloğu
     try:
-        gold_tickers = {
-        (r.get("ticker") or "").strip().upper()
-        for r in (tom_rows or [])
-        if (r.get("ticker") or "").strip()
-    }
+            gold_tickers = {
+                (r.get("ticker") or "").strip().upper()
+                for r in (tom_rows or [])
+                if (r.get("ticker") or "").strip()
+            }
 
-    accumulation_rows = []
+            accumulation_rows = []
 
-    for r in (cand_rows or []):
-        t = (r.get("ticker") or "").strip().upper()
-        if not t:
-            continue
+            for r in (cand_rows or []):
+                t = (r.get("ticker") or "").strip().upper()
+                if not t:
+                    continue
 
-        # ALTIN ile çakışmasın
-        if t in gold_tickers:
-            continue
+                if t in gold_tickers:
+                    continue
 
-        score_v = float(r.get("accumulation_score", r.get("score", 0)) or 0)
-        pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
-        ratio_v = float(r.get("ratio", r.get("vol_ratio", 0)) or 0)
-        band_v = float(r.get("band_pct", 100) or 100)
+                score_v = float(r.get("accumulation_score", r.get("score", 0)) or 0)
+                pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
+                ratio_v = float(r.get("ratio", r.get("vol_ratio", 0)) or 0)
+                band_v = float(r.get("band_pct", 100) or 100)
 
-        # minimum kalite
-        if score_v < 3:
-            continue
+                if score_v < 3:
+                    continue
 
-        # çok gitmiş alma
-        if pct_v > 1.50:
-            continue
+                if pct_v > 1.50:
+                    continue
 
-        # çökmüş çöp alma
-        if pct_v < -3.50:
-            continue
+                if pct_v < -3.50:
+                    continue
 
-        # hacim yoksa alma
-        if ratio_v < 1.00:
-            continue
+                if ratio_v < 1.00:
+                    continue
 
-        # sıkışma yoksa alma
-        if band_v > 90:
-            continue
+                if band_v > 90:
+                    continue
 
-        # PRO skor
-        r["acc_pro_score"] = (
-            score_v
-            + min(ratio_v, 3.0) * 1.5
-            + max(0, 90 - band_v) * 0.03
-            + max(0, 1.5 - pct_v) * 0.5
-        )
+                r["acc_pro_score"] = (
+                    score_v
+                    + min(ratio_v, 3.0) * 1.5
+                    + max(0, 90 - band_v) * 0.03
+                    + max(0, 1.5 - pct_v) * 0.5
+                )
 
-        accumulation_rows.append(r)
+                accumulation_rows.append(r)
 
-        logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
+            logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
 
         if accumulation_rows:
             accumulation_rows = sorted(
