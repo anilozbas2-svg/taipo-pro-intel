@@ -3660,6 +3660,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
                 + "\n".join(accumulation_lines)
             )
+            acc_entry_add_watch(accumulation_rows, source="ACCUMULATION_PRO")
         else:
             msg += (
                 "\n\n🧲 <b>ACCUMULATION PRO</b>\n"
