@@ -3489,7 +3489,7 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             ratio_v = float(r.get("ratio", r.get("vol_ratio", 0)) or 0)
             band_v = float(r.get("band_pct", 100) or 100)
 
-            if score_v < 3:
+            if score_v < 2:
                 continue
 
             if pct_v > 1.50:
@@ -3498,10 +3498,10 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if pct_v < -3.50:
                 continue
 
-            if ratio_v < 1.00:
+            if ratio_v < 0.90:
                 continue
 
-            if band_v > 90:
+            if band_v > 95:
                 continue
 
             r["acc_pro_score"] = (
