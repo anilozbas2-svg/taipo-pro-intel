@@ -3468,10 +3468,57 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     # ACCUMULATION RADAR bloğu
     try:
-        accumulation_rows = [
-            r for r in (tom_rows or [])
-            if (r.get("accumulation_score", 0) >= 4)
-        ]
+        gold_tickers = {
+        (r.get("ticker") or "").strip().upper()
+        for r in (tom_rows or [])
+        if (r.get("ticker") or "").strip()
+    }
+
+    accumulation_rows = []
+
+    for r in (cand_rows or []):
+        t = (r.get("ticker") or "").strip().upper()
+        if not t:
+            continue
+
+        # ALTIN ile çakışmasın
+        if t in gold_tickers:
+            continue
+
+        score_v = float(r.get("accumulation_score", r.get("score", 0)) or 0)
+        pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
+        ratio_v = float(r.get("ratio", r.get("vol_ratio", 0)) or 0)
+        band_v = float(r.get("band_pct", 100) or 100)
+
+        # minimum kalite
+        if score_v < 3:
+            continue
+
+        # çok gitmiş alma
+        if pct_v > 1.50:
+            continue
+
+        # çökmüş çöp alma
+        if pct_v < -3.50:
+            continue
+
+        # hacim yoksa alma
+        if ratio_v < 1.00:
+            continue
+
+        # sıkışma yoksa alma
+        if band_v > 90:
+            continue
+
+        # PRO skor
+        r["acc_pro_score"] = (
+            score_v
+            + min(ratio_v, 3.0) * 1.5
+            + max(0, 90 - band_v) * 0.03
+            + max(0, 1.5 - pct_v) * 0.5
+        )
+
+        accumulation_rows.append(r)
 
         logger.info("DEBUG ACCUMULATION COUNT = %s", len(accumulation_rows))
 
@@ -3479,35 +3526,61 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             accumulation_rows = sorted(
                 accumulation_rows,
                 key=lambda x: (
-                    x.get("final_score", 0),
-                    x.get("v5_score", 0),
+                    x.get("acc_pro_score", 0),
                     x.get("accumulation_score", 0),
-                    x.get("breakout_score", 0),
+                    x.get("ratio", x.get("vol_ratio", 0)),
+                    -abs(x.get("change", x.get("pct_change", 0)) or 0),
                 ),
                 reverse=True,
-            )
+            )[:5]
 
             accumulation_lines = []
-            for r in accumulation_rows[:6]:
-                t = (r.get("ticker") or "").strip()
 
-                close_v = r.get("close")
-                ratio_v = r.get("ratio")
-                band_v = r.get("band_pct")
-                score_v = r.get("accumulation_score", 0)
-                pct_v = r.get("change")
+            top_acc = accumulation_rows[0] if accumulation_rows else None
+            if top_acc:
+                t = (top_acc.get("ticker") or "").strip()
+                acc_v = top_acc.get("acc_pro_score", top_acc.get("accumulation_score", 0))
+                pct_v = top_acc.get("change", top_acc.get("pct_change"))
+                close_v = top_acc.get("close")
+                ratio_v = top_acc.get("ratio", top_acc.get("vol_ratio"))
+                band_v = top_acc.get("band_pct")
 
+                acc_s = f"{float(acc_v):.1f}" if acc_v is not None else "n/a"
+                pct_s = f"{float(pct_v):+.2f}%" if pct_v is not None else "n/a"
                 close_s = f"{float(close_v):.2f}" if close_v is not None else "n/a"
                 ratio_s = f"{float(ratio_v):.2f}x" if ratio_v is not None else "n/a"
-                band_s = f"%{float(band_v):.0f}" if band_v is not None else "n/a"
-                pct_s = f"{float(pct_v):+.2f}%" if pct_v is not None else "n/a"
-                score_s = f"{int(score_v)}/10"
+                band_s = f"%{float(band_v):.1f}" if band_v is not None else "n/a"
 
                 accumulation_lines.append(
-                    f"• {t} | Skor:{score_s} | %:{pct_s} | Fyt:{close_s} | Hcm:{ratio_s} | Band:{band_s}"
+                    f"🔥 <b>TOP PICK</b>\n"
+                    f"{t} | Acc:{acc_s} | {pct_s} | Fyt:{close_s} | Hcm:{ratio_s} | Band:{band_s}"
+                )
+                accumulation_lines.append("")
+
+            for i, r in enumerate(accumulation_rows[:5], 1):
+                t = (r.get("ticker") or "").strip()
+                acc_v = r.get("acc_pro_score", r.get("accumulation_score", 0))
+                pct_v = r.get("change", r.get("pct_change"))
+                close_v = r.get("close")
+                ratio_v = r.get("ratio", r.get("vol_ratio"))
+                band_v = r.get("band_pct")
+
+                acc_s = f"{float(acc_v):.1f}" if acc_v is not None else "n/a"
+                pct_s = f"{float(pct_v):+.2f}%" if pct_v is not None else "n/a"
+                close_s = f"{float(close_v):.2f}" if close_v is not None else "n/a"
+                ratio_s = f"{float(ratio_v):.2f}x" if ratio_v is not None else "n/a"
+                band_s = f"%{float(band_v):.1f}" if band_v is not None else "n/a"
+
+                accumulation_lines.append(
+                    f"{i}) <b>{t}</b> | Acc:{acc_s} | {pct_s}\n"
+                    f"Fyt:{close_s} | Hcm:{ratio_s} | Band:{band_s}"
                 )
 
-            msg += "\n\n🐳 <b>ACCUMULATION RADAR</b>\n" + "\n".join(accumulation_lines)
+            msg += (
+                "\n\n🧲 <b>ACCUMULATION PRO</b>\n"
+                "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
+                + "\n".join(accumulation_lines)
+            )
 
     except Exception as e:
         logger.warning("ACCUMULATION RADAR block failed: %s", e)
