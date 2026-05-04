@@ -3573,7 +3573,12 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
                 + "\n".join(accumulation_lines)
             )
-
+        else:
+            msg += (
+                "\n\n🧲 <b>ACCUMULATION PRO</b>\n"
+                "<i>Bugün uygun sessiz toplama adayı yok.</i>"
+            )
+        
     except Exception as e:
         logger.warning("ACCUMULATION RADAR block failed: %s", e)
 
