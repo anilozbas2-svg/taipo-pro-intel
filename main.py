@@ -3493,8 +3493,26 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             score_v = float(r.get("accumulation_score", r.get("score", 0)) or 0)
             pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
+            close_v = float(r.get("close", 0) or 0)
+            volume_v = float(r.get("volume", 0) or 0)
+
             ratio_v = float(r.get("ratio", r.get("vol_ratio", 0)) or 0)
-            band_v = float(r.get("band_pct", 100) or 100)
+            band_v = float(r.get("band_pct", 0) or 0)
+
+            if score_v <= 0:
+                score_v = 1
+                if -5.00 <= pct_v <= 2.50:
+                    score_v += 2
+                if volume_v >= 2_000_000:
+                    score_v += 2
+                if close_v > 0:
+                    score_v += 1
+
+            if ratio_v <= 0:
+                ratio_v = 1.00
+
+            if band_v <= 0:
+                band_v = 90.0
 
             if score_v < 1:
                 continue
