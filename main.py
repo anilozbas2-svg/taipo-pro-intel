@@ -202,6 +202,19 @@ WATCHLIST_MAX = int(os.getenv("WATCHLIST_MAX", "12"))
 VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))
 
 DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
+# ===============================
+# ACC ENTRY ENGINE config
+# ===============================
+ACC_ENTRY_ENABLED = os.getenv("ACC_ENTRY_ENABLED", "1").strip() == "1"
+ACC_ENTRY_CHAT_ID = os.getenv("ACC_ENTRY_CHAT_ID", str(ALARM_CHAT_ID or "")).strip()
+ACC_ENTRY_INTERVAL_MIN = int(os.getenv("ACC_ENTRY_INTERVAL_MIN", "5"))
+ACC_ENTRY_MAX_AGE_DAYS = int(os.getenv("ACC_ENTRY_MAX_AGE_DAYS", "4"))
+ACC_ENTRY_MAX_WATCH = int(os.getenv("ACC_ENTRY_MAX_WATCH", "30"))
+ACC_ENTRY_MIN_DROP = float(os.getenv("ACC_ENTRY_MIN_DROP", "-5.00"))
+ACC_ENTRY_MAX_DROP = float(os.getenv("ACC_ENTRY_MAX_DROP", "-2.50"))
+ACC_ENTRY_TRIGGER_PCT = float(os.getenv("ACC_ENTRY_TRIGGER_PCT", "0.80"))
+
+ACC_ENTRY_STATE_FILE = os.path.join(DATA_DIR, "acc_entry_watch.json")
 HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "400"))
 ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))
 
@@ -1047,6 +1060,55 @@ def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
         os.replace(tmp, path)
     except Exception as e:
         logger.warning("History write failed (%s): %s", path, e)
+
+def load_acc_entry_state():
+    try:
+        data = _load_json(ACC_ENTRY_STATE_FILE)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_acc_entry_state(data):
+    try:
+        _atomic_write_json(ACC_ENTRY_STATE_FILE, data or {})
+    except Exception as e:
+        logger.warning("ACC_ENTRY state save failed: %s", e)
+
+
+def acc_entry_add_watch(rows, source="ACCUMULATION_PRO"):
+    if not ACC_ENTRY_ENABLED:
+        return
+
+    state = load_acc_entry_state()
+    now = datetime.now(tz=TZ)
+    today = now.strftime("%Y-%m-%d")
+
+    for r in (rows or []):
+        t = (r.get("ticker") or "").strip().upper()
+        if not t:
+            continue
+
+        if t in state:
+            state[t]["last_seen"] = today
+            state[t]["source"] = source
+            continue
+
+        if len(state) >= ACC_ENTRY_MAX_WATCH:
+            break
+
+        state[t] = {
+            "ticker": t,
+            "source": source,
+            "created_at": now.isoformat(),
+            "last_seen": today,
+            "ref_pct": float(r.get("change", r.get("pct_change", 0)) or 0),
+            "ref_close": float(r.get("close", 0) or 0),
+            "ref_volume": float(r.get("volume", 0) or 0),
+            "alerted": False,
+        }
+
+    save_acc_entry_state(state)
 
 def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
     if not isinstance(d, dict):
