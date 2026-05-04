@@ -3468,6 +3468,13 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     # ACCUMULATION RADAR bloğu
     try:
+        logger.info("DEBUG ACC ROWS COUNT = %s", len(rows or []))
+        logger.info("DEBUG ACC CAND_ROWS COUNT = %s", len(cand_rows or []))
+        logger.info("DEBUG ACC TOM_ROWS COUNT = %s", len(tom_rows or []))
+
+        for sample in (rows or [])[:3]:
+            logger.info("DEBUG ACC SAMPLE ROW = %s", sample)
+            
         gold_tickers = {
             (r.get("ticker") or "").strip().upper()
             for r in (tom_rows or [])
