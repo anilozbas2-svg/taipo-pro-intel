@@ -1175,6 +1175,22 @@ async def job_acc_entry_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
             ref_close = float(item.get("ref_close", 0) or 0)
             ref_volume = float(item.get("ref_volume", 0) or 0)
 
+            # 🎯 dip filtresi
+            if not (-5 <= ref_pct <= -2):
+                continue
+
+            # 🎯 hacim filtresi
+            volume_ok = True
+            if ref_volume > 0 and volume_now > 0:
+                volume_ok = volume_now >= ref_volume * 0.80
+
+            if not volume_ok:
+                continue
+
+            # 🎯 momentum filtresi
+            if pct_now < 0:
+                continue
+            
             volume_ok = True
             if ref_volume > 0 and volume_now > 0:
                 volume_ok = volume_now >= ref_volume * 0.80
