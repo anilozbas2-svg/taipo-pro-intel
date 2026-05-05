@@ -1190,10 +1190,6 @@ async def job_acc_entry_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
             # 🎯 momentum filtresi
             if pct_now < 0:
                 continue
-            
-            volume_ok = True
-            if ref_volume > 0 and volume_now > 0:
-                volume_ok = volume_now >= ref_volume * 0.80
 
             trigger_ok = pct_now >= ACC_ENTRY_TRIGGER_PCT and volume_ok
 
