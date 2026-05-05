@@ -1110,6 +1110,103 @@ def acc_entry_add_watch(rows, source="ACCUMULATION_PRO"):
 
     save_acc_entry_state(state)
 
+async def job_acc_entry_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not ACC_ENTRY_ENABLED:
+        return
+
+    if not ACC_ENTRY_CHAT_ID:
+        return
+
+    try:
+        state = load_acc_entry_state()
+        if not state:
+            return
+
+        rows = scan_tradingview()
+        row_map = {
+            (r.get("ticker") or "").strip().upper(): r
+            for r in (rows or [])
+            if (r.get("ticker") or "").strip()
+        }
+
+        now = datetime.now(tz=TZ)
+        changed = False
+
+        for ticker, item in list(state.items()):
+            if not isinstance(item, dict):
+                state.pop(ticker, None)
+                changed = True
+                continue
+
+            created_at = item.get("created_at")
+            try:
+                created_dt = datetime.fromisoformat(created_at)
+            except Exception:
+                created_dt = now
+
+            age_days = (now.date() - created_dt.date()).days
+            if age_days > ACC_ENTRY_MAX_AGE_DAYS:
+                state.pop(ticker, None)
+                changed = True
+                continue
+
+            if item.get("alerted"):
+                continue
+
+            r = row_map.get(ticker)
+            if not r:
+                continue
+
+            pct_now = float(r.get("change", r.get("pct_change", 0)) or 0)
+            close_now = float(r.get("close", 0) or 0)
+            volume_now = float(r.get("volume", 0) or 0)
+
+            ref_pct = float(item.get("ref_pct", 0) or 0)
+            ref_close = float(item.get("ref_close", 0) or 0)
+            ref_volume = float(item.get("ref_volume", 0) or 0)
+
+            volume_ok = True
+            if ref_volume > 0 and volume_now > 0:
+                volume_ok = volume_now >= ref_volume * 0.80
+
+            trigger_ok = pct_now >= ACC_ENTRY_TRIGGER_PCT and volume_ok
+
+            if not trigger_ok:
+                continue
+
+            msg = (
+                "🚀 <b>ACC ENTRY ALERT</b>\n\n"
+                f"<b>{ticker}</b>\n"
+                f"Kaynak: {item.get('source', 'ACCUMULATION_PRO')}\n"
+                f"İlk düşüş: {ref_pct:+.2f}%\n"
+                f"Şimdi: {pct_now:+.2f}%\n"
+                f"Fiyat: {close_now:.2f}\n"
+                f"Ref fiyat: {ref_close:.2f}\n"
+                f"Hacim: {'OK' if volume_ok else 'ZAYIF'}\n\n"
+                "🧠 Durum: Dip sonrası tepki başladı\n"
+                "⚠️ Not: Otomatik takip sinyalidir; kesin kazanç garantisi değildir."
+            )
+
+            await context.bot.send_message(
+                chat_id=ACC_ENTRY_CHAT_ID,
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+
+            item["alerted"] = True
+            item["alerted_at"] = now.isoformat()
+            item["alert_pct"] = pct_now
+            item["alert_close"] = close_now
+            state[ticker] = item
+            changed = True
+
+        if changed:
+            save_acc_entry_state(state)
+
+    except Exception as e:
+        logger.exception("ACC_ENTRY follow failed: %s", e)
+
 def _prune_days(d: Dict[str, Any], keep_days: int) -> Dict[str, Any]:
     if not isinstance(d, dict):
         return {}
