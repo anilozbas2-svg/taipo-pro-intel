@@ -1122,7 +1122,17 @@ async def job_acc_entry_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
         if not state:
             return
 
-        rows = scan_tradingview()
+        universe = env_csv("BIST200_TICKERS")
+        if not universe:
+            universe = env_csv("UNIVERSE_TICKERS")
+
+        if not universe:
+            logger.warning("ACC_ENTRY follow skipped: universe empty")
+            return
+
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        rows = await build_rows_from_is_list(universe, xu_change)
+
         row_map = {
             (r.get("ticker") or "").strip().upper(): r
             for r in (rows or [])
