@@ -4926,6 +4926,27 @@ def schedule_jobs(app: Application) -> None:
     else:
         logger.info("WHALE kapali veya ALARM_CHAT_ID yok -> whale gonderilmeyecek.")
 
+    # -----------------------------
+    # ACC ENTRY FOLLOW repeating
+    # -----------------------------
+    if ACC_ENTRY_ENABLED and ACC_ENTRY_CHAT_ID:
+        first_acc_entry = next_aligned_run(ACC_ENTRY_INTERVAL_MIN)
+
+        jq.run_repeating(
+            job_acc_entry_follow,
+            interval=ACC_ENTRY_INTERVAL_MIN * 60,
+            first=first_acc_entry,
+            name="acc_entry_follow_repeating",
+        )
+
+        logger.info(
+            "ACC_ENTRY follow scheduled every %d min. First=%s",
+            ACC_ENTRY_INTERVAL_MIN,
+            first_acc_entry.isoformat(),
+        )
+    else:
+        logger.info("ACC_ENTRY kapali veya ACC_ENTRY_CHAT_ID yok -> calismayacak.")
+    
     # -------------------------
     # ALTIN live follow repeating
     # -------------------------
