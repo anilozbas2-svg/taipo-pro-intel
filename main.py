@@ -2842,6 +2842,91 @@ def format_threshold(min_vol: float) -> str:
         return "n/a"
     return format_volume(min_vol)
 
+def build_accumulation_pro_section(rows):
+    try:
+        accumulation_rows = []
+
+        for r in (rows or []):
+            t = (r.get("ticker") or "").strip().upper()
+            if not t:
+                continue
+
+            pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
+            close_v = float(r.get("close", 0) or 0)
+            volume_v = float(r.get("volume", 0) or 0)
+
+            # Sessiz toplama / dip adayı filtresi
+            if pct_v > -1.20:
+                continue
+
+            if pct_v < -5.00:
+                continue
+
+            acc_score = (
+                6.0
+                + max(0, abs(pct_v)) * 0.80
+                + min(volume_v / 10000000, 2.0)
+            )
+
+            r["acc_pro_score"] = acc_score
+            accumulation_rows.append(r)
+
+        accumulation_rows = sorted(
+            accumulation_rows,
+            key=lambda x: (
+                x.get("acc_pro_score", 0),
+                x.get("volume", 0),
+            ),
+            reverse=True,
+        )[:5]
+
+        if not accumulation_rows:
+            return (
+                "🧲 <b>ACCUMULATION PRO</b>\n"
+                "<i>Bugün uygun sessiz toplama adayı yok.</i>"
+            )
+
+        lines = []
+
+        top = accumulation_rows[0]
+        top_t = (top.get("ticker") or "").strip().upper()
+        top_acc = float(top.get("acc_pro_score", 0) or 0)
+        top_pct = float(top.get("change", top.get("pct_change", 0)) or 0)
+        top_close = float(top.get("close", 0) or 0)
+        top_vol = top.get("volume")
+
+        top_hcm = format_volume(top_vol) if "format_volume" in globals() else str(top_vol or "n/a")
+
+        lines.append(
+            "🔥 <b>TOP PICK</b>\n"
+            f"{top_t} | Acc:{top_acc:.1f} | {top_pct:+.2f}% | "
+            f"Fyt:{top_close:.2f} | Hcm:{top_hcm} | Band:RAW"
+        )
+        lines.append("")
+
+        for i, r in enumerate(accumulation_rows, 1):
+            t = (r.get("ticker") or "").strip().upper()
+            acc_v = float(r.get("acc_pro_score", 0) or 0)
+            pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
+            close_v = float(r.get("close", 0) or 0)
+            volume_v = r.get("volume")
+
+            hcm_s = format_volume(volume_v) if "format_volume" in globals() else str(volume_v or "n/a")
+
+            lines.append(
+                f"{i}) <b>{t}</b> | Acc:{acc_v:.1f} | {pct_v:+.2f}%\n"
+                f"Fyt:{close_v:.2f} | Hcm:{hcm_s} | Band:RAW"
+            )
+
+        return (
+            "🧲 <b>ACCUMULATION PRO</b>\n"
+            "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
+            + "\n".join(lines)
+        )
+
+    except Exception as e:
+        logger.warning("build_accumulation_pro_section failed: %s", e)
+        return ""
 
 def build_tomorrow_message(
     gold_rows: List[Dict[str, Any]],
