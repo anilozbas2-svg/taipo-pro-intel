@@ -508,12 +508,58 @@ def open_or_update_tomorrow_chain(day_key: str, tom_rows: List[Dict[str, Any]]) 
     except Exception as e:
         logger.warning("open_or_update_tomorrow_chain failed: %s", e)
 
-def safe_float(x: Any) -> float:
+def safe_float(x: Any, default: float = 0.0) -> float:
     try:
-        return float(x)
-    except Exception:
-        return float("nan")
+        if x is None:
+            return default
 
+        v = float(x)
+
+        if v != v:
+            return default
+
+        if v == float("inf") or v == float("-inf"):
+            return default
+
+        return v
+
+    except Exception:
+        return default
+        
+def calc_acc_hcm_score(volume: Any) -> tuple[float, str]:
+    vol = safe_float(volume, 0.0)
+
+    if vol <= 0:
+        return 0.0, "n/a"
+
+    if vol >= 300_000_000:
+        return 2.5, format_volume(vol)
+    if vol >= 150_000_000:
+        return 2.0, format_volume(vol)
+    if vol >= 75_000_000:
+        return 1.5, format_volume(vol)
+    if vol >= 30_000_000:
+        return 1.0, format_volume(vol)
+    if vol >= 10_000_000:
+        return 0.5, format_volume(vol)
+
+    return 0.0, format_volume(vol)
+
+
+def calc_acc_band_score(change: Any) -> tuple[float, str]:
+    pct = safe_float(change, 0.0)
+    abs_pct = abs(pct)
+
+    if abs_pct <= 0.80:
+        return 2.5, "SIKI"
+    if abs_pct <= 1.50:
+        return 2.0, "DAR"
+    if abs_pct <= 2.50:
+        return 1.2, "ORTA"
+    if abs_pct <= 4.00:
+        return 0.5, "GENIS"
+
+    return 0.0, "RAW"
 
 def build_tomorrow_altin_perf_section(all_rows: list) -> str:
     """
@@ -2851,9 +2897,9 @@ def build_accumulation_pro_section(rows):
             if not t:
                 continue
 
-            pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
-            close_v = float(r.get("close", 0) or 0)
-            volume_v = float(r.get("volume", 0) or 0)
+            pct_v = safe_float(r.get("change", r.get("pct_change", 0)), 0.0)
+            close_v = safe_float(r.get("close", 0), 0.0)
+            volume_v = safe_float(r.get("volume", 0), 0.0)
 
             # Sessiz toplama / dip adayı filtresi
             if pct_v > -1.20:
@@ -2862,11 +2908,18 @@ def build_accumulation_pro_section(rows):
             if pct_v < -5.00:
                 continue
 
+            hcm_score, hcm_label = calc_acc_hcm_score(volume_v)
+            band_score, band_label = calc_acc_band_score(pct_v)
+
             acc_score = (
                 6.0
                 + max(0, abs(pct_v)) * 0.80
-                + min(volume_v / 10000000, 2.0)
+                + hcm_score
+                + band_score
             )
+
+            r["acc_hcm_label"] = hcm_label
+            r["acc_band_label"] = band_label
 
             r["acc_pro_score"] = acc_score
             accumulation_rows.append(r)
@@ -2900,22 +2953,22 @@ def build_accumulation_pro_section(rows):
         lines.append(
             "🔥 <b>TOP PICK</b>\n"
             f"{top_t} | Acc:{top_acc:.1f} | {top_pct:+.2f}% | "
-            f"Fyt:{top_close:.2f} | Hcm:{top_hcm} | Band:RAW"
+            f"Fyt:{top_close:.2f} | Hcm:{top_hcm} | Band:{top.get('acc_band_label', 'n/a')}"
         )
         lines.append("")
 
         for i, r in enumerate(accumulation_rows, 1):
             t = (r.get("ticker") or "").strip().upper()
             acc_v = float(r.get("acc_pro_score", 0) or 0)
-            pct_v = float(r.get("change", r.get("pct_change", 0)) or 0)
-            close_v = float(r.get("close", 0) or 0)
-            volume_v = r.get("volume")
+            pct_v = safe_float(r.get("change", r.get("pct_change", 0)), 0.0)
+            close_v = safe_float(r.get("close", 0), 0.0)
+            volume_v = safe_float(r.get("volume", 0), 0.0)
 
-            hcm_s = format_volume(volume_v) if "format_volume" in globals() else str(volume_v or "n/a")
+            hcm_s = r.get("acc_hcm_label", "n/a")
 
             lines.append(
                 f"{i}) <b>{t}</b> | Acc:{acc_v:.1f} | {pct_v:+.2f}%\n"
-                f"Fyt:{close_v:.2f} | Hcm:{hcm_s} | Band:RAW"
+                f"Fyt:{close_v:.2f} | Hcm:{hcm_s} | Band:{r.get('acc_band_label', 'n/a')}"
             )
 
         return (
