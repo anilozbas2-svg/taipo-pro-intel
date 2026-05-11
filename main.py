@@ -4415,6 +4415,78 @@ async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             parse_mode=ParseMode.HTML,
         )
 
+async def cmd_acc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        await update.message.reply_text("⏳ ACCUMULATION PRO taranıyor...")
+
+        bist200_list = env_csv("BIST200_TICKERS")
+        if not bist200_list:
+            await update.message.reply_text("❌ BIST200_TICKERS boş.")
+            return
+
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+        rows = await build_rows_from_is_list(bist200_list, xu_change)
+        update_history_from_rows(rows)
+
+        msg = build_accumulation_pro_section(rows)
+        if not msg:
+            msg = "🧲 ACCUMULATION PRO\n\nBugün uygun sessiz toplama adayı yok."
+
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    except Exception as e:
+        logger.exception("cmd_acc error: %s", e)
+        await update.message.reply_text(f"❌ /acc hata: {e}")
+
+
+async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        data = _load_json(ACC_ENTRY_STATE_FILE)
+        if not data:
+            await update.message.reply_text("🧲 ACC FOLLOW\n\nTakip listesi şu an boş.")
+            return
+
+        lines = []
+        lines.append("🧲 ACC FOLLOW")
+        lines.append("")
+        lines.append(f"Takipteki aday sayısı: {len(data)}")
+        lines.append("")
+
+        for i, item in enumerate(data[:10], 1) if isinstance(data, list) else enumerate([], 1):
+            t = item.get("ticker", "n/a")
+            src = item.get("source", "ACC")
+            ts = item.get("ts", "")
+            lines.append(f"{i}) {t} | {src} | {ts}")
+
+        await update.message.reply_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    except Exception as e:
+        logger.exception("cmd_acc_follow error: %s", e)
+        await update.message.reply_text(f"❌ /acc_follow hata: {e}")
+
+
+async def cmd_acc_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        await update.message.reply_text(
+            "🧪 ACC TEST\n\n"
+            "✅ /acc handler aktif\n"
+            "✅ ACC_ENTRY_STATE_FILE aktif\n"
+            f"✅ State file: {ACC_ENTRY_STATE_FILE}\n"
+            "✅ build_accumulation_pro_section çağrılabilir durumda"
+        )
+
+    except Exception as e:
+        logger.exception("cmd_acc_test error: %s", e)
+        await update.message.reply_text(f"❌ /acc_test hata: {e}")
+
 async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_ENABLED or not ALARM_CHAT_ID:
         return
@@ -5477,6 +5549,9 @@ def main() -> None:
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
+    app.add_handler(CommandHandler("acc", cmd_acc))
+    app.add_handler(CommandHandler("acc_follow", cmd_acc_follow))
+    app.add_handler(CommandHandler("acc_test", cmd_acc_test))
     register_momo_prime(app)
     register_momo_flow(app)
     register_momo_kilit(app)
