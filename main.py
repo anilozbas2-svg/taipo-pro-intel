@@ -3232,6 +3232,15 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• <b>/band_scan</b> → Band / sıkışma / patlama adaylarını tarar\n"
         "  Kullanım: <code>/band_scan</code>\n\n"
 
+        "• <b>/acc</b> → Accumulation PRO sessiz toplama listesini üretir\n"
+        "  Kullanım: <code>/acc</code>\n\n"
+
+        "• <b>/acc_follow</b> → ACC takip sisteminin durumunu gösterir\n"
+        "  Kullanım: <code>/acc_follow</code>\n\n"
+
+        "• <b>/acc_test</b> → Accumulation filtre / test çıktısı verir\n"
+        "  Kullanım: <code>/acc_test</code>\n\n"
+        
         "══════════════════════\n"
         "⚙️ <b>SİSTEM & DURUM KOMUTLARI</b>\n"
         "══════════════════════\n"
