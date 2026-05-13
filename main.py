@@ -3736,14 +3736,23 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         TOMORROW_CHAINS.clear()
 
         ref_day_key = today_key_tradingday()
-        TOMORROW_CHAINS[ref_day_key] = list(tom_rows or [])
+        TOMORROW_CHAINS[ref_day_key] = {
+            "ts": time.time(),
+            "rows": list(tom_rows or []),
+            "ref_close": {
+                (r.get("ticker") or r.get("symbol") or "").strip().upper(): r.get("ref_close", r.get("close"))
+                for r in (tom_rows or [])
+                if (r.get("ticker") or r.get("symbol"))
+            },
+        }
 
         logger.info(
             "CMD_TOMORROW | TOMORROW_CHAINS updated in-memory (dict): key=%s count=%d mode=%s",
             ref_day_key,
-            len(TOMORROW_CHAINS[ref_day_key]),
+            len(TOMORROW_CHAINS[ref_day_key].get("rows", [])),
             trade_mode,
         )
+        
 
     except Exception as e:
         logger.warning(
