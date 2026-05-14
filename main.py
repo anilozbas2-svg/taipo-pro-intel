@@ -4504,7 +4504,6 @@ async def cmd_acc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("cmd_acc error: %s", e)
         await update.message.reply_text(f"❌ /acc hata: {e}")
 
-
 async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         data = _load_json(ACC_ENTRY_STATE_FILE)
@@ -4512,17 +4511,41 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("🧲 ACC FOLLOW\n\nTakip listesi şu an boş.")
             return
 
+        items = []
+
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = list(data.values())
+
+        if not items:
+            await update.message.reply_text("🧲 ACC FOLLOW\n\nTakip listesi şu an boş.")
+            return
+
         lines = []
         lines.append("🧲 ACC FOLLOW")
         lines.append("")
-        lines.append(f"Takipteki aday sayısı: {len(data)}")
+        lines.append(f"Takipteki aday sayısı: {len(items)}")
         lines.append("")
 
-        for i, item in enumerate(data[:10], 1) if isinstance(data, list) else enumerate([], 1):
+        for i, item in enumerate(items[:20], 1):
+            if not isinstance(item, dict):
+                continue
+
             t = item.get("ticker", "n/a")
             src = item.get("source", "ACC")
             ts = item.get("ts", "")
-            lines.append(f"{i}) {t} | {src} | {ts}")
+            ref_pct = item.get("ref_pct", item.get("first_pct", "n/a"))
+            ref_close = item.get("ref_close", "n/a")
+            alerted = item.get("alerted", False)
+
+            status = "🚀 ALERT" if alerted else "👀 TAKİP"
+
+            lines.append(
+                f"{i}) <b>{t}</b> | {status}\n"
+                f"İlk:%{ref_pct} | Ref:{ref_close} | {src}\n"
+                f"{ts}"
+            )
 
         await update.message.reply_text(
             "\n".join(lines),
@@ -4533,7 +4556,6 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.exception("cmd_acc_follow error: %s", e)
         await update.message.reply_text(f"❌ /acc_follow hata: {e}")
-
 
 async def cmd_acc_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
