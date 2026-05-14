@@ -4536,6 +4536,15 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             src = item.get("source", "ACC")
             ts = item.get("ts", "")
             ref_pct = item.get("ref_pct", item.get("first_pct", "n/a"))
+            try:
+                ref_pct_s = f"{float(ref_pct):+.2f}%"
+            except Exception:
+                ref_pct_s = str(ref_pct)
+
+            try:
+                ref_close_s = f"{float(ref_close):.2f}"
+            except Exception:
+                ref_close_s = str(ref_close)
             ref_close = item.get("ref_close", "n/a")
             alerted = item.get("alerted", False)
 
@@ -4543,7 +4552,7 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             lines.append(
                 f"{i}) <b>{t}</b> | {status}\n"
-                f"İlk:%{ref_pct} | Ref:{ref_close} | {src}\n"
+                f"İlk:{ref_pct_s} | Ref:{ref_close_s} | {src}\n"
                 f"{ts}"
             )
 
