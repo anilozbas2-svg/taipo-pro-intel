@@ -4541,11 +4541,11 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             except Exception:
                 ref_pct_s = str(ref_pct)
 
+            ref_close = item.get("ref_close", "n/a")
             try:
                 ref_close_s = f"{float(ref_close):.2f}"
             except Exception:
                 ref_close_s = str(ref_close)
-            ref_close = item.get("ref_close", "n/a")
             alerted = item.get("alerted", False)
 
             status = "🚀 ALERT" if alerted else "👀 TAKİP"
