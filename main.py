@@ -4477,6 +4477,42 @@ async def cmd_altin_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             parse_mode=ParseMode.HTML,
         )
 
+def acc_follow_upsert_from_rows(rows, source="ACC_AUTO"):
+    try:
+        now = datetime.now(TZ)
+        today = now.strftime("%Y-%m-%d")
+
+        data = _load_json(ACC_ENTRY_STATE_FILE)
+        if not isinstance(data, dict):
+            data = {}
+
+        for r in rows or []:
+            ticker = (r.get("symbol") or r.get("ticker") or "").strip().upper()
+            if not ticker:
+                continue
+
+            if ticker in data:
+                data[ticker]["last_seen"] = now.isoformat()
+                data[ticker]["source"] = source
+                continue
+
+            data[ticker] = {
+                "ticker": ticker,
+                "source": source,
+                "ts": now.isoformat(),
+                "first_day": today,
+                "last_seen": now.isoformat(),
+                "ref_close": r.get("close"),
+                "ref_pct": r.get("change"),
+                "alerted": False,
+                "alert_day": "",
+                "keep_until": ""
+            }
+
+        _atomic_write_json(ACC_ENTRY_STATE_FILE, data)
+    except Exception as e:
+        logger.warning("ACC follow upsert failed: %s", e)
+
 async def cmd_acc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await update.message.reply_text("⏳ ACCUMULATION PRO taranıyor...")
@@ -4491,6 +4527,7 @@ async def cmd_acc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update_history_from_rows(rows)
 
         msg = build_accumulation_pro_section(rows)
+        acc_follow_upsert_from_rows(rows, source="ACC_CMD")
         if not msg:
             msg = "🧲 ACCUMULATION PRO\n\nBugün uygun sessiz toplama adayı yok."
 
@@ -4678,6 +4715,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             acc_block = build_accumulation_pro_section(rows)
             if acc_block:
+                acc_follow_upsert_from_rows(rows, source="ACC_AUTO")
                 msg = msg + "\n\n" + acc_block
         except Exception as e:
             logger.warning("ACC block eklenemedi: %s", e)
