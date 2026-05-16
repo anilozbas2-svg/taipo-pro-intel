@@ -4490,6 +4490,15 @@ def acc_follow_upsert_from_rows(rows, source="ACC_AUTO"):
             ticker = (r.get("symbol") or r.get("ticker") or "").strip().upper()
             if not ticker:
                 continue
+              
+          change = safe_float(r.get("change"), 0.0)
+            acc_score = safe_float(r.get("acc_score"), 0.0)
+
+            if not (ACC_ENTRY_MIN_DROP <= change <= ACC_ENTRY_MAX_DROP):
+                continue
+
+            if acc_score < 10.0:
+                continue
 
             if ticker in data:
                 data[ticker]["last_seen"] = now.isoformat()
@@ -4713,10 +4722,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         # 🔥 ACCUMULATION PRO (otomatik rapora ek)
         try:
-            acc_block = build_accumulation_pro_section(rows)
-            if acc_block:
-                acc_follow_upsert_from_rows(rows, source="ACC_AUTO")
-                msg = msg + "\n\n" + acc_block
+            
         except Exception as e:
             logger.warning("ACC block eklenemedi: %s", e)
         
