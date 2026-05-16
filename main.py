@@ -4614,6 +4614,7 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def cmd_acc_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
+        _atomic_write_json(ACC_ENTRY_STATE_FILE, {})
         await update.message.reply_text(
             "🧪 ACC TEST\n\n"
             "✅ /acc handler aktif\n"
