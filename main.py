@@ -4491,7 +4491,7 @@ def acc_follow_upsert_from_rows(rows, source="ACC_AUTO"):
             if not ticker:
                 continue
               
-          change = safe_float(r.get("change"), 0.0)
+            change = safe_float(r.get("change"), 0.0)
             acc_score = safe_float(r.get("acc_score"), 0.0)
 
             if not (ACC_ENTRY_MIN_DROP <= change <= ACC_ENTRY_MAX_DROP):
