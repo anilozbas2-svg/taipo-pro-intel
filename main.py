@@ -4497,9 +4497,6 @@ def acc_follow_upsert_from_rows(rows, source="ACC_AUTO"):
             if not (ACC_ENTRY_MIN_DROP <= change <= ACC_ENTRY_MAX_DROP):
                 continue
 
-            if acc_score < 10.0:
-                continue
-
             if ticker in data:
                 data[ticker]["last_seen"] = now.isoformat()
                 data[ticker]["source"] = source
