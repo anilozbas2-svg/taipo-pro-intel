@@ -4511,9 +4511,6 @@ def acc_follow_upsert_from_rows(rows, source="ACC_AUTO"):
             if acc_score < 10.0:
                 continue
 
-            if not (ACC_ENTRY_MIN_DROP <= change <= ACC_ENTRY_MAX_DROP):
-                continue
-
             if ticker in data:
                 data[ticker]["last_seen"] = now.isoformat()
                 data[ticker]["source"] = source
@@ -4568,57 +4565,49 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         data = _load_json(ACC_ENTRY_STATE_FILE)
         if not data:
-            await update.message.reply_text("🧲 ACC FOLLOW\n\nTakip listesi şu an boş.")
+            await update.message.reply_text("🎯 ACC FOLLOW\n\nTakip listesi şu an boş.")
             return
-
-        items = []
 
         if isinstance(data, list):
             items = data
         elif isinstance(data, dict):
             items = list(data.values())
+        else:
+            items = []
 
         if not items:
-            await update.message.reply_text("🧲 ACC FOLLOW\n\nTakip listesi şu an boş.")
+            await update.message.reply_text("🎯 ACC FOLLOW\n\nTakip listesi şu an boş.")
             return
 
-        lines = []
-        lines.append("🧲 ACC FOLLOW")
-        lines.append("")
-        lines.append(f"Takipteki aday sayısı: {len(items)}")
-        lines.append("")
+        lines = [
+            "🎯 ACC FOLLOW",
+            "",
+            "👀 TAKİPTEKİ ADAYLAR",
+            "",
+        ]
 
         for i, item in enumerate(items[:20], 1):
             if not isinstance(item, dict):
                 continue
 
-            t = item.get("ticker", "n/a")
-            src = item.get("source", "ACC")
-            ts = item.get("ts", "")
-            ref_pct = item.get("ref_pct", item.get("first_pct", "n/a"))
-            try:
-                ref_pct_s = f"{float(ref_pct):+.2f}%"
-            except Exception:
-                ref_pct_s = str(ref_pct)
+            ticker = str(item.get("ticker", "n/a")).upper()
+            alerted = bool(item.get("alerted", False))
+            status = "🚀 ROKET" if alerted else "👀 TAKİP"
 
-            ref_close = item.get("ref_close", "n/a")
+            ref_pct = item.get("ref_pct", item.get("first_pct", 0.0))
             try:
-                ref_close_s = f"{float(ref_close):.2f}"
+                pct_s = f"{float(ref_pct):+.2f}%"
             except Exception:
-                ref_close_s = str(ref_close)
-            alerted = item.get("alerted", False)
-
-            status = "🚀 ALERT" if alerted else "👀 TAKİP"
+                pct_s = str(ref_pct)
 
             lines.append(
-                f"{i}) <b>{t}</b> | {status}\n"
-                f"İlk:{ref_pct_s} | Ref:{ref_close_s} | {src}\n"
-                f"{ts}"
+                f"{i}) {ticker}  {status}\n"
+                f"{pct_s}"
             )
+            lines.append("")
 
         await update.message.reply_text(
-            "\n".join(lines),
-            parse_mode=ParseMode.HTML,
+            "\n".join(lines).strip(),
             disable_web_page_preview=True,
         )
 
