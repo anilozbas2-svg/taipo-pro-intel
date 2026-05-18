@@ -4592,7 +4592,7 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             ticker = str(item.get("ticker", "n/a")).upper()
             alerted = bool(item.get("alerted", False))
-            status = "🚀 HEDEF TAMAM" if alerted else "👀 TAKİP"
+            status = "🚀 HEDEF " if alerted else "👀 "
 
             ref_pct = item.get("ref_pct", item.get("first_pct", 0.0))
             try:
