@@ -4492,7 +4492,24 @@ def acc_follow_upsert_from_rows(rows, source="ACC_AUTO"):
                 continue
               
             change = safe_float(r.get("change"), 0.0)
-            acc_score = safe_float(r.get("acc_score"), 0.0)
+
+            acc_score = safe_float(
+                r.get(
+                    "acc_pro_score",
+                    r.get("accumulation_score", 0.0)
+                ),
+                0.0,
+            )
+
+            if not (
+                ACC_ENTRY_MIN_DROP
+                <= change
+                <= ACC_ENTRY_MAX_DROP
+            ):
+                continue
+
+            if acc_score < 10.0:
+                continue
 
             if not (ACC_ENTRY_MIN_DROP <= change <= ACC_ENTRY_MAX_DROP):
                 continue
