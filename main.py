@@ -4582,7 +4582,7 @@ async def cmd_acc_follow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines = [
             "🎯 ACC FOLLOW",
             "",
-            "👀 TAKİPTEKİ ADAYLAR",
+            f"👀 TAKİPTEKİ ADAYLAR ({len(items)})",
             "────────────────",
         ]
 
