@@ -1569,6 +1569,42 @@ def compute_regime(xu_close: float, xu_change: float, xu_vol: float, xu_open: fl
     reg["block"] = (reg["name"].upper() in (REJIM_BLOCK_ON or []))
     reg["allow_trade"] = (not reg["block"])
 
+    score = 50
+
+    if reg.get("trend") == "UP":
+        score += 20
+    elif reg.get("trend") == "DOWN":
+        score -= 20
+
+    if reg.get("vol_ok"):
+        score += 10
+    else:
+        score -= 15
+
+    if reg.get("gap_ok"):
+        score += 10
+    else:
+        score -= 10
+
+    if xu_change == xu_change:
+        if xu_change >= 1.0:
+            score += 15
+        elif xu_change >= 0.0:
+            score += 5
+        elif xu_change <= -1.5:
+            score -= 25
+        elif xu_change <= -0.8:
+            score -= 15
+
+    if reg.get("name") == "MOMO_UP":
+        score += 15
+    elif reg.get("name") == "RISK_OFF":
+        score -= 30
+    elif reg.get("name") == "VOLATILE":
+        score -= 20
+
+    reg["score"] = max(0, min(100, score))
+    
     if reg["block"]:
         reg["regime"] = "R3"
     elif reg["allow_trade"] and reg["vol_ok"] and reg["gap_ok"]:
@@ -3686,7 +3722,8 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
 
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
+        top_n = dynamic_top_n(reg)
+        
     global LAST_REGIME
     LAST_REGIME = reg
 
@@ -4193,13 +4230,13 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+        top_n = dynamic_top_n(reg)
 
     global LAST_REGIME
     LAST_REGIME = reg
 
     rows = await build_rows_from_is_list(chunks[page - 1], xu_change)
     update_history_from_rows(rows)
-    top_n = dynamic_top_n(reg)
     min_vol = compute_signal_rows(rows, xu_change, top_n)
     thresh_s = format_threshold(min_vol)
 
@@ -4236,7 +4273,8 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
+        top_n = dynamic_top_n(reg)
+        
     global LAST_REGIME
     LAST_REGIME = reg
 
@@ -4358,6 +4396,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
+           top_n = dynamic_top_n(reg)
         await maybe_send_rejim_transition(context, reg)
 
         global LAST_REGIME
@@ -4369,7 +4408,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         # --- Ana liste (BIST200) ---
         all_rows = await build_rows_from_is_list(bist200_list, xu_change)
         update_history_from_rows(all_rows)
-        min_vol = compute_signal_rows(all_rows, xu_change, VOLUME_TOP_N)
+        min_vol = compute_signal_rows(all_rows, xu_change, top_n)
         thresh_s = format_threshold(min_vol)
 
         alarm_rows = filter_new_alarms(all_rows)
@@ -4693,12 +4732,12 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-
+            top_n = dynamic_top_n(reg)
+            
         LAST_REGIME = reg
 
         rows = await build_rows_from_is_list(bist200_list, xu_change)
         update_history_from_rows(rows)
-        top_n = dynamic_top_n(reg)
         min_vol = compute_signal_rows(rows, xu_change, top_n)
         thresh_s = format_threshold(min_vol)
 
