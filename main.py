@@ -1578,6 +1578,23 @@ def compute_regime(xu_close: float, xu_change: float, xu_vol: float, xu_open: fl
 
     return reg
 
+def dynamic_top_n(reg: Dict[str, Any]) -> int:
+    if reg.get("block"):
+        return 4
+
+    score = float(reg.get("score", 0) or 0)
+
+    if score >= 80:
+        return 12
+
+    if score >= 60:
+        return 10
+
+    if score >= 40:
+        return 8
+
+    return 6
+
 def format_regime_line(reg: Dict[str, Any]) -> str:
     if not reg or not reg.get("enabled", False):
         return "🧭 <b>Rejim</b>: <b>OFF</b>"
@@ -3024,7 +3041,7 @@ def build_tomorrow_message(
         f"🕒 Hazırlandı: <b>{now_s}</b> • <b>{BOT_VERSION}</b>\n"
         f"📊 <b>XU100</b>: {xu_close_s} • {xu_change_s}\n"
         f"{format_regime_line(reg)}\n"
-        f"🧱 <b>Top{VOLUME_TOP_N} Eşik</b>: ≥ <b>{thresh_s}</b>\n"
+        f"🧱 <b>Top{top_n} Eşik</b>: ≥ <b>{thresh_s}</b>\n"
         f"🥇 <b>ALTIN</b>: Band ≤ <b>%{TOMORROW_MAX_BAND:.0f}</b> • Hacim ≥ <b>{TOMORROW_MIN_VOL_RATIO:.2f}x</b> • Max <b>{TOMORROW_MAX}</b>\n"
         f"🥈 <b>ADAY</b>: Band ≤ <b>%{CANDIDATE_MAX_BAND:.0f}</b> • Hacim ≥ <b>{CANDIDATE_MIN_VOL_RATIO:.2f}x</b> • Max <b>{CANDIDATE_MAX}</b>\n"
     )
@@ -3676,7 +3693,8 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     rows = await build_rows_from_is_list(bist200_list, xu_change)
     update_history_from_rows(rows)
 
-    min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+    top_n = dynamic_top_n(reg)
+    min_vol = compute_signal_rows(rows, xu_change, top_n)
     thresh_s = format_threshold(min_vol)
 
     # ✅ R0 (Uçan) tespit edilenleri ayrı blokta göster
@@ -4181,7 +4199,8 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     rows = await build_rows_from_is_list(chunks[page - 1], xu_change)
     update_history_from_rows(rows)
-    min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+    top_n = dynamic_top_n(reg)
+    min_vol = compute_signal_rows(rows, xu_change, top_n)
     thresh_s = format_threshold(min_vol)
 
     if REJIM_GATE_RADAR and reg.get("block"):
@@ -4198,7 +4217,7 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )[:8]
         r0_block = make_table(r0_rows, "🚀 <b>R0 – UÇANLAR (Bu sayfada)</b>", include_kind=True) + "\n\n"
 
-    table = make_table(rows, f"📡 <b>BIST200 RADAR</b> • Sayfa {page}/{len(chunks)} • Top{VOLUME_TOP_N}≥<b>{thresh_s}</b>", include_kind=True)
+    table = make_table(rows, f"📡 <b>BIST200 RADAR</b> • Sayfa {page}/{len(chunks)} • Top{top_n}≥<b>{thresh_s}</b>", include_kind=True)
     head = (
         f"📡 <b>RADAR</b> • <b>{BOT_VERSION}</b>\n"
         f"📊 XU100: {xu_close:,.2f} • {xu_change:+.2f}%\n"
@@ -4233,7 +4252,8 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     rows = await build_rows_from_is_list(bist200_list, xu_change)
     update_history_from_rows(rows)
-    min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+    top_n = dynamic_top_n(reg)
+    min_vol = compute_signal_rows(rows, xu_change, top_n)
     thresh_s = format_threshold(min_vol)
 
     toplama = [r for r in rows if r.get("signal_text") == "TOPLAMA"]
@@ -4248,7 +4268,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
         f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
         f"{format_regime_line(reg)}\n"
-        f"🧱 <b>Top{VOLUME_TOP_N} Eşik</b>: ≥ <b>{thresh_s}</b>\n\n"
+        f"🧱 <b>Top{top_n} Eşik</b>: ≥ <b>{thresh_s}</b>\n\n"
         f"🧠 TOPLAMA: <b>{len(toplama)}</b> | 🧲 DİP: <b>{len(dip)}</b> | 🧠 AYR: <b>{len(ayr)}</b> | ⚠️ KAR: <b>{len(kar)}</b>\n"
     )
     msg += "\n" + make_table(top_by_vol(toplama, 8), "🧠 <b>TOPLAMA – Top 8</b>", include_kind=True)
@@ -4678,7 +4698,8 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         rows = await build_rows_from_is_list(bist200_list, xu_change)
         update_history_from_rows(rows)
-        min_vol = compute_signal_rows(rows, xu_change, VOLUME_TOP_N)
+        top_n = dynamic_top_n(reg)
+        min_vol = compute_signal_rows(rows, xu_change, top_n)
         thresh_s = format_threshold(min_vol)
 
         # ✅ R0 bloğu (otomatik gönderimde de üstte görünsün)
