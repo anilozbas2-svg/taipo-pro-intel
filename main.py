@@ -3030,6 +3030,9 @@ def build_tomorrow_message(
     )
     if torpil_used_any:
         head += "🧩 <i>Torpil Modu: veri az olan hisselerde geçici yumuşatma aktif.</i>\n"
+    
+    if SAFE_FREEZE_MODE:
+        head += "\n🧊 GÖZLEM MODU: TOP PICK / ALTIN liste işlem sinyali değildir. Sadece takip.\n"
 
     gold_table = make_table(gold_rows, "✅ <b>ALTIN LİSTE (Kesin)</b>", include_kind=True) if gold_rows else "❌ <b>ALTIN LİSTE çıkmadı.</b>"
     cand_table = make_table(cand_rows, "🟦 <b>ADAY LİSTE (Radar)</b>", include_kind=True) if cand_rows else "— <b>ADAY LİSTE yok.</b>"
