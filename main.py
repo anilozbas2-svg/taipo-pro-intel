@@ -215,6 +215,16 @@ ACC_ENTRY_MAX_DROP = float(os.getenv("ACC_ENTRY_MAX_DROP", "-2.50"))
 ACC_ENTRY_TRIGGER_PCT = float(os.getenv("ACC_ENTRY_TRIGGER_PCT", "0.80"))
 
 ACC_ENTRY_STATE_FILE = os.path.join(DATA_DIR, "acc_entry_watch.json")
+
+SAFE_FREEZE_MODE = os.getenv(
+    "SAFE_FREEZE_MODE", "1"
+).strip() == "1"
+
+SAFE_FREEZE_TEXT = (
+    "🧊 GÖZLEM MODU: "
+    "Bu liste işlem sinyali değildir."
+)
+
 HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "400"))
 ALARM_NOTE_MAX = int(os.getenv("ALARM_NOTE_MAX", "6"))
 
@@ -2973,7 +2983,13 @@ def build_accumulation_pro_section(rows):
 
         return (
             "🧲 <b>ACCUMULATION PRO</b>\n"
-            "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
+            (
+                f"<i>Henüz patlamamış / sessiz toplama adayları</i>\n"
+                f"{SAFE_FREEZE_TEXT}\n\n"
+                if SAFE_FREEZE_MODE
+                else
+                "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
+            )
             + "\n".join(lines)
         )
 
@@ -3932,7 +3948,13 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             msg += (
                 "\n\n🧲 <b>ACCUMULATION PRO</b>\n"
-                "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
+                (
+                    f"<i>Henüz patlamamış / sessiz toplama adayları</i>\n"
+                    f"{SAFE_FREEZE_TEXT}\n\n"
+                    if SAFE_FREEZE_MODE
+                    else
+                    "<i>Henüz patlamamış / sessiz toplama adayları</i>\n\n"
+                )
                 + "\n".join(accumulation_lines)
             )
             acc_entry_add_watch(accumulation_rows, source="ACCUMULATION_PRO")
