@@ -3722,7 +3722,6 @@ async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
 
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-        top_n = dynamic_top_n(reg)
         
     global LAST_REGIME
     LAST_REGIME = reg
