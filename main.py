@@ -1631,6 +1631,52 @@ def dynamic_top_n(reg: Dict[str, Any]) -> int:
 
     return 6
 
+def acc_quality_score(r: Dict[str, Any], reg: Dict[str, Any]) -> float:
+    score = float(
+        r.get("acc_pro_score",
+        r.get("accumulation_score", 0)) or 0
+    )
+
+    pct = safe_float(r.get("change", r.get("pct_change", 0)), 0.0)
+    vol = safe_float(r.get("volume"), 0.0)
+    band = safe_float(r.get("acc_band_pct", r.get("band_pct", 99)), 99.0)
+
+    if vol >= 100_000_000:
+        score += 12
+    elif vol >= 50_000_000:
+        score += 8
+    elif vol >= 20_000_000:
+        score += 4
+    else:
+        score -= 8
+
+    if -1.5 <= pct <= 1.5:
+        score += 8
+    elif -3.0 <= pct < -1.5:
+        score += 2
+    elif pct < -5.0:
+        score -= 15
+    elif pct > 4.0:
+        score -= 10
+
+    if band <= 20:
+        score += 10
+    elif band <= 35:
+        score += 5
+    elif band > 60:
+        score -= 10
+
+    name = str((reg or {}).get("name", "")).upper()
+
+    if name == "RISK_OFF":
+        score -= 15
+    elif name == "VOLATILE":
+        score -= 5
+    elif name == "MOMO_UP":
+        score += 8
+
+    return max(0.0, min(100.0, score))
+
 def format_regime_line(reg: Dict[str, Any]) -> str:
     try:
         name = reg.get("name", "n/a")
@@ -2963,6 +3009,8 @@ def build_accumulation_pro_section(rows):
                 continue
 
             pct_v = safe_float(r.get("change", r.get("pct_change", 0)), 0.0)
+            if pct_v < -7:
+            continue
             close_v = safe_float(r.get("close", 0), 0.0)
             volume_v = safe_float(r.get("volume", 0), 0.0)
 
@@ -2970,7 +3018,7 @@ def build_accumulation_pro_section(rows):
             if pct_v > -1.20:
                 continue
 
-            if pct_v < -5.00:
+            if pct_v < -6.00:
                 continue
 
             hcm_score, hcm_label = calc_acc_hcm_score(volume_v)
@@ -2982,6 +3030,19 @@ def build_accumulation_pro_section(rows):
                 + hcm_score
                 + band_score
             )
+            
+            quality_score = acc_quality_score(r, reg)
+
+            min_quality = 45
+
+            if reg.get("score", 0) < 40:
+                min_quality = 60
+
+            elif reg.get("score", 0) < 60:
+                min_quality = 50
+
+            if quality_score < min_quality:
+                continue
 
             r["acc_hcm_label"] = hcm_label
             r["acc_band_label"] = band_label
@@ -3025,6 +3086,21 @@ def build_accumulation_pro_section(rows):
         if reg.get("score", 0) < 40:
             top_pick_count = 1
 
+        accumulation_rows = sorted(
+            accumulation_rows,
+            key=lambda x: acc_quality_score(x, reg),
+            reverse=True
+        )
+        
+        accumulation_rows = [
+            r for r in accumulation_rows
+            if acc_quality_score(r, reg) >= 45
+        ]
+        
+        if not accumulation_rows:
+            lines.append("⚠️ <i>Kalite filtresinden geçen TOP PICK adayı yok.</i>")
+            return "\n".join(lines)
+        
         for top_i, top_r in enumerate(
             accumulation_rows[:top_pick_count], 1):
             top_t = (top_r.get("ticker") or "").strip().upper()
@@ -3052,6 +3128,7 @@ def build_accumulation_pro_section(rows):
             lines.append(
                 f"{top_i}. {top_t} | "
                 f"Acc:{top_acc:.1f} | "
+                f"Q:{acc_quality_score(top_r, reg):.1f} | "
                 f"{top_pct:+.2f}% | "
                 f"Fyt:{top_close:.2f} | "
                 f"Hcm:{top_hcm} | "
