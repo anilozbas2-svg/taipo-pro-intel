@@ -4229,7 +4229,7 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-        top_n = dynamic_top_n(reg)
+    top_n = dynamic_top_n(reg)
 
     global LAST_REGIME
     LAST_REGIME = reg
@@ -4272,7 +4272,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-        top_n = dynamic_top_n(reg)
+    top_n = dynamic_top_n(reg)
         
     global LAST_REGIME
     LAST_REGIME = reg
@@ -4395,7 +4395,7 @@ async def job_alarm_scan(context: ContextTypes.DEFAULT_TYPE, force: bool = False
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-           top_n = dynamic_top_n(reg)
+        top_n = dynamic_top_n(reg)
         await maybe_send_rejim_transition(context, reg)
 
         global LAST_REGIME
@@ -4731,7 +4731,7 @@ async def job_tomorrow_list(context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
         update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
         reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
-            top_n = dynamic_top_n(reg)
+        top_n = dynamic_top_n(reg)
             
         LAST_REGIME = reg
 
