@@ -2459,7 +2459,12 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
         ch = r.get("change", float("nan"))
         cl = r.get("close", float("nan"))
         vol = r.get("volume", float("nan"))
-        score = r.get("accumulation_score", 0)
+        score = (
+            r.get("acc_quality_score")
+            or r.get("score")
+            or r.get("accumulation_score")
+            or 0
+        )
 
         ch_s = "n/a" if (ch != ch) else f"{ch:+.2f}"
         cl_s = "n/a" if (cl != cl) else f"{cl:.2f}"
