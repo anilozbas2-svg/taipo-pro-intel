@@ -2429,11 +2429,11 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
         quality_score = acc_quality_score(r, reg)
         r["acc_quality_score"] = quality_score
         
-        if in_topN and (0.00 <= ch <= 0.60) and quality_score >= 55:
+        if in_topN and (0.00 <= ch <= 1.20) and quality_score >= 35:
             r["signal"] = "🧲"
             r["signal_text"] = "TOPLAMA"
             continue
-        if in_topN and (-0.60 <= ch < 0.00) and quality_score >= 50:
+        if in_topN and (-1.20 <= ch < 0.00) and quality_score >= 30:
             r["signal"] = "🪝"
             r["signal_text"] = "DİP TOPLAMA"
             continue
