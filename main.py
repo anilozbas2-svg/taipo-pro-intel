@@ -2472,7 +2472,7 @@ def make_table(rows: List[Dict[str, Any]], title: str, include_kind: bool = Fals
         vol_s = format_volume(vol)[:6]
 
         try:
-            score_s = f"{int(score)}/100" if score is not None else "-"
+            score_s = f"{int(score * 10)}/100" if score is not None and score <= 10 else f"{int(score)}/100"
         except Exception:
             score_s = "-"
 
