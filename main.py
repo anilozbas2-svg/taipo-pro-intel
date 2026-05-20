@@ -3076,7 +3076,7 @@ def build_accumulation_pro_section(rows):
 
         top_hcm = format_volume(top_vol) if "format_volume" in globals() else str(top_vol or "n/a")
 
-        lines.append("🔥 <b>TOP PICKS</b>")
+        lines.append("🧊 <b>TOP PICKS - Gözlem</b>")
 
         top_pick_count = 3
 
