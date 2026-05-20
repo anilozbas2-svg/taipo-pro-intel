@@ -1632,19 +1632,21 @@ def dynamic_top_n(reg: Dict[str, Any]) -> int:
     return 6
 
 def format_regime_line(reg: Dict[str, Any]) -> str:
-    if not reg or not reg.get("enabled", False):
-        return "🧭 <b>Rejim</b>: <b>OFF</b>"
-    nm = reg.get("name", "n/a")
-    tr = reg.get("trend", "n/a")
-    vol = reg.get("volatility", float("nan"))
-    gap = reg.get("gap_pct", float("nan"))
-    vol_s = "n/a" if vol != vol else f"{vol:.2f}"
-    gap_s = "n/a" if gap != gap else f"{gap:+.2f}%"
-    blk = "⛔️ BLOK" if reg.get("block") else "✅ OK"
-    rsn = reg.get("reason", "")
-    rsn_s = f" • <i>{rsn}</i>" if rsn else ""
-    momo = " 🚀" if reg.get("name") == "MOMO_UP" else ""
-    return f"🧭 <b>Rejim</b>: <b>{nm}</b>{momo} (trend={tr}, vol={vol_s}, gap={gap_s}) • <b>{blk}</b>{rsn_s}"
+    try:
+        name = reg.get("name", "n/a")
+        trend = reg.get("trend", "n/a")
+        vol = reg.get("volatility", float("nan"))
+        gap = reg.get("gap_pct", float("nan"))
+        score = int(reg.get("score", 0) or 0)
+        ok = "✅ OK" if reg.get("allow_trade") else "⛔ BLOK"
+
+        return (
+            f"🧭 <b>Rejim</b>: {name} "
+            f"(score={score}, trend={trend}, vol={vol:.2f}, gap={gap:+.2f}%) "
+            f"• {ok} • {reg.get('reason', '')}"
+        )
+    except Exception:
+        return "🧭 <b>Rejim</b>: n/a"
 
 def apply_regime_gate_to_rows(rows: List[Dict[str, Any]], reg: Dict[str, Any]) -> None:
     if not REJIM_ENABLED or not reg or not reg.get("block"):
@@ -3013,11 +3015,49 @@ def build_accumulation_pro_section(rows):
 
         top_hcm = format_volume(top_vol) if "format_volume" in globals() else str(top_vol or "n/a")
 
-        lines.append(
-            "🔥 <b>TOP PICK</b>\n"
-            f"{top_t} | Acc:{top_acc:.1f} | {top_pct:+.2f}% | "
-            f"Fyt:{top_close:.2f} | Hcm:{top_hcm} | Band:{top.get('acc_band_label', 'n/a')}"
-        )
+        lines.append("🔥 <b>TOP PICKS</b>")
+
+        top_pick_count = 3
+
+        if reg.get("score", 0) < 60:
+            top_pick_count = 2
+
+        if reg.get("score", 0) < 40:
+            top_pick_count = 1
+
+        for top_i, top_r in enumerate(
+            accumulation_rows[:top_pick_count], 1):
+            top_t = (top_r.get("ticker") or "").strip().upper()
+
+            top_acc = float(
+                top_r.get("acc_pro_score",
+                top_r.get("accumulation_score", 0)) or 0
+            )
+
+            top_pct = float(
+                top_r.get("change",
+                top_r.get("pct_change", 0)) or 0
+            )
+
+            top_close = float(top_r.get("close", 0) or 0)
+
+            top_vol = top_r.get("volume")
+
+            top_hcm = (
+                format_volume(top_vol)
+                if "format_volume" in globals()
+                else str(top_vol or "n/a")
+            )
+
+            lines.append(
+                f"{top_i}. {top_t} | "
+                f"Acc:{top_acc:.1f} | "
+                f"{top_pct:+.2f}% | "
+                f"Fyt:{top_close:.2f} | "
+                f"Hcm:{top_hcm} | "
+                f"Band:{top_r.get('acc_band_label', 'n/a')}"
+            )
+
         lines.append("")
 
         for i, r in enumerate(accumulation_rows, 1):
