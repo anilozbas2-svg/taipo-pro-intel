@@ -2401,7 +2401,7 @@ def compute_signal_rows(rows: List[Dict[str, Any]], xu100_change: float, top_n: 
 
 def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: float, min_vol_threshold: float) -> None:
     
-    reg = detect_market_regime(xu100_change)
+    reg = LAST_REGIME or {"score": 70}
     
     for r in rows:
         # R0 yakalandıysa üstüne yazma (opsiyonel ama güzel)
