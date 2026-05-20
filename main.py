@@ -3010,7 +3010,7 @@ def build_accumulation_pro_section(rows):
 
             pct_v = safe_float(r.get("change", r.get("pct_change", 0)), 0.0)
             if pct_v < -7:
-            continue
+                continue
             close_v = safe_float(r.get("close", 0), 0.0)
             volume_v = safe_float(r.get("volume", 0), 0.0)
 
