@@ -5605,18 +5605,37 @@ def schedule_jobs(app: Application) -> None:
     logger.info("ALARM gecici olarak koddan kapatildi.")
 
     # -------------------------
-    # Tomorrow daily (AKTİF)
+    # EOD report daily
     # -------------------------
     jq.run_daily(
-        job_tomorrow_list,
+        job_eod_report,
         time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
-        name="tomorrow_daily_at_eod_time",
+        name="eod_report_daily",
     )
+
     logger.info(
-        "Tomorrow scheduled daily at %02d:%02d",
+        "EOD report scheduled daily at %02d:%02d",
         EOD_HOUR,
         EOD_MINUTE,
     )
+    
+    # -------------------------
+    # Tomorrow daily (MANUEL MOD)
+    # -------------------------
+
+    if False:
+
+        jq.run_daily(
+            job_tomorrow_list,
+            time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
+            name="tomorrow_daily_at_eod_time",
+        )
+
+        logger.info(
+            "Tomorrow scheduled daily at %02d:%02d",
+            EOD_HOUR,
+            EOD_MINUTE,
+        )
 
     # -------------------------
     # TV Snapshot daily
