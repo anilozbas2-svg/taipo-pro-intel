@@ -606,19 +606,37 @@ def build_rebound_watch(rows, xu100_pct=0.0, top_n=None):
         score = 0.0
 
         if rel_strength >= REBOUND_MIN_REL_STRENGTH:
-            score += 30.0
-
-        if vol_ratio >= REBOUND_MIN_VOL_RATIO:
             score += 25.0
+            score += min(max(rel_strength, 0.0) * 3.0, 20.0)
 
-        if close_pos >= REBOUND_MIN_CLOSE_POS:
-            score += 25.0
+        if vol_ratio >= 1.20:
+            score += 12.0
+        if vol_ratio >= 1.50:
+            score += 8.0
+        if vol_ratio >= 2.00:
+            score += 8.0
 
-        if pct >= REBOUND_MAX_NEGATIVE_PCT:
+        if close_pos >= 55:
             score += 10.0
+        if close_pos >= 70:
+            score += 10.0
+        if close_pos >= 85:
+            score += 8.0
 
         if pct > 0:
-            score += 10.0
+            score += min(pct * 1.5, 18.0)
+        elif pct >= REBOUND_MAX_NEGATIVE_PCT:
+            score += 6.0
+
+        if volume >= 300_000_000:
+            score += 8.0
+        elif volume >= 150_000_000:
+            score += 5.0
+
+        if pct >= 10.0:
+            score -= 5.0
+
+        score = max(1.0, min(99.0, score))
 
         if score < REBOUND_MIN_SCORE:
             continue
@@ -2412,7 +2430,21 @@ def format_30d_note(ticker: str, current_close: float) -> str:
 def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
-    payload = {"symbols": {"tickers": symbols}, "columns": ["close", "change", "volume", "open"]}
+    payload = {
+        "symbols": {"tickers": symbols},
+        "columns": [
+            "close",
+            "change",
+            "volume",
+            "open",
+            "relative_volume_10d_calc",
+            "average_volume_30d_calc",
+            "Value.Traded",
+            "Perf.3M",
+            "High.3M",
+            "Low.3M",
+        ],
+    }
     for attempt in range(3):
         try:
             r = requests.post(TV_SCAN_URL, json=payload, timeout=TV_TIMEOUT)
@@ -2428,11 +2460,30 @@ def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 if not sym or not isinstance(d, list) or len(d) < 4:
                     continue
                 short = sym.split(":")[-1].strip().upper()
+                
+                close_v = safe_float(d[0])
+                high_3m_v = safe_float(d[8])
+                low_3m_v = safe_float(d[9])
+
+                if high_3m_v > low_3m_v:
+                    close_pos_v = ((close_v - low_3m_v) / (high_3m_v - low_3m_v)) * 100.0
+                    close_pos_v = max(0.0, min(100.0, close_pos_v))
+                else:
+                    close_pos_v = 50.0
+                
                 out[short] = {
                     "close": safe_float(d[0]),
                     "change": safe_float(d[1]),
                     "volume": safe_float(d[2]),
                     "open": safe_float(d[3]),
+
+                    "vol_ratio": safe_float(d[4], 1.0),
+                    "avg_volume_30d": safe_float(d[5]),
+                    "value_traded": safe_float(d[6]),
+                    "perf_3m": safe_float(d[7]),
+                    "high_3m": safe_float(d[8]),
+                    "low_3m": safe_float(d[9]),
+                    "close_pos": close_pos_v,
                 }
             return out
         except Exception as e:
