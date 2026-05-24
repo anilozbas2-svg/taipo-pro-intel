@@ -4582,6 +4582,99 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         disable_web_page_preview=True
     )
 
+async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not ALARM_CHAT_ID:
+        return
+
+    try:
+        xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
+
+        update_index_history(
+            today_key_tradingday(),
+            xu_close,
+            xu_change,
+            xu_vol,
+            xu_open
+        )
+
+        reg = compute_regime(
+            xu_close,
+            xu_change,
+            xu_vol,
+            xu_open
+        )
+
+        top_n = dynamic_top_n(reg)
+
+        rows = await build_alarm_rows(
+            top_n=top_n,
+            xu_change=xu_change,
+            reg=reg
+        )
+
+        toplama = [r for r in rows if r.get("kind") == "TOPLAMA"]
+        dip = [r for r in rows if r.get("kind") == "DIP"]
+        ayr = [r for r in rows if r.get("kind") == "AYR"]
+        kar = [r for r in rows if r.get("kind") == "KAR"]
+
+        thresh_s = human_volume(dynamic_threshold(reg))
+
+        msg = (
+            f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
+            f"📊 <b>XU100</b>: {xu_close:,.2f} • {xu_change:+.2f}%\n"
+            f"{format_regime_line(reg)}\n"
+            f"🧱 <b>Top{top_n} Eşik</b>: ≥ <b>{thresh_s}</b>\n\n"
+            f"🧠 TOPLAMA: <b>{len(toplama)}</b> | "
+            f"🧲 DİP: <b>{len(dip)}</b> | "
+            f"🫀 AYR: <b>{len(ayr)}</b> | "
+            f"⚠️ KAR: <b>{len(kar)}</b>\n"
+        )
+
+        msg += "\n" + make_table(
+            top_by_vol(toplama, 8),
+            " TOPLAMA – Top 8",
+            include_kind=True
+        )
+
+        msg += "\n\n" + make_table(
+            top_by_vol(dip, 8),
+            " DİP TOPLAMA – Top 8",
+            include_kind=True
+        )
+
+        if REBOUND_WATCH_ENABLED:
+            try:
+                rebound_picks = build_rebound_watch(
+                    rows,
+                    xu100_pct=xu_change
+                )
+
+                msg += format_rebound_watch(
+                    rebound_picks,
+                    xu100_pct=xu_change
+                )
+
+            except Exception as e:
+                logger.warning(
+                    "REBOUND WATCH AUTO block failed: %s",
+                    e
+                )
+
+                msg += (
+                    "\n\n💪 <b>GÜÇLÜ KALANLAR / REBOUND WATCH</b>\n"
+                    "Hesaplanamadı."
+                )
+
+        await context.bot.send_message(
+            chat_id=int(ALARM_CHAT_ID),
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+
+    except Exception as e:
+        logger.exception("job_eod_report error: %s", e)
+
 async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WHALE_ENABLED:
         await update.message.reply_text("🐋 Whale kapalı (WHALE_ENABLED=0).")
