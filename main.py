@@ -177,6 +177,18 @@ EOD_MINUTE = int(os.getenv("EOD_MINUTE", "30"))
 TOMORROW_DELAY_MIN = int(os.getenv("TOMORROW_DELAY_MIN", "2"))
 
 # ===============================
+# REBOUND WATCH / GÜÇLÜ KALANLAR
+# ===============================
+REBOUND_WATCH_ENABLED = os.getenv("REBOUND_WATCH_ENABLED", "1").strip() == "1"
+REBOUND_WATCH_TOP_N = int(os.getenv("REBOUND_WATCH_TOP_N", "8"))
+
+REBOUND_MIN_VOL_RATIO = float(os.getenv("REBOUND_MIN_VOL_RATIO", "1.20"))
+REBOUND_MIN_CLOSE_POS = float(os.getenv("REBOUND_MIN_CLOSE_POS", "55"))
+REBOUND_MAX_NEGATIVE_PCT = float(os.getenv("REBOUND_MAX_NEGATIVE_PCT", "-4.50"))
+REBOUND_MIN_REL_STRENGTH = float(os.getenv("REBOUND_MIN_REL_STRENGTH", "1.50"))
+REBOUND_MIN_SCORE = float(os.getenv("REBOUND_MIN_SCORE", "50"))
+
+# ===============================
 # Runtime caches (in-memory)
 # ===============================
 
@@ -535,7 +547,124 @@ def safe_float(x: Any, default: float = 0.0) -> float:
 
     except Exception:
         return default
-        
+
+def build_rebound_watch(rows, xu100_pct=0.0, top_n=None):
+    if top_n is None:
+        top_n = REBOUND_WATCH_TOP_N
+
+    picks = []
+
+    for r in rows or []:
+        try:
+            sym = str(
+                r.get("ticker")
+                or r.get("symbol")
+                or r.get("name")
+                or ""
+            ).replace("BIST:", "").strip().upper()
+
+            pct = safe_float(
+                r.get("change")
+                or r.get("change_pct")
+                or r.get("pct")
+                or r.get("daily_pct"),
+                0.0
+            )
+
+            price = safe_float(
+                r.get("close")
+                or r.get("price")
+                or r.get("last"),
+                0.0
+            )
+
+            volume = safe_float(r.get("volume"), 0.0)
+
+            vol_ratio = safe_float(
+                r.get("vol_ratio")
+                or r.get("volume_ratio")
+                or r.get("rel_volume")
+                or r.get("relative_volume_10d_calc"),
+                1.0
+            )
+
+            close_pos = safe_float(
+                r.get("close_pos")
+                or r.get("ClosePos")
+                or r.get("pos")
+                or r.get("band_pos"),
+                50.0
+            )
+        except Exception:
+            continue
+
+        if not sym:
+            continue
+
+        rel_strength = pct - safe_float(xu100_pct, 0.0)
+
+        score = 0.0
+
+        if rel_strength >= REBOUND_MIN_REL_STRENGTH:
+            score += 30.0
+
+        if vol_ratio >= REBOUND_MIN_VOL_RATIO:
+            score += 25.0
+
+        if close_pos >= REBOUND_MIN_CLOSE_POS:
+            score += 25.0
+
+        if pct >= REBOUND_MAX_NEGATIVE_PCT:
+            score += 10.0
+
+        if pct > 0:
+            score += 10.0
+
+        if score < REBOUND_MIN_SCORE:
+            continue
+
+        picks.append({
+            "symbol": sym,
+            "score": round(score, 1),
+            "pct": pct,
+            "price": price,
+            "volume": volume,
+            "vol_ratio": vol_ratio,
+            "close_pos": close_pos,
+            "rel_strength": rel_strength,
+        })
+
+    picks.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return picks[:top_n]
+
+def format_rebound_watch(picks, xu100_pct=0.0):
+    if not picks:
+        return (
+            "\n\n💪 <b>GÜÇLÜ KALANLAR / REBOUND WATCH</b>\n"
+            "Uygun aday yok."
+        )
+
+    lines = []
+    lines.append("\n\n💪 <b>GÜÇLÜ KALANLAR / REBOUND WATCH</b>")
+    lines.append("Endekse göre güçlü kalan fırsat adayları:")
+    lines.append("<pre>")
+    lines.append("HISSE   SKOR   %      GUC    HACIM  CP")
+    lines.append("---------------------------------------")
+
+    for p in picks:
+        lines.append(
+            f"{p['symbol'][:7]:<7} "
+            f"{p['score']:>4.0f} "
+            f"{p['pct']:>6.2f} "
+            f"{p['rel_strength']:>6.2f} "
+            f"{p['vol_ratio']:>5.2f}x "
+            f"{p['close_pos']:>3.0f}"
+        )
+
+    lines.append("</pre>")
+    lines.append("Not: Direkt AL değil; ertesi gün erken takip listesidir.")
+    return "\n".join(lines)
+
 def calc_acc_hcm_score(volume: Any) -> tuple[float, str]:
     vol = safe_float(volume, 0.0)
 
@@ -4436,10 +4565,22 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🧱 <b>Top{top_n} Eşik</b>: ≥ <b>{thresh_s}</b>\n\n"
         f"🧠 TOPLAMA: <b>{len(toplama)}</b> | 🧲 DİP: <b>{len(dip)}</b> | 🧠 AYR: <b>{len(ayr)}</b> | ⚠️ KAR: <b>{len(kar)}</b>\n"
     )
-    msg += "\n" + make_table(top_by_vol(toplama, 8), "🧠 <b>TOPLAMA – Top 8</b>", include_kind=True)
-    msg += "\n\n" + make_table(top_by_vol(dip, 8), "🧲 <b>DİP TOPLAMA – Top 8</b>", include_kind=True)
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    msg += "\n" + make_table(top_by_vol(toplama, 8), " TOPLAMA – Top 8", include_kind=True)
+    msg += "\n\n" + make_table(top_by_vol(dip, 8), " DİP TOPLAMA – Top 8", include_kind=True)
 
+    if REBOUND_WATCH_ENABLED:
+        try:
+            rebound_picks = build_rebound_watch(rows, xu100_pct=xu_change)
+            msg += format_rebound_watch(rebound_picks, xu100_pct=xu_change)
+        except Exception as e:
+            logger.warning("REBOUND WATCH block failed: %s", e)
+            msg += "\n\n💪 <b>GÜÇLÜ KALANLAR / REBOUND WATCH</b>\nHesaplanamadı."
+
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
 
 async def cmd_whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WHALE_ENABLED:
