@@ -2544,6 +2544,7 @@ async def build_rows_from_is_list(is_list: List[str], xu100_change: float = floa
                     "signal_text": "",
                 }
             )
+        
         else:
             rows.append(
                 {
@@ -2551,6 +2552,16 @@ async def build_rows_from_is_list(is_list: List[str], xu100_change: float = floa
                     "close": d.get("close", float("nan")),
                     "change": d.get("change", float("nan")),
                     "volume": d.get("volume", float("nan")),
+                    "open": d.get("open", float("nan")),
+
+                    "vol_ratio": d.get("vol_ratio", 1.0),
+                    "avg_volume_30d": d.get("avg_volume_30d", float("nan")),
+                    "value_traded": d.get("value_traded", float("nan")),
+                    "perf_3m": d.get("perf_3m", float("nan")),
+                    "high_3m": d.get("high_3m", float("nan")),
+                    "low_3m": d.get("low_3m", float("nan")),
+                    "close_pos": d.get("close_pos", 50.0),
+
                     "signal": "-",
                     "signal_text": "",
                 }
