@@ -2615,17 +2615,20 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
     reg = LAST_REGIME or {"score": 70}
     
     for r in rows:
-        # R0 yakalandıysa üstüne yazma (opsiyonel ama güzel)
+        # R0 yakalandıysa üstüne yazma
         if r.get("signal_text") == "UÇAN (R0)":
             continue
 
         ch = r.get("change", float("nan"))
         vol = r.get("volume", float("nan"))
+
         if ch != ch:
             r["signal"] = "-"
             r["signal_text"] = ""
             continue
-        if ch >= 4.0:
+
+        # 1) KÂR filtresi yumuşatıldı: 4.0 -> 8.0
+        if ch >= 8.0:
             r["signal"] = "⚠️"
             r["signal_text"] = "KÂR KORUMA"
             continue
@@ -2640,11 +2643,14 @@ def _apply_signals_with_threshold(rows: List[Dict[str, Any]], xu100_change: floa
         quality_score = acc_quality_score(r, reg)
         r["acc_quality_score"] = quality_score
         
-        if in_topN and (-0.30 <= ch <= 2.50) and quality_score >= 10:
+        # 2) TOPLAMA bandı yumuşatıldı: -0.30/2.50 -> -0.50/4.50 ve kalite 10 -> 8
+        if in_topN and (-0.50 <= ch <= 4.50) and quality_score >= 8:
             r["signal"] = "🧲"
             r["signal_text"] = "TOPLAMA"
             continue
-        if in_topN and (-3.00 <= ch < 0.20) and quality_score >= 10:
+
+        # 3) DİP bandı yumuşatıldı: -3.00/0.20 -> -4.00/0.50 ve kalite 10 -> 8
+        if in_topN and (-4.00 <= ch < 0.50) and quality_score >= 8:
             r["signal"] = "🪝"
             r["signal_text"] = "DİP TOPLAMA"
             continue
