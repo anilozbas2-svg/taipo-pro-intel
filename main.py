@@ -153,6 +153,8 @@ BOT_VERSION = os.getenv(
 TV_SCAN_URL = "https://scanner.tradingview.com/turkey/scan"
 TV_TIMEOUT = 12
 
+TV_FIELD_DEBUG = os.getenv("TV_FIELD_DEBUG", "0").strip() == "1"
+
 # -----------------------------
 # Alarm config
 # -----------------------------
@@ -2470,6 +2472,24 @@ def tv_scan_symbols_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     close_pos_v = max(0.0, min(100.0, close_pos_v))
                 else:
                     close_pos_v = 50.0
+                
+                if high_3m_v > low_3m_v:
+                    close_pos_v = ((close_v - low_3m_v) / (high_3m_v - low_3m_v)) * 100.0
+                    close_pos_v = max(0.0, min(100.0, close_pos_v))
+                else:
+                    close_pos_v = 50.0
+
+                if TV_FIELD_DEBUG and len(out) < 5:
+                    logger.info(
+                        "TV_FIELD_DEBUG | sym=%s | len=%s | d=%s | vol_ratio=%s | high_3m=%s | low_3m=%s | close_pos=%s",
+                        short,
+                        len(d),
+                        d,
+                        safe_float(d[4], 1.0),
+                        safe_float(d[8]),
+                        safe_float(d[9]),
+                        close_pos_v,
+                    )
                 
                 out[short] = {
                     "close": safe_float(d[0]),
