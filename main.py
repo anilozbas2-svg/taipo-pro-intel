@@ -4837,6 +4837,112 @@ async def cmd_learner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     await update.message.reply_text("\n".join(lines))
 
+async def cmd_learner_update(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    history = _load_json(TAIPO_SIGNAL_HISTORY_FILE)
+
+    if not isinstance(history, dict) or not history:
+        await update.message.reply_text(
+            "TAIPO LEARNER UPDATE\nHenüz history yok."
+        )
+        return
+
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(perf, dict):
+        perf = {}
+
+    last_days = sorted(history.keys())[-3:]
+
+    updated = 0
+
+    for d in last_days:
+
+        day_items = history.get(d, {}) or {}
+
+        if not isinstance(day_items, dict):
+            continue
+
+        perf.setdefault(d, {})
+
+        for key, item in day_items.items():
+
+            try:
+
+                symbol = item.get("symbol", "")
+                signal_type = item.get("signal_type", "UNKNOWN")
+                entry_close = safe_float(
+                    item.get("close", 0.0)
+                )
+
+                current_close = entry_close
+
+                try:
+                    tv = tv_get_scan()
+                    rows = tv.get("data", [])
+
+                    for r in rows:
+                        s = str(
+                            r.get("s", "")
+                        ).replace("BIST:", "")
+
+                        if s == symbol:
+                            current_close = safe_float(
+                                r.get("d", [0])[0]
+                            )
+                            break
+
+                except Exception:
+                    pass
+
+                perf_pct = 0.0
+
+                if entry_close > 0:
+                    perf_pct = (
+                        (
+                            current_close
+                            - entry_close
+                        )
+                        / entry_close
+                    ) * 100.0
+
+                status = "FLAT"
+
+                if perf_pct >= 3:
+                    status = "SUCCESS"
+
+                elif perf_pct <= -3:
+                    status = "FAILED"
+
+                perf[d][key] = {
+                    "symbol": symbol,
+                    "signal_type": signal_type,
+                    "entry_close": round(entry_close, 4),
+                    "current_close": round(current_close, 4),
+                    "performance_pct": round(perf_pct, 2),
+                    "status": status,
+                }
+
+                updated += 1
+
+            except Exception as e:
+                logger.warning(
+                    "LEARNER UPDATE item error: %s",
+                    e
+                )
+
+    _atomic_write_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE,
+        perf
+    )
+
+    await update.message.reply_text(
+        f"TAIPO LEARNER UPDATE\nGüncellendi: {updated} kayıt"
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -6423,6 +6529,7 @@ def main() -> None:
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("learner", cmd_learner))
+    app.add_handler(CommandHandler("learner_update", cmd_learner_update))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
