@@ -4795,17 +4795,17 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.warning("REBOUND WATCH block failed: %s", e)
             msg += "\n\n💪 <b>GÜÇLÜ KALANLAR / REBOUND WATCH</b>\nHesaplanamadı."
             
-            learner_count = learner_save_eod_snapshot(
-                today_key_tradingday(),
-                rows,
-                reg,
-                xu_close,
-                xu_change,
-                rebound_picks,
-            )
+    learner_count = learner_save_eod_snapshot(
+        today_key_tradingday(),
+        rows,
+        reg,
+        xu_close,
+        xu_change,
+        rebound_picks,
+    )
 
-            msg += f"\n\n TAIPO LEARNER\nKayıt: {learner_count} sinyal"
-            
+    msg += f"\n\n TAIPO LEARNER\nKayıt: {learner_count} sinyal"
+
     await update.message.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
