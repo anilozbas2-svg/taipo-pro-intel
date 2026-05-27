@@ -4943,6 +4943,81 @@ async def cmd_learner_update(
         f"TAIPO LEARNER UPDATE\nGüncellendi: {updated} kayıt"
     )
 
+async def cmd_learner_stats(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(perf, dict) or not perf:
+        await update.message.reply_text(
+            "TAIPO LEARNER STATS\nHenüz performans kaydı yok."
+        )
+        return
+
+    stats = {}
+
+    for day, items in perf.items():
+
+        if not isinstance(items, dict):
+            continue
+
+        for item in items.values():
+
+            sig = item.get("signal_type", "UNKNOWN")
+            pct = safe_float(item.get("performance_pct"), 0.0)
+
+            stats.setdefault(sig, {
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "flat": 0,
+                "sum_pct": 0.0,
+            })
+
+            stats[sig]["total"] += 1
+            stats[sig]["sum_pct"] += pct
+
+            if pct >= 3:
+                stats[sig]["success"] += 1
+            elif pct <= -3:
+                stats[sig]["failed"] += 1
+            else:
+                stats[sig]["flat"] += 1
+
+    lines = [
+        "TAIPO LEARNER STATS",
+        "",
+        "Sinyal performans özeti:"
+    ]
+
+    for sig, s in sorted(
+        stats.items(),
+        key=lambda x: x[1]["total"],
+        reverse=True
+    ):
+
+        total = s["total"]
+        success = s["success"]
+        failed = s["failed"]
+        flat = s["flat"]
+        avg_pct = s["sum_pct"] / total if total else 0.0
+        hit_rate = (success / total) * 100 if total else 0.0
+
+        lines.append("")
+        lines.append(f"{sig}")
+        lines.append(f"Toplam: {total}")
+        lines.append(f"Başarılı: {success}")
+        lines.append(f"Başarısız: {failed}")
+        lines.append(f"Nötr: {flat}")
+        lines.append(f"Hit-rate: %{hit_rate:.1f}")
+        lines.append(f"Ortalama getiri: %{avg_pct:.2f}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -6530,6 +6605,7 @@ def main() -> None:
     app.add_handler(CommandHandler("eod", cmd_eod))
     app.add_handler(CommandHandler("learner", cmd_learner))
     app.add_handler(CommandHandler("learner_update", cmd_learner_update))
+    app.add_handler(CommandHandler("learner_stats", cmd_learner_stats))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
