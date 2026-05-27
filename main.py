@@ -5018,6 +5018,102 @@ async def cmd_learner_stats(
         "\n".join(lines)
     )
 
+async def cmd_learner_top(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(perf, dict) or not perf:
+        await update.message.reply_text(
+            "TAIPO LEARNER TOP\nHenüz performans kaydı yok."
+        )
+        return
+
+    rows = []
+
+    for day, items in perf.items():
+        if not isinstance(items, dict):
+            continue
+
+        for item in items.values():
+            rows.append(item)
+
+    if not rows:
+        await update.message.reply_text(
+            "TAIPO LEARNER TOP\nÖlçülebilir kayıt yok."
+        )
+        return
+
+    best_symbols = sorted(
+        rows,
+        key=lambda x: safe_float(x.get("performance_pct"), 0.0),
+        reverse=True
+    )[:10]
+
+    signal_stats = {}
+
+    for r in rows:
+        sig = r.get("signal_type", "UNKNOWN")
+        pct = safe_float(r.get("performance_pct"), 0.0)
+
+        signal_stats.setdefault(sig, {
+            "total": 0,
+            "success": 0,
+            "sum_pct": 0.0,
+        })
+
+        signal_stats[sig]["total"] += 1
+        signal_stats[sig]["sum_pct"] += pct
+
+        if pct >= 3:
+            signal_stats[sig]["success"] += 1
+
+    ranked_signals = sorted(
+        signal_stats.items(),
+        key=lambda x: (
+            (x[1]["success"] / x[1]["total"]) if x[1]["total"] else 0,
+            x[1]["sum_pct"] / x[1]["total"] if x[1]["total"] else 0
+        ),
+        reverse=True
+    )
+
+    lines = [
+        "TAIPO LEARNER TOP",
+        "",
+        "En iyi sinyal tipleri:"
+    ]
+
+    for sig, s in ranked_signals[:5]:
+        total = s["total"]
+        success = s["success"]
+        hit = (success / total) * 100 if total else 0.0
+        avg = s["sum_pct"] / total if total else 0.0
+
+        lines.append("")
+        lines.append(f"{sig}")
+        lines.append(f"Toplam: {total}")
+        lines.append(f"Hit-rate: %{hit:.1f}")
+        lines.append(f"Ort. getiri: %{avg:.2f}")
+
+    lines.append("")
+    lines.append("En iyi hisseler:")
+
+    for r in best_symbols:
+        sym = r.get("symbol", "-")
+        sig = r.get("signal_type", "-")
+        pct = safe_float(r.get("performance_pct"), 0.0)
+        status = r.get("status", "UNKNOWN")
+
+        lines.append(
+            f"{sym} | {sig} | %{pct:.2f} | {status}"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -6606,6 +6702,7 @@ def main() -> None:
     app.add_handler(CommandHandler("learner", cmd_learner))
     app.add_handler(CommandHandler("learner_update", cmd_learner_update))
     app.add_handler(CommandHandler("learner_stats", cmd_learner_stats))
+    app.add_handler(CommandHandler("learner_top", cmd_learner_top))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
