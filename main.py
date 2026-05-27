@@ -4924,7 +4924,15 @@ async def cmd_learner_update(
                     "current_close": round(current_close, 4),
                     "performance_pct": round(perf_pct, 2),
                     "status": status,
-                }
+
+                    "t1": 0.0,
+                    "t2": 0.0,
+                    "t3": 0.0,
+                    "t5": 0.0,
+                    "max_return": 0.0,
+                    "min_return": 0.0,
+                    "best_day": 0,
+                    "follow_days": 0,
 
                 updated += 1
 
