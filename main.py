@@ -4860,6 +4860,13 @@ async def cmd_learner_update(
     updated = 0
 
     for d in last_days:
+        
+        try:
+        source_dt = datetime.strptime(d, "%Y-%m-%d").date()
+        today_dt = datetime.now(TZ).date()
+        day_diff = (today_dt - source_dt).days
+    except Exception:
+        day_diff = 0
 
         day_items = history.get(d, {}) or {}
 
@@ -4910,12 +4917,47 @@ async def cmd_learner_update(
                     ) * 100.0
 
                 status = "FLAT"
+                
+                if day_diff >= 1:
+                    perf_t1 = perf_pct
+                else:
+                    perf_t1 = 0.0
+
+                if day_diff >= 2:
+                    perf_t2 = perf_pct
+                else:
+                    perf_t2 = 0.0
+
+                if day_diff >= 3:
+                    perf_t3 = perf_pct
+                else:
+                    perf_t3 = 0.0
+
+                if day_diff >= 5:
+                    perf_t5 = perf_pct
+                else:
+                    perf_t5 = 0.0
 
                 if perf_pct >= 3:
                     status = "SUCCESS"
 
                 elif perf_pct <= -3:
                     status = "FAILED"
+
+                old_item = perf.get(d, {}).get(key, {})
+
+                old_max = safe_float(
+                    old_item.get("max_return"),
+                    perf_pct
+                )
+
+                old_min = safe_float(
+                    old_item.get("min_return"),
+                    perf_pct
+                )
+
+                max_return = max(old_max, perf_pct)
+                min_return = min(old_min, perf_pct)
 
                 perf[d][key] = {
                     "symbol": symbol,
@@ -4924,12 +4966,12 @@ async def cmd_learner_update(
                     "current_close": round(current_close, 4),
                     "performance_pct": round(perf_pct, 2),
                     "status": status,
-                    "t1": 0.0,
-                    "t2": 0.0,
-                    "t3": 0.0,
-                    "t5": 0.0,
-                    "max_return": 0.0,
-                    "min_return": 0.0,
+                    "t1": round(perf_t1, 2),
+                    "t2": round(perf_t2, 2),
+                    "t3": round(perf_t3, 2),
+                    "t5": round(perf_t5, 2),
+                    "max_return": round(max_return, 2),
+                    "min_return": round(min_return, 2),
                     "best_day": 0,
                     "follow_days": 0,
                 }
