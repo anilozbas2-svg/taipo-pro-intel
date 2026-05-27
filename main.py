@@ -4862,9 +4862,9 @@ async def cmd_learner_update(
     for d in last_days:
         
         try:
-        source_dt = datetime.strptime(d, "%Y-%m-%d").date()
-        today_dt = datetime.now(TZ).date()
-        day_diff = (today_dt - source_dt).days
+            source_dt = datetime.strptime(d, "%Y-%m-%d").date()
+            today_dt = datetime.now(TZ).date()
+            day_diff = (today_dt - source_dt).days
     except Exception:
         day_diff = 0
 
