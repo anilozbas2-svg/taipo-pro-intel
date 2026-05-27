@@ -4920,6 +4920,17 @@ async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                     "Hesaplanamadı."
                 )
 
+        learner_count = learner_save_eod_snapshot(
+            today_key_tradingday(),
+            rows,
+            reg,
+            xu_close,
+            xu_change,
+            rebound_picks,
+        )
+
+        msg += f"\n\n TAIPO LEARNER\nKayıt: {learner_count} sinyal"
+        
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
             text=msg,
