@@ -4801,6 +4801,31 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         disable_web_page_preview=True
     )
 
+async def cmd_learner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    history = _load_json(TAIPO_SIGNAL_HISTORY_FILE)
+    if not isinstance(history, dict) or not history:
+        await update.message.reply_text("TAIPO LEARNER\nHenüz kayıt yok.")
+        return
+
+    days = sorted(history.keys())[-5:]
+    lines = ["TAIPO LEARNER", "", "Son kayıtlar:"]
+
+    for d in days:
+        items = history.get(d, {}) or {}
+        counts = {}
+
+        for item in items.values():
+            sig = item.get("signal_type", "UNKNOWN")
+            counts[sig] = counts.get(sig, 0) + 1
+
+        part = " | ".join([f"{k}: {v}" for k, v in counts.items()])
+        lines.append(f"{d} → {len(items)} sinyal")
+
+        if part:
+            lines.append(f"  {part}")
+
+    await update.message.reply_text("\n".join(lines))
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
