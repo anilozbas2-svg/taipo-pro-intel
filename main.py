@@ -5122,11 +5122,22 @@ async def cmd_learner_top(
     )[:10]
 
     signal_stats = {}
+        
+        total_return = 0.0
+        success_count = 0
+        failed_count = 0
 
     for r in rows:
         sig = r.get("signal_type", "UNKNOWN")
         pct = safe_float(r.get("performance_pct"), 0.0)
 
+        total_return += pct
+
+        if pct >= 3:
+            success_count += 1
+        elif pct <= -3:
+            failed_count += 1
+        
         signal_stats.setdefault(sig, {
             "total": 0,
             "success": 0,
@@ -5148,8 +5159,19 @@ async def cmd_learner_top(
         reverse=True
     )
 
+    total_count = len(rows)
+    avg_return_all = total_return / total_count if total_count else 0.0
+    hit_rate_all = (success_count / total_count) * 100 if total_count else 0.0
+    fail_rate_all = (failed_count / total_count) * 100 if total_count else 0.0
+    
     lines = [
         "TAIPO LEARNER TOP",
+        "",
+        "Genel model özeti:",
+        f"Toplam kayıt: {total_count}",
+        f"Hit-rate: %{hit_rate_all:.1f}",
+        f"Fail-rate: %{fail_rate_all:.1f}",
+        f"Ort. getiri: %{avg_return_all:.2f}",
         "",
         "En iyi sinyal tipleri:"
     ]
