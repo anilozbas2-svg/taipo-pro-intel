@@ -216,6 +216,11 @@ WATCHLIST_MAX = int(os.getenv("WATCHLIST_MAX", "12"))
 VOLUME_TOP_N = int(os.getenv("VOLUME_TOP_N", "50"))
 
 DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
+
+TAIPO_SIGNAL_HISTORY_FILE = os.path.join(DATA_DIR, "taipo_signal_history.json")
+TAIPO_SIGNAL_PERFORMANCE_FILE = os.path.join(DATA_DIR, "taipo_signal_performance.json")
+TAIPO_DAILY_EOD_SNAPSHOTS_FILE = os.path.join(DATA_DIR, "taipo_daily_eod_snapshots.json")
+
 # ===============================
 # ACC ENTRY ENGINE config
 # ===============================
@@ -549,6 +554,130 @@ def safe_float(x: Any, default: float = 0.0) -> float:
 
     except Exception:
         return default
+
+def learner_symbol(row: Dict[str, Any]) -> str:
+    return str(
+        row.get("ticker")
+        or row.get("symbol")
+        or row.get("name")
+        or ""
+    ).replace("BIST:", "").replace(".IS", "").strip().upper()
+
+
+def learner_signal(row: Dict[str, Any]) -> str:
+    raw = str(row.get("signal_text") or row.get("kind") or "").strip().upper()
+
+    if raw in ("DIP", "DİP", "DİP TOPLAMA"):
+        return "DİP TOPLAMA"
+    if raw in ("AYR", "AYRIŞMA"):
+        return "AYRIŞMA"
+    if raw in ("KAR", "KÂR", "KÂR KORUMA", "KAR KORUMA"):
+        return "KÂR KORUMA"
+    if raw == "TOPLAMA":
+        return "TOPLAMA"
+    if raw in ("REBOUND", "REBOUND WATCH"):
+        return "REBOUND WATCH"
+
+    return raw
+
+
+def learner_score(row: Dict[str, Any]) -> float:
+    return safe_float(
+        row.get("score")
+        or row.get("acc_quality_score")
+        or row.get("quality_score")
+        or row.get("accumulation_score"),
+        0.0
+    )
+
+
+def learner_pack_row(row: Dict[str, Any], day_key: str, signal_type: str, reg: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "day": day_key,
+        "ts": datetime.now(tz=TZ).isoformat(),
+        "symbol": learner_symbol(row),
+        "signal_type": signal_type,
+        "close": safe_float(row.get("close") or row.get("price") or row.get("last"), 0.0),
+        "change": safe_float(row.get("change") or row.get("pct") or row.get("change_pct"), 0.0),
+        "volume": safe_float(row.get("volume"), 0.0),
+        "score": learner_score(row),
+        "vol_ratio": safe_float(
+            row.get("vol_ratio")
+            or row.get("relative_volume_10d_calc")
+            or row.get("volume_ratio")
+            or row.get("rel_volume"),
+            0.0
+        ),
+        "close_pos": safe_float(row.get("close_pos") or row.get("band_pos") or row.get("pos"), 0.0),
+        "regime": reg.get("name") if isinstance(reg, dict) else "",
+        "regime_block": bool(reg.get("block")) if isinstance(reg, dict) else False,
+    }
+
+
+def learner_save_eod_snapshot(
+    day_key: str,
+    rows: List[Dict[str, Any]],
+    reg: Dict[str, Any],
+    xu_close: float,
+    xu_change: float,
+    rebound_picks: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    try:
+        history = _load_json(TAIPO_SIGNAL_HISTORY_FILE)
+        if not isinstance(history, dict):
+            history = {}
+
+        snapshots = _load_json(TAIPO_DAILY_EOD_SNAPSHOTS_FILE)
+        if not isinstance(snapshots, dict):
+            snapshots = {}
+
+        signals = []
+
+        wanted = {
+            "TOPLAMA",
+            "DİP TOPLAMA",
+            "AYRIŞMA",
+            "KÂR KORUMA",
+        }
+
+        for r in rows or []:
+            sig = learner_signal(r)
+            if sig in wanted:
+                item = learner_pack_row(r, day_key, sig, reg)
+                if item["symbol"]:
+                    signals.append(item)
+
+        for r in rebound_picks or []:
+            item = learner_pack_row(r, day_key, "REBOUND WATCH", reg)
+            if item["symbol"]:
+                signals.append(item)
+
+        dedup = {}
+        for item in signals:
+            key = f"{item['day']}|{item['symbol']}|{item['signal_type']}"
+            dedup[key] = item
+
+        history.setdefault(day_key, {})
+        history[day_key] = dedup
+
+        snapshots[day_key] = {
+            "day": day_key,
+            "ts": datetime.now(tz=TZ).isoformat(),
+            "xu_close": xu_close,
+            "xu_change": xu_change,
+            "regime": reg,
+            "signal_count": len(dedup),
+        }
+
+        _atomic_write_json(TAIPO_SIGNAL_HISTORY_FILE, history)
+        _atomic_write_json(TAIPO_DAILY_EOD_SNAPSHOTS_FILE, snapshots)
+
+        logger.info("TAIPO LEARNER saved day=%s signals=%s", day_key, len(dedup))
+        return len(dedup)
+
+    except Exception as e:
+        logger.exception("TAIPO LEARNER save error: %s", e)
+        return 0
 
 def build_rebound_watch(rows, xu100_pct=0.0, top_n=None):
     if top_n is None:
@@ -4655,7 +4784,9 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     msg += "\n" + make_table(top_by_vol(toplama, 8), " TOPLAMA – Top 8", include_kind=True)
     msg += "\n\n" + make_table(top_by_vol(dip, 8), " DİP TOPLAMA – Top 8", include_kind=True)
-
+    
+    rebound_picks = []
+    
     if REBOUND_WATCH_ENABLED:
         try:
             rebound_picks = build_rebound_watch(rows, xu100_pct=xu_change)
