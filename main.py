@@ -4856,17 +4856,16 @@ async def cmd_learner_update(
         perf = {}
 
     last_days = sorted(history.keys())[-3:]
-
     updated = 0
 
     for d in last_days:
-        
+
         try:
             source_dt = datetime.strptime(d, "%Y-%m-%d").date()
             today_dt = datetime.now(TZ).date()
             day_diff = (today_dt - source_dt).days
-    except Exception:
-        day_diff = 0
+        except Exception:
+            day_diff = 0
 
         day_items = history.get(d, {}) or {}
 
@@ -4878,7 +4877,6 @@ async def cmd_learner_update(
         for key, item in day_items.items():
 
             try:
-
                 symbol = item.get("symbol", "")
                 signal_type = item.get("signal_type", "UNKNOWN")
                 entry_close = safe_float(
@@ -4917,7 +4915,7 @@ async def cmd_learner_update(
                     ) * 100.0
 
                 status = "FLAT"
-                
+
                 if day_diff >= 1:
                     perf_t1 = perf_pct
                 else:
@@ -4940,7 +4938,6 @@ async def cmd_learner_update(
 
                 if perf_pct >= 3:
                     status = "SUCCESS"
-
                 elif perf_pct <= -3:
                     status = "FAILED"
 
