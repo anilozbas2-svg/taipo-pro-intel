@@ -4956,6 +4956,28 @@ async def cmd_learner_update(
                 max_return = max(old_max, perf_pct)
                 min_return = min(old_min, perf_pct)
 
+                old_best_day = int(
+                    safe_float(
+                        old_item.get("best_day"),
+                        0
+                    )
+                )
+
+                if perf_pct >= max_return:
+                    best_day = day_diff
+                else:
+                    best_day = old_best_day
+
+                follow_days = max(
+                    int(
+                        safe_float(
+                            old_item.get("follow_days"),
+                            0
+                        )
+                    ),
+                    day_diff
+                )
+                
                 perf[d][key] = {
                     "symbol": symbol,
                     "signal_type": signal_type,
@@ -4969,8 +4991,8 @@ async def cmd_learner_update(
                     "t5": round(perf_t5, 2),
                     "max_return": round(max_return, 2),
                     "min_return": round(min_return, 2),
-                    "best_day": 0,
-                    "follow_days": 0,
+                    "best_day": best_day,
+                    "follow_days": follow_days,
                 }
 
                 updated += 1
