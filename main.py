@@ -5123,9 +5123,9 @@ async def cmd_learner_top(
 
     signal_stats = {}
         
-        total_return = 0.0
-        success_count = 0
-        failed_count = 0
+    total_return = 0.0
+    success_count = 0
+    failed_count = 0
 
     for r in rows:
         sig = r.get("signal_type", "UNKNOWN")
