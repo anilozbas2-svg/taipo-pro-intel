@@ -5404,6 +5404,114 @@ async def cmd_learner_pick(
         "\n".join(lines)
     )
 
+async def cmd_learner_confidence(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(perf, dict) or not perf:
+        await update.message.reply_text(
+            "TAIPO CONFIDENCE\nHenüz veri yok."
+        )
+        return
+
+    rows = []
+
+    for day, items in perf.items():
+
+        if not isinstance(items, dict):
+            continue
+
+        for item in items.values():
+            rows.append(item)
+
+    if not rows:
+        await update.message.reply_text(
+            "TAIPO CONFIDENCE\nKayıt bulunamadı."
+        )
+        return
+
+    total = len(rows)
+
+    success = 0
+    total_pct = 0.0
+    total_max = 0.0
+    total_min = 0.0
+
+    for r in rows:
+
+        pct = safe_float(
+            r.get("performance_pct"),
+            0.0
+        )
+
+        max_ret = safe_float(
+            r.get("max_return"),
+            pct
+        )
+
+        min_ret = safe_float(
+            r.get("min_return"),
+            pct
+        )
+
+        total_pct += pct
+        total_max += max_ret
+        total_min += min_ret
+
+        if pct >= 3:
+            success += 1
+
+    hit_rate = (
+        success / total
+    ) * 100 if total else 0.0
+
+    avg_pct = total_pct / total if total else 0.0
+    avg_max = total_max / total if total else 0.0
+    avg_min = total_min / total if total else 0.0
+
+    confidence = (
+        hit_rate * 0.45
+        + avg_pct * 6.0
+        + avg_max * 2.5
+        + avg_min * 1.5
+    )
+
+    confidence = max(
+        0.0,
+        min(confidence, 100.0)
+    )
+
+    level = "ZAYIF"
+
+    if confidence >= 75:
+        level = "ÇOK GÜÇLÜ"
+
+    elif confidence >= 60:
+        level = "GÜÇLÜ"
+
+    elif confidence >= 40:
+        level = "ORTA"
+
+    lines = [
+        "TAIPO CONFIDENCE",
+        "",
+        f"Güven skoru: %{confidence:.1f}",
+        f"Seviye: {level}",
+        "",
+        f"Toplam kayıt: {total}",
+        f"Hit-rate: %{hit_rate:.1f}",
+        f"Ort. getiri: %{avg_pct:.2f}",
+        f"Ort. max_return: %{avg_max:.2f}",
+        f"Ort. min_return: %{avg_min:.2f}",
+    ]
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -6997,6 +7105,9 @@ def main() -> None:
     "learner_day", cmd_learner_day))
     app.add_handler(CommandHandler(
     "learner_pick", cmd_learner_pick))
+    app.add_handler(CommandHandler(
+    "learner_confidence",
+    cmd_learner_confidence))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
