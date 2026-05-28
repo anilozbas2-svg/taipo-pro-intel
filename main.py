@@ -5292,6 +5292,118 @@ async def cmd_learner_day(
         "\n".join(lines)
     )
 
+async def cmd_learner_pick(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(perf, dict) or not perf:
+        await update.message.reply_text(
+            "TAIPO LEARNER PICK\nHenüz performans kaydı yok."
+        )
+        return
+
+    model_scores = {}
+
+    for day, items in perf.items():
+
+        if not isinstance(items, dict):
+            continue
+
+        for item in items.values():
+
+            sig = item.get("signal_type", "UNKNOWN")
+            pct = safe_float(item.get("performance_pct"), 0.0)
+            max_ret = safe_float(item.get("max_return"), pct)
+            min_ret = safe_float(item.get("min_return"), pct)
+
+            model_scores.setdefault(sig, {
+                "total": 0,
+                "success": 0,
+                "sum_pct": 0.0,
+                "sum_max": 0.0,
+                "sum_min": 0.0,
+            })
+
+            model_scores[sig]["total"] += 1
+            model_scores[sig]["sum_pct"] += pct
+            model_scores[sig]["sum_max"] += max_ret
+            model_scores[sig]["sum_min"] += min_ret
+
+            if pct >= 3:
+                model_scores[sig]["success"] += 1
+
+    ranked = []
+
+    for sig, s in model_scores.items():
+
+        total = s["total"]
+        if total <= 0:
+            continue
+
+        hit_rate = (s["success"] / total) * 100
+        avg_pct = s["sum_pct"] / total
+        avg_max = s["sum_max"] / total
+        avg_min = s["sum_min"] / total
+
+        score = (
+            hit_rate * 0.50
+            + avg_pct * 4.0
+            + avg_max * 2.0
+            + avg_min * 1.0
+        )
+
+        ranked.append({
+            "signal_type": sig,
+            "total": total,
+            "hit_rate": hit_rate,
+            "avg_pct": avg_pct,
+            "avg_max": avg_max,
+            "avg_min": avg_min,
+            "score": score,
+        })
+
+    ranked = sorted(
+        ranked,
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    if not ranked:
+        await update.message.reply_text(
+            "TAIPO LEARNER PICK\nModel skoru üretilemedi."
+        )
+        return
+
+    top = ranked[0]
+
+    lines = [
+        "TAIPO LEARNER PICK",
+        "",
+        "Bugünün en güçlü modeli:",
+        f"{top['signal_type']}",
+        "",
+        f"Model skoru: {top['score']:.2f}",
+        f"Toplam kayıt: {top['total']}",
+        f"Hit-rate: %{top['hit_rate']:.1f}",
+        f"Ort. getiri: %{top['avg_pct']:.2f}",
+        f"Ort. max potansiyel: %{top['avg_max']:.2f}",
+        f"Ort. min risk: %{top['avg_min']:.2f}",
+        "",
+        "Model sıralaması:"
+    ]
+
+    for r in ranked[:5]:
+        lines.append(
+            f"{r['signal_type']} | Skor {r['score']:.2f} | Hit %{r['hit_rate']:.1f}"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -6883,6 +6995,8 @@ def main() -> None:
     app.add_handler(CommandHandler("learner_top", cmd_learner_top))
     app.add_handler(CommandHandler(
     "learner_day", cmd_learner_day))
+    app.add_handler(CommandHandler(
+    "learner_pick", cmd_learner_pick))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
