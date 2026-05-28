@@ -5354,6 +5354,13 @@ async def cmd_learner_pick(
             + avg_max * 2.0
             + avg_min * 1.0
         )
+        
+        adaptive_weight = 1.00
+
+        if total < 5:
+            adaptive_weight = 0.75
+
+        final_score = score * adaptive_weight
 
         ranked.append({
             "signal_type": sig,
@@ -5362,7 +5369,9 @@ async def cmd_learner_pick(
             "avg_pct": avg_pct,
             "avg_max": avg_max,
             "avg_min": avg_min,
-            "score": score,
+            "score": final_score,
+            "raw_score": score,
+           "adaptive_weight": adaptive_weight,
         })
 
     ranked = sorted(
