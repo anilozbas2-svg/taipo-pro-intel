@@ -5512,6 +5512,75 @@ async def cmd_learner_confidence(
         "\n".join(lines)
     )
 
+async def cmd_learner_memory(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(perf, dict) or not perf:
+        await update.message.reply_text(
+            "TAIPO LEARNER MEMORY\nHenüz veri yok."
+        )
+        return
+
+    days = sorted(perf.keys())[-10:]
+    memory = {}
+
+    for day in days:
+        items = perf.get(day, {})
+
+        if not isinstance(items, dict):
+            continue
+
+        for item in items.values():
+            sig = item.get("signal_type", "UNKNOWN")
+            pct = safe_float(item.get("performance_pct"), 0.0)
+
+            memory.setdefault(sig, {
+                "last_3": [],
+                "last_5": [],
+                "last_10": [],
+            })
+
+            memory[sig]["last_10"].append(pct)
+
+    for sig in memory:
+        vals = memory[sig]["last_10"]
+        memory[sig]["last_5"] = vals[-5:]
+        memory[sig]["last_3"] = vals[-3:]
+
+    lines = [
+        "TAIPO LEARNER MEMORY",
+        "",
+        "Model hafıza durumu:"
+    ]
+
+    for sig, m in memory.items():
+
+        avg3 = sum(m["last_3"]) / len(m["last_3"]) if m["last_3"] else 0.0
+        avg5 = sum(m["last_5"]) / len(m["last_5"]) if m["last_5"] else 0.0
+        avg10 = sum(m["last_10"]) / len(m["last_10"]) if m["last_10"] else 0.0
+
+        trend = "STABIL"
+
+        if avg3 > avg5 > avg10:
+            trend = "GÜÇLENİYOR"
+        elif avg3 < avg5 < avg10:
+            trend = "ZAYIFLIYOR"
+
+        lines.append("")
+        lines.append(f"{sig}")
+        lines.append(f"Son 3 ort: %{avg3:.2f}")
+        lines.append(f"Son 5 ort: %{avg5:.2f}")
+        lines.append(f"Son 10 ort: %{avg10:.2f}")
+        lines.append(f"Trend: {trend}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -7108,6 +7177,9 @@ def main() -> None:
     app.add_handler(CommandHandler(
     "learner_confidence",
     cmd_learner_confidence))
+    app.add_handler(CommandHandler(
+    "learner_memory",
+    cmd_learner_memory))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
