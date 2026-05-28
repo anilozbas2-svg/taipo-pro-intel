@@ -5205,6 +5205,93 @@ async def cmd_learner_top(
         "\n".join(lines)
     )
 
+async def cmd_learner_day(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(perf, dict) or not perf:
+        await update.message.reply_text(
+            "TAIPO LEARNER DAY\nHenüz performans kaydı yok."
+        )
+        return
+
+    day_stats = {
+        "t1": {},
+        "t2": {},
+        "t3": {},
+        "t5": {},
+    }
+
+    for day, items in perf.items():
+
+        if not isinstance(items, dict):
+            continue
+
+        for item in items.values():
+
+            sig = item.get("signal_type", "UNKNOWN")
+
+            for t_key in ["t1", "t2", "t3", "t5"]:
+
+                val = safe_float(item.get(t_key), 0.0)
+
+                day_stats[t_key].setdefault(sig, {
+                    "total": 0,
+                    "sum": 0.0,
+                    "success": 0,
+                })
+
+                day_stats[t_key][sig]["total"] += 1
+                day_stats[t_key][sig]["sum"] += val
+
+                if val >= 3:
+                    day_stats[t_key][sig]["success"] += 1
+
+    lines = [
+        "TAIPO LEARNER DAY",
+        "",
+        "Zaman bazlı sinyal performansı:"
+    ]
+
+    for t_key in ["t1", "t2", "t3", "t5"]:
+
+        lines.append("")
+        lines.append(f"{t_key.upper()}:")
+
+        rows = day_stats.get(t_key, {})
+
+        if not rows:
+            lines.append("Kayıt yok.")
+            continue
+
+        ranked = sorted(
+            rows.items(),
+            key=lambda x: (
+                x[1]["sum"] / x[1]["total"]
+                if x[1]["total"] else 0
+            ),
+            reverse=True
+        )
+
+        for sig, s in ranked[:5]:
+
+            total = s["total"]
+            avg = s["sum"] / total if total else 0.0
+            hit = (
+                s["success"] / total
+            ) * 100 if total else 0.0
+
+            lines.append(
+                f"{sig}: Ort %{avg:.2f} | Hit %{hit:.1f} | {total} kayıt"
+            )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -6794,6 +6881,8 @@ def main() -> None:
     app.add_handler(CommandHandler("learner_update", cmd_learner_update))
     app.add_handler(CommandHandler("learner_stats", cmd_learner_stats))
     app.add_handler(CommandHandler("learner_top", cmd_learner_top))
+    app.add_handler(CommandHandler(
+    "learner_day", cmd_learner_day))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
