@@ -580,6 +580,44 @@ def calculate_adaptive_weight(
         min(weight, 2.00)
     )
 
+def detect_learner_market_regime(reg: Dict[str, Any]) -> str:
+
+    if not isinstance(reg, dict):
+        return "UNKNOWN"
+
+    name = str(reg.get("name", "")).upper()
+    trend = str(reg.get("trend", "")).upper()
+    block = bool(reg.get("block", False))
+    xu_pct = safe_float(
+        reg.get("xu_pct") or reg.get("xu_change"),
+        0.0
+    )
+    vol = safe_float(reg.get("vol"), 0.0)
+    gap = safe_float(reg.get("gap"), 0.0)
+
+    if block:
+        return "RISK_OFF"
+
+    if xu_pct <= -2.0:
+        return "PANIC"
+
+    if xu_pct <= -0.8 and trend in ["SIDE", "DOWN"]:
+        return "BEAR"
+
+    if xu_pct >= 1.2 and trend in ["UP", "BULL"]:
+        return "BULL"
+
+    if xu_pct >= 0.5 and trend in ["SIDE", "DOWN"]:
+        return "RECOVERY"
+
+    if abs(xu_pct) < 0.7 and vol < 1.5:
+        return "SIDEWAYS"
+
+    if "VOLATILE" in name or vol >= 1.8 or abs(gap) >= 1.5:
+        return "VOLATILE"
+
+    return "NEUTRAL"
+
 def learner_symbol(row: Dict[str, Any]) -> str:
     return str(
         row.get("ticker")
@@ -5359,6 +5397,10 @@ async def cmd_learner_pick(
 
             if pct >= 3:
                 model_scores[sig]["success"] += 1
+
+    reg = get_market_regime()
+
+    market_mode = detect_learner_market_regime(reg)
 
     ranked = []
 
