@@ -555,6 +555,31 @@ def safe_float(x: Any, default: float = 0.0) -> float:
     except Exception:
         return default
 
+def calculate_adaptive_weight(
+    total: int,
+    hit: float,
+    fail: float,
+    avg: float,
+    avg_max: float,
+    avg_min: float
+) -> float:
+
+    weight = 1.00
+
+    weight += hit / 200
+    weight += avg / 20
+    weight += avg_max / 30
+    weight += avg_min / 40
+    weight -= fail / 250
+
+    if total < 5:
+        weight *= 0.75
+
+    return max(
+        0.20,
+        min(weight, 2.00)
+    )
+
 def learner_symbol(row: Dict[str, Any]) -> str:
     return str(
         row.get("ticker")
@@ -5355,10 +5380,16 @@ async def cmd_learner_pick(
             + avg_min * 1.0
         )
         
-        adaptive_weight = 1.00
+        fail_rate = 100.0 - hit_rate
 
-        if total < 5:
-            adaptive_weight = 0.75
+        adaptive_weight = calculate_adaptive_weight(
+            total,
+            hit_rate,
+            fail_rate,
+            avg_pct,
+            avg_max,
+            avg_min
+        )
 
         final_score = score * adaptive_weight
 
@@ -5651,18 +5682,14 @@ async def cmd_learner_evolve(
         avg_max = s["sum_max"] / total
         avg_min = s["sum_min"] / total
 
-        weight = 1.00
-
-        weight += hit / 200
-        weight += avg / 20
-        weight += avg_max / 30
-        weight += avg_min / 40
-        weight -= fail / 250
-
-        if total < 5:
-            weight *= 0.75
-
-        weight = max(0.20, min(weight, 2.00))
+        weight = calculate_adaptive_weight(
+            total,
+            hit,
+            fail,
+            avg,
+            avg_max,
+            avg_min
+        )
 
         evolved.append({
             "signal_type": sig,
