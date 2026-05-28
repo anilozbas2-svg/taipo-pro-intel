@@ -5398,7 +5398,11 @@ async def cmd_learner_pick(
             if pct >= 3:
                 model_scores[sig]["success"] += 1
 
-    reg = get_market_regime()
+    reg = {
+        "xu100_change": 0.0,
+        "market_trend": "SIDEWAYS",
+        "volatility": "NORMAL"
+    }
 
     market_mode = detect_learner_market_regime(reg)
 
