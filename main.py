@@ -5581,6 +5581,131 @@ async def cmd_learner_memory(
         "\n".join(lines)
     )
 
+async def cmd_learner_evolve(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(perf, dict) or not perf:
+        await update.message.reply_text(
+            "TAIPO EVOLVE\nHenüz veri yok."
+        )
+        return
+
+    model = {}
+
+    for day, items in perf.items():
+
+        if not isinstance(items, dict):
+            continue
+
+        for item in items.values():
+
+            sig = item.get("signal_type", "UNKNOWN")
+            pct = safe_float(item.get("performance_pct"), 0.0)
+            max_ret = safe_float(item.get("max_return"), pct)
+            min_ret = safe_float(item.get("min_return"), pct)
+
+            model.setdefault(sig, {
+                "total": 0,
+                "success": 0,
+                "fail": 0,
+                "sum_pct": 0.0,
+                "sum_max": 0.0,
+                "sum_min": 0.0,
+            })
+
+            model[sig]["total"] += 1
+            model[sig]["sum_pct"] += pct
+            model[sig]["sum_max"] += max_ret
+            model[sig]["sum_min"] += min_ret
+
+            if pct >= 3:
+                model[sig]["success"] += 1
+
+            elif pct <= -3:
+                model[sig]["fail"] += 1
+
+    evolved = []
+
+    for sig, s in model.items():
+
+        total = s["total"]
+        if total <= 0:
+            continue
+
+        hit = (s["success"] / total) * 100
+        fail = (s["fail"] / total) * 100
+        avg = s["sum_pct"] / total
+        avg_max = s["sum_max"] / total
+        avg_min = s["sum_min"] / total
+
+        weight = 1.00
+
+        weight += hit / 200
+        weight += avg / 20
+        weight += avg_max / 30
+        weight += avg_min / 40
+        weight -= fail / 250
+
+        if total < 5:
+            weight *= 0.75
+
+        weight = max(0.20, min(weight, 2.00))
+
+        evolved.append({
+            "signal_type": sig,
+            "total": total,
+            "hit": hit,
+            "fail": fail,
+            "avg": avg,
+            "avg_max": avg_max,
+            "avg_min": avg_min,
+            "weight": weight,
+        })
+
+    evolved = sorted(
+        evolved,
+        key=lambda x: x["weight"],
+        reverse=True
+    )
+
+    if not evolved:
+        await update.message.reply_text(
+            "TAIPO EVOLVE\nModel üretilemedi."
+        )
+        return
+
+    lines = [
+        "TAIPO EVOLVE ENGINE",
+        "",
+        "Adaptive model ağırlıkları:"
+    ]
+
+    for e in evolved:
+
+        tag = "NÖTR"
+
+        if e["weight"] >= 1.35:
+            tag = "GÜÇLENDİR"
+
+        elif e["weight"] <= 0.80:
+            tag = "ZAYIFLAT"
+
+        lines.append("")
+        lines.append(f"{e['signal_type']}")
+        lines.append(f"Weight: {e['weight']:.2f} | {tag}")
+        lines.append(f"Toplam: {e['total']}")
+        lines.append(f"Hit: %{e['hit']:.1f} | Fail: %{e['fail']:.1f}")
+        lines.append(f"Avg: %{e['avg']:.2f}")
+        lines.append(f"Max: %{e['avg_max']:.2f} | Min: %{e['avg_min']:.2f}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -7180,6 +7305,8 @@ def main() -> None:
     app.add_handler(CommandHandler(
     "learner_memory",
     cmd_learner_memory))
+    app.add_handler(CommandHandler(
+    "learner_evolve", cmd_learner_evolve))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
