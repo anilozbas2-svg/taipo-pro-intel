@@ -5423,6 +5423,11 @@ async def cmd_learner_pick(
         return
 
     model_scores = {}
+    
+    ai_memory = _load_json(TAIPO_AI_MEMORY_FILE)
+
+    if not isinstance(ai_memory, dict):
+        ai_memory = {}
 
     for day, items in perf.items():
 
@@ -5491,7 +5496,31 @@ async def cmd_learner_pick(
             avg_min
         )
 
-        final_score = score * adaptive_weight
+        ai_item = ai_memory.get(sig, {})
+
+        ai_weight = safe_float(
+            ai_item.get("weight"),
+            1.0
+        )
+
+        ai_trend = str(
+            ai_item.get("trend", "STABLE")
+        )
+
+        trend_boost = 1.00
+
+        if ai_trend == "UP":
+            trend_boost = 1.10
+
+        elif ai_trend == "DOWN":
+            trend_boost = 0.90
+
+        final_score = (
+            score
+            * adaptive_weight
+            * ai_weight
+            * trend_boost
+        )
 
         ranked.append({
             "signal_type": sig,
@@ -5503,6 +5532,8 @@ async def cmd_learner_pick(
             "score": final_score,
             "raw_score": score,
            "adaptive_weight": adaptive_weight,
+           "ai_weight": ai_weight,
+            "ai_trend": ai_trend,
         })
 
     ranked = sorted(
