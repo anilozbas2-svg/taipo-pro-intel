@@ -5557,6 +5557,10 @@ async def cmd_learner_pick(
         f"{top['signal_type']}",
         "",
         f"Model skoru: {top['score']:.2f}",
+        f"Raw skor: {top['raw_score']:.2f}",
+        f"Adaptive weight: {top['adaptive_weight']:.2f}",
+        f"AI weight: {top['ai_weight']:.2f}",
+        f"AI trend: {top['ai_trend']}",
         f"Toplam kayıt: {top['total']}",
         f"Hit-rate: %{top['hit_rate']:.1f}",
         f"Ort. getiri: %{top['avg_pct']:.2f}",
@@ -5568,7 +5572,7 @@ async def cmd_learner_pick(
 
     for r in ranked[:5]:
         lines.append(
-            f"{r['signal_type']} | Skor {r['score']:.2f} | Hit %{r['hit_rate']:.1f}"
+            f"{r['signal_type']} | Skor {r['score']:.2f} | AI W {r['ai_weight']:.2f} | {r['ai_trend']}"
         )
 
     await update.message.reply_text(
