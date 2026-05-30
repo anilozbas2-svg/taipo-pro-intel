@@ -644,11 +644,32 @@ def update_ai_memory_from_evolve(
 
         prev_weight = safe_float(old.get("weight"), 1.0)
 
+        prev_hit = safe_float(
+            old.get("hit"),
+            0.0
+        )
+
+        prev_avg = safe_float(
+            old.get("avg"),
+            0.0
+        )
+
+        hit_diff = hit - prev_hit
+        avg_diff = avg - prev_avg
+        weight_diff = weight - prev_weight
+
+        trend_score = (
+            hit_diff * 0.40
+            + avg_diff * 4.00
+            + weight_diff * 20.00
+        )
+
         trend = "STABLE"
 
-        if weight > prev_weight:
+        if trend_score >= 3:
             trend = "UP"
-        elif weight < prev_weight:
+
+        elif trend_score <= -3:
             trend = "DOWN"
 
         memory[sig] = {
