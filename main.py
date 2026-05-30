@@ -219,6 +219,7 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 
 TAIPO_SIGNAL_HISTORY_FILE = os.path.join(DATA_DIR, "taipo_signal_history.json")
 TAIPO_SIGNAL_PERFORMANCE_FILE = os.path.join(DATA_DIR, "taipo_signal_performance.json")
+TAIPO_AI_MEMORY_FILE = os.path.join(DATA_DIR, "taipo_ai_memory.json")
 TAIPO_DAILY_EOD_SNAPSHOTS_FILE = os.path.join(DATA_DIR, "taipo_daily_eod_snapshots.json")
 
 # ===============================
@@ -617,6 +618,59 @@ def detect_learner_market_regime(reg: Dict[str, Any]) -> str:
         return "VOLATILE"
 
     return "NEUTRAL"
+
+def update_ai_memory_from_evolve(
+    evolved: List[Dict[str, Any]],
+    market_mode: str = "UNKNOWN"
+) -> int:
+
+    memory = _load_json(TAIPO_AI_MEMORY_FILE)
+
+    if not isinstance(memory, dict):
+        memory = {}
+
+    updated = 0
+    now_key = today_key_tradingday()
+
+    for item in evolved:
+
+        sig = item.get("signal_type", "UNKNOWN")
+        weight = safe_float(item.get("weight"), 1.0)
+        hit = safe_float(item.get("hit"), 0.0)
+        avg = safe_float(item.get("avg"), 0.0)
+        total = int(safe_float(item.get("total"), 0))
+
+        old = memory.get(sig, {})
+
+        prev_weight = safe_float(old.get("weight"), 1.0)
+
+        trend = "STABLE"
+
+        if weight > prev_weight:
+            trend = "UP"
+        elif weight < prev_weight:
+            trend = "DOWN"
+
+        memory[sig] = {
+            "signal_type": sig,
+            "weight": round(weight, 2),
+            "prev_weight": round(prev_weight, 2),
+            "trend": trend,
+            "hit": round(hit, 2),
+            "avg": round(avg, 2),
+            "total": total,
+            "market_mode": market_mode,
+            "updated_at": now_key,
+        }
+
+        updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_MEMORY_FILE,
+        memory
+    )
+
+    return updated
 
 def learner_symbol(row: Dict[str, Any]) -> str:
     return str(
@@ -5753,6 +5807,11 @@ async def cmd_learner_evolve(
         key=lambda x: x["weight"],
         reverse=True
     )
+    
+    ai_updated = update_ai_memory_from_evolve(
+        evolved,
+        "UNKNOWN"
+    )
 
     if not evolved:
         await update.message.reply_text(
@@ -5762,6 +5821,8 @@ async def cmd_learner_evolve(
 
     lines = [
         "TAIPO EVOLVE ENGINE",
+        "",
+        f"AI memory güncellendi: {ai_updated}",
         "",
         "Adaptive model ağırlıkları:"
     ]
