@@ -5849,6 +5849,92 @@ async def cmd_learner_evolve(
         "\n".join(lines)
     )
 
+async def cmd_ai_top(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    memory = _load_json(TAIPO_AI_MEMORY_FILE)
+
+    if not isinstance(memory, dict) or not memory:
+        await update.message.reply_text(
+            "TAIPO AI TOP\nHenüz AI memory yok."
+        )
+        return
+
+    rows = []
+
+    for sig, item in memory.items():
+
+        weight = safe_float(item.get("weight"), 1.0)
+        hit = safe_float(item.get("hit"), 0.0)
+        avg = safe_float(item.get("avg"), 0.0)
+        total = int(safe_float(item.get("total"), 0))
+        trend = str(item.get("trend", "STABLE"))
+        market_mode = str(item.get("market_mode", "UNKNOWN"))
+
+        trend_bonus = 0.0
+
+        if trend == "UP":
+            trend_bonus = 10.0
+        elif trend == "DOWN":
+            trend_bonus = -10.0
+
+        score = (
+            weight * 40
+            + hit * 0.35
+            + avg * 5
+            + trend_bonus
+        )
+
+        if total < 5:
+            score *= 0.75
+
+        rows.append({
+            "signal_type": sig,
+            "weight": weight,
+            "hit": hit,
+            "avg": avg,
+            "total": total,
+            "trend": trend,
+            "market_mode": market_mode,
+            "score": score,
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    top = rows[0]
+
+    lines = [
+        "TAIPO AI TOP",
+        "",
+        "Bugünün AI lider modeli:",
+        top["signal_type"],
+        "",
+        f"AI Skor: {top['score']:.2f}",
+        f"Weight: {top['weight']:.2f}",
+        f"Hit: %{top['hit']:.1f}",
+        f"Avg: %{top['avg']:.2f}",
+        f"Trend: {top['trend']}",
+        f"Market mode: {top['market_mode']}",
+        f"Toplam kayıt: {top['total']}",
+        "",
+        "AI sıralama:"
+    ]
+
+    for r in rows[:5]:
+        lines.append(
+            f"{r['signal_type']} | AI {r['score']:.2f} | W {r['weight']:.2f} | {r['trend']}"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -7450,6 +7536,7 @@ def main() -> None:
     cmd_learner_memory))
     app.add_handler(CommandHandler(
     "learner_evolve", cmd_learner_evolve))
+    app.add_handler(CommandHandler("ai_top", cmd_ai_top))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
