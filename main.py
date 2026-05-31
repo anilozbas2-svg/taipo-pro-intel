@@ -6358,6 +6358,27 @@ def update_ai_pick_performance():
                     break
 
             if not found:
+                for perf_day in reversed(perf_days):
+
+                    day_perf = perf.get(perf_day, {})
+
+                    if not isinstance(day_perf, dict):
+                        continue
+
+                    for item in day_perf.values():
+
+                        if not isinstance(item, dict):
+                            continue
+
+                        if str(item.get("symbol", "")).strip() == symbol:
+                            found = item
+                            found_day = perf_day
+                            break
+
+                    if found:
+                        break
+
+            if not found:
                 continue
 
             pct = safe_float(
