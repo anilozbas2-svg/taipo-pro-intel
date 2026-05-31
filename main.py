@@ -6294,13 +6294,8 @@ def save_ai_pick(pick):
 
 def update_ai_pick_performance():
 
-    picks = _load_json(
-        TAIPO_AI_PICK_FILE
-    )
-
-    perf = _load_json(
-        TAIPO_SIGNAL_PERFORMANCE_FILE
-    )
+    picks = _load_json(TAIPO_AI_PICK_FILE)
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
 
     if not isinstance(picks, dict):
         return 0
@@ -6308,16 +6303,15 @@ def update_ai_pick_performance():
     if not isinstance(perf, dict):
         return 0
 
-    result = _load_json(
-        TAIPO_AI_PICK_PERFORMANCE_FILE
-    )
+    result = _load_json(TAIPO_AI_PICK_PERFORMANCE_FILE)
 
     if not isinstance(result, dict):
         result = {}
 
     updated = 0
+    perf_days = sorted(perf.keys())
 
-    for day, pick in picks.items():
+    for pick_day, pick in picks.items():
 
         if not isinstance(pick, dict):
             continue
@@ -6326,11 +6320,6 @@ def update_ai_pick_performance():
         candidates = pick.get("candidates", [])
 
         if not isinstance(candidates, list):
-            continue
-
-        day_perf = perf.get(day, {})
-
-        if not isinstance(day_perf, dict):
             continue
 
         rows = []
@@ -6343,14 +6332,29 @@ def update_ai_pick_performance():
                 continue
 
             found = None
+            found_day = None
 
-            for item in day_perf.values():
+            for perf_day in perf_days:
 
-                if not isinstance(item, dict):
+                if perf_day < pick_day:
                     continue
 
-                if item.get("symbol") == symbol:
-                    found = item
+                day_perf = perf.get(perf_day, {})
+
+                if not isinstance(day_perf, dict):
+                    continue
+
+                for item in day_perf.values():
+
+                    if not isinstance(item, dict):
+                        continue
+
+                    if str(item.get("symbol", "")).strip() == symbol:
+                        found = item
+                        found_day = perf_day
+                        break
+
+                if found:
                     break
 
             if not found:
@@ -6372,6 +6376,8 @@ def update_ai_pick_performance():
             rows.append({
                 "symbol": symbol,
                 "model": model,
+                "pick_day": pick_day,
+                "measured_day": found_day,
                 "performance_pct": round(pct, 2),
                 "status": status,
             })
@@ -6379,20 +6385,15 @@ def update_ai_pick_performance():
         if not rows:
             continue
 
-        success = len(
-            [r for r in rows if r["status"] == "SUCCESS"]
-        )
-
-        failed = len(
-            [r for r in rows if r["status"] == "FAILED"]
-        )
+        success = len([r for r in rows if r["status"] == "SUCCESS"])
+        failed = len([r for r in rows if r["status"] == "FAILED"])
 
         avg_pct = sum(
             safe_float(r.get("performance_pct"), 0.0)
             for r in rows
         ) / len(rows)
 
-        result[day] = {
+        result[pick_day] = {
             "model": model,
             "total": len(rows),
             "success": success,
