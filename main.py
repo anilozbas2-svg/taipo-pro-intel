@@ -6171,6 +6171,69 @@ def generate_ai_pick():
     if not best_model:
         return None
 
+    perf = _load_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE
+    )
+
+    candidates = []
+
+    if isinstance(perf, dict):
+
+        for day, items in perf.items():
+
+            if not isinstance(items, dict):
+                continue
+
+            for key, item in items.items():
+
+                if not isinstance(item, dict):
+                    continue
+
+                if item.get("signal_type") != best_model:
+                    continue
+
+                symbol = str(item.get("symbol", "")).strip()
+
+                if not symbol:
+                    continue
+
+                perf_pct = safe_float(
+                    item.get("performance_pct"),
+                    0.0
+                )
+
+                max_return = safe_float(
+                    item.get("max_return"),
+                    perf_pct
+                )
+
+                min_return = safe_float(
+                    item.get("min_return"),
+                    perf_pct
+                )
+
+                ai_score = (
+                    perf_pct
+                    + max_return * 0.50
+                    + min_return * 0.25
+                    + best_weight * 10.0
+                )
+
+                candidates.append({
+                    "symbol": symbol,
+                    "signal_type": best_model,
+                    "performance_pct": perf_pct,
+                    "max_return": max_return,
+                    "min_return": min_return,
+                    "ai_score": ai_score,
+                })
+
+    candidates = sorted(
+        candidates,
+        key=lambda x: x["ai_score"],
+        reverse=True
+    )[:5]
+
     return {
         "model": best_model,
         "weight": best_weight,
@@ -6178,7 +6241,8 @@ def generate_ai_pick():
             ai_memory
             .get(best_model, {})
             .get("trend", "STABLE")
-        )
+        ),
+        "candidates": candidates,
     }
 
 async def cmd_ai_pick(
@@ -6194,6 +6258,8 @@ async def cmd_ai_pick(
         )
         return
 
+    candidates = pick.get("candidates", [])
+
     lines = [
         "TAIPO AI PICK",
         "",
@@ -6203,8 +6269,30 @@ async def cmd_ai_pick(
         f"Weight: {safe_float(pick.get('weight'), 0.0):.2f}",
         f"Trend: {pick.get('trend', 'STABLE')}",
         "",
-        "Not: Bu ilk sürüm model seçer. Hisse seçimi Faz 6.1'de bağlanacak."
+        "AI aday hisseler:"
     ]
+
+    if not candidates:
+        lines.append("Henüz aday hisse yok.")
+
+    else:
+        for i, c in enumerate(candidates, 1):
+            lines.append("")
+            lines.append(
+                f"{i}) {c.get('symbol', '-')}"
+            )
+            lines.append(
+                f"AI Score: {safe_float(c.get('ai_score'), 0.0):.2f}"
+            )
+            lines.append(
+                f"Perf: %{safe_float(c.get('performance_pct'), 0.0):.2f}"
+            )
+            lines.append(
+                f"Max: %{safe_float(c.get('max_return'), 0.0):.2f}"
+            )
+            lines.append(
+                f"Min: %{safe_float(c.get('min_return'), 0.0):.2f}"
+            )
 
     await update.message.reply_text(
         "\n".join(lines)
