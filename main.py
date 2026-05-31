@@ -666,6 +666,14 @@ def update_ai_memory_from_evolve(
         )
 
         trend = "STABLE"
+        
+        auto_action = "KEEP"
+
+        if hit >= 60 and avg >= 2:
+            auto_action = "PROMOTE"
+
+        elif hit <= 40 and avg <= 0:
+            auto_action = "DEMOTE"
 
         if trend_score >= 3:
             trend = "UP"
@@ -678,6 +686,7 @@ def update_ai_memory_from_evolve(
             "weight": round(weight, 2),
             "prev_weight": round(prev_weight, 2),
             "trend": trend,
+            "auto_action": auto_action,
             "hit": round(hit, 2),
             "avg": round(avg, 2),
             "total": total,
@@ -6122,6 +6131,9 @@ async def cmd_ai_log(
         lines.append(f"AI skor: {safe_float(item.get('ai_score'), 0.0):.2f}")
         lines.append(f"Weight: {safe_float(item.get('weight'), 0.0):.2f}")
         lines.append(f"Trend: {item.get('trend', '-')}")
+        lines.append(
+            f"Action: {item.get('auto_action', 'KEEP')}"
+        )
         lines.append(f"Market: {item.get('market_mode', '-')}")
         lines.append(f"Toplam kayıt: {item.get('total', 0)}")
 
