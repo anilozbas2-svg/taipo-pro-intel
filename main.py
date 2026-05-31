@@ -6412,6 +6412,109 @@ def update_ai_pick_performance():
 
     return updated
 
+def evolve_ai_from_pick_performance():
+
+    data = _load_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE
+    )
+
+    memory = _load_json(
+        TAIPO_AI_MEMORY_FILE
+    )
+
+    if not isinstance(data, dict):
+        return 0
+
+    if not isinstance(memory, dict):
+        return 0
+
+    updated = 0
+    
+    for day, item in data.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        model = item.get("model")
+
+        if not model:
+            continue
+
+        mem = memory.get(model, {})
+
+        if not isinstance(mem, dict):
+            continue
+
+        total = int(
+            safe_float(item.get("total"), 0)
+        )
+
+        if total <= 0:
+            continue
+
+        success = safe_float(
+            item.get("success"),
+            0.0
+        )
+
+        failed = safe_float(
+            item.get("failed"),
+            0.0
+        )
+
+        avg_pct = safe_float(
+            item.get("avg_pct"),
+            0.0
+        )
+
+        hit_rate = (
+            success / total
+        ) * 100
+
+        old_weight = safe_float(
+            mem.get("weight"),
+            1.0
+        )
+
+        new_weight = old_weight
+
+        action = "KEEP"
+
+        if hit_rate >= 60 and avg_pct >= 1:
+            new_weight += 0.10
+            action = "PROMOTE"
+
+        elif hit_rate <= 40 and avg_pct <= 0:
+            new_weight -= 0.10
+            action = "DEMOTE"
+
+        new_weight = max(
+            0.50,
+            min(new_weight, 1.50)
+        )
+
+        mem["prev_weight"] = old_weight
+        mem["weight"] = round(new_weight, 2)
+        mem["pick_hit_rate"] = round(hit_rate, 2)
+        mem["pick_avg_pct"] = round(avg_pct, 2)
+        mem["pick_action"] = action
+
+        if action == "PROMOTE":
+            mem["trend"] = "UP"
+
+        elif action == "DEMOTE":
+            mem["trend"] = "DOWN"
+
+        memory[model] = mem
+        updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_MEMORY_FILE,
+        memory
+    )
+
+    return updated
+
 async def cmd_ai_pick(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -6614,6 +6717,17 @@ async def cmd_ai_pick_score(
 
     await update.message.reply_text(
         "\n".join(lines)
+    )
+
+async def cmd_ai_pick_evolve(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    updated = evolve_ai_from_pick_performance()
+
+    await update.message.reply_text(
+        f"TAIPO AI PICK EVOLVE\nGüncellenen model: {updated}"
     )
 
 async def cmd_ai_pick_history(
@@ -8263,6 +8377,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
     app.add_handler(CommandHandler("ai_score", cmd_ai_score))
     app.add_handler(CommandHandler("ai_pick_score", cmd_ai_pick_score))
+    app.add_handler(CommandHandler("ai_pick_evolve", cmd_ai_pick_evolve))
     app.add_handler(CommandHandler("ai_pick_history", cmd_ai_pick_history))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
