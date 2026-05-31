@@ -6088,6 +6088,47 @@ async def cmd_ai_memory(
         "\n".join(lines)
     )
 
+async def cmd_ai_log(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
+
+    if not isinstance(decision_log, dict) or not decision_log:
+        await update.message.reply_text(
+            "TAIPO AI LOG\nHenüz AI karar kaydı yok."
+        )
+        return
+
+    days = sorted(decision_log.keys())[-7:]
+
+    lines = [
+        "TAIPO AI LOG",
+        "",
+        "Son AI kararları:"
+    ]
+
+    for d in days:
+
+        item = decision_log.get(d, {})
+
+        if not isinstance(item, dict):
+            continue
+
+        lines.append("")
+        lines.append(f"Tarih: {d}")
+        lines.append(f"Lider model: {item.get('top_model', '-')}")
+        lines.append(f"AI skor: {safe_float(item.get('ai_score'), 0.0):.2f}")
+        lines.append(f"Weight: {safe_float(item.get('weight'), 0.0):.2f}")
+        lines.append(f"Trend: {item.get('trend', '-')}")
+        lines.append(f"Market: {item.get('market_mode', '-')}")
+        lines.append(f"Toplam kayıt: {item.get('total', 0)}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -7691,6 +7732,7 @@ def main() -> None:
     "learner_evolve", cmd_learner_evolve))
     app.add_handler(CommandHandler("ai_top", cmd_ai_top))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
+    app.add_handler(CommandHandler("ai_log", cmd_ai_log))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
