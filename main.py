@@ -6142,6 +6142,45 @@ async def cmd_ai_log(
         "\n".join(lines)
     )
 
+def generate_ai_pick():
+
+    ai_memory = _load_json(
+        TAIPO_AI_MEMORY_FILE
+    )
+
+    if not isinstance(ai_memory, dict):
+        return None
+
+    best_model = None
+    best_weight = -999
+
+    for model, item in ai_memory.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        weight = safe_float(
+            item.get("weight"),
+            0.0
+        )
+
+        if weight > best_weight:
+            best_weight = weight
+            best_model = model
+
+    if not best_model:
+        return None
+
+    return {
+        "model": best_model,
+        "weight": best_weight,
+        "trend": str(
+            ai_memory
+            .get(best_model, {})
+            .get("trend", "STABLE")
+        )
+    }
+
 async def cmd_ai_score(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
