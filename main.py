@@ -6573,6 +6573,49 @@ async def cmd_ai_score(
         "\n".join(lines)
     )
 
+async def cmd_ai_pick_score(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    updated = update_ai_pick_performance()
+
+    data = _load_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE
+    )
+
+    if not isinstance(data, dict) or not data:
+
+        await update.message.reply_text(
+            "TAIPO AI PICK SCORE\nHenüz ölçüm yok."
+        )
+        return
+
+    last_day = sorted(
+        data.keys()
+    )[-1]
+
+    item = data.get(
+        last_day,
+        {}
+    )
+
+    lines = [
+        "TAIPO AI PICK SCORE",
+        "",
+        f"Tarih: {last_day}",
+        f"Model: {item.get('model', '-')}",
+        "",
+        f"Toplam: {item.get('total', 0)}",
+        f"Başarılı: {item.get('success', 0)}",
+        f"Başarısız: {item.get('failed', 0)}",
+        f"Ort. Getiri: %{safe_float(item.get('avg_pct'), 0.0):.2f}",
+    ]
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -8179,6 +8222,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
     app.add_handler(CommandHandler("ai_score", cmd_ai_score))
+    app.add_handler(CommandHandler("ai_pick_score", cmd_ai_pick_score))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
