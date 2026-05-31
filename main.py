@@ -6245,6 +6245,51 @@ def generate_ai_pick():
         "candidates": candidates,
     }
 
+def save_ai_pick(pick):
+
+    if not isinstance(pick, dict):
+        return
+
+    data = _load_json(
+        TAIPO_AI_PICK_FILE
+    )
+
+    if not isinstance(data, dict):
+        data = {}
+
+    today = datetime.now().strftime(
+        "%Y-%m-%d"
+    )
+
+    candidates = []
+
+    for item in pick.get(
+        "candidates",
+        []
+    ):
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if symbol:
+            candidates.append(symbol)
+
+    data[today] = {
+        "model": pick.get("model"),
+        "weight": pick.get("weight"),
+        "trend": pick.get("trend"),
+        "candidates": candidates
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_PICK_FILE,
+        data
+    )
+
 async def cmd_ai_pick(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
