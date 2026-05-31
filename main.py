@@ -6261,9 +6261,7 @@ def save_ai_pick(pick):
     if not isinstance(data, dict):
         data = {}
 
-    today = datetime.now().strftime(
-        "%Y-%m-%d"
-    )
+    today = today_key_tradingday()
 
     candidates = []
 
