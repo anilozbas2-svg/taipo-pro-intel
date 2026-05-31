@@ -6181,6 +6181,35 @@ def generate_ai_pick():
         )
     }
 
+async def cmd_ai_pick(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    pick = generate_ai_pick()
+
+    if not isinstance(pick, dict):
+        await update.message.reply_text(
+            "TAIPO AI PICK\nHenüz AI pick üretilemedi."
+        )
+        return
+
+    lines = [
+        "TAIPO AI PICK",
+        "",
+        "AI lider modeli:",
+        str(pick.get("model", "-")),
+        "",
+        f"Weight: {safe_float(pick.get('weight'), 0.0):.2f}",
+        f"Trend: {pick.get('trend', 'STABLE')}",
+        "",
+        "Not: Bu ilk sürüm model seçer. Hisse seçimi Faz 6.1'de bağlanacak."
+    ]
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_score(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -7889,6 +7918,7 @@ def main() -> None:
     app.add_handler(CommandHandler(
     "learner_evolve", cmd_learner_evolve))
     app.add_handler(CommandHandler("ai_top", cmd_ai_top))
+    app.add_handler(CommandHandler("ai_pick", cmd_ai_pick))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
     app.add_handler(CommandHandler("ai_score", cmd_ai_score))
