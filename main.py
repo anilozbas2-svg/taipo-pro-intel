@@ -220,6 +220,7 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 TAIPO_SIGNAL_HISTORY_FILE = os.path.join(DATA_DIR, "taipo_signal_history.json")
 TAIPO_SIGNAL_PERFORMANCE_FILE = os.path.join(DATA_DIR, "taipo_signal_performance.json")
 TAIPO_AI_MEMORY_FILE = os.path.join(DATA_DIR, "taipo_ai_memory.json")
+TAIPO_AI_DECISION_LOG_FILE = os.path.join(DATA_DIR, "taipo_ai_decision_log.json")
 TAIPO_DAILY_EOD_SNAPSHOTS_FILE = os.path.join(DATA_DIR, "taipo_daily_eod_snapshots.json")
 
 # ===============================
@@ -5964,6 +5965,46 @@ async def cmd_ai_top(
     )
 
     top = rows[0]
+
+    decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
+
+    if not isinstance(decision_log, dict):
+        decision_log = {}
+
+    today_key = today_key_tradingday()
+
+    decision_log[today_key] = {
+        "date": today_key,
+        "top_model": top["signal_type"],
+        "ai_score": round(
+            safe_float(top.get("score")),
+            2
+        ),
+        "weight": round(
+            safe_float(top.get("weight")),
+            2
+        ),
+        "hit": round(
+            safe_float(top.get("hit")),
+            2
+        ),
+        "avg": round(
+            safe_float(top.get("avg")),
+            2
+        ),
+        "trend": str(top.get("trend", "STABLE")),
+        "market_mode": str(
+            top.get("market_mode", "UNKNOWN")
+        ),
+        "total": int(
+            safe_float(top.get("total"), 0)
+        ),
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_DECISION_LOG_FILE,
+        decision_log
+    )
 
     lines = [
         "TAIPO AI TOP",
