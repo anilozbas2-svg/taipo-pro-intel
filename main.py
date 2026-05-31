@@ -222,6 +222,10 @@ TAIPO_SIGNAL_PERFORMANCE_FILE = os.path.join(DATA_DIR, "taipo_signal_performance
 TAIPO_AI_MEMORY_FILE = os.path.join(DATA_DIR, "taipo_ai_memory.json")
 TAIPO_AI_DECISION_LOG_FILE = os.path.join(DATA_DIR, "taipo_ai_decision_log.json")
 TAIPO_AI_PICK_FILE = os.path.join(DATA_DIR, "taipo_ai_pick.json")
+TAIPO_AI_PICK_PERFORMANCE_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_pick_performance.json"
+)
 TAIPO_DAILY_EOD_SNAPSHOTS_FILE = os.path.join(DATA_DIR, "taipo_daily_eod_snapshots.json")
 
 # ===============================
@@ -6289,6 +6293,124 @@ def save_ai_pick(pick):
         TAIPO_AI_PICK_FILE,
         data
     )
+
+def update_ai_pick_performance():
+
+    picks = _load_json(
+        TAIPO_AI_PICK_FILE
+    )
+
+    perf = _load_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE
+    )
+
+    if not isinstance(picks, dict):
+        return 0
+
+    if not isinstance(perf, dict):
+        return 0
+
+    result = _load_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE
+    )
+
+    if not isinstance(result, dict):
+        result = {}
+
+    updated = 0
+
+    for day, pick in picks.items():
+
+        if not isinstance(pick, dict):
+            continue
+
+        model = pick.get("model")
+        candidates = pick.get("candidates", [])
+
+        if not isinstance(candidates, list):
+            continue
+
+        day_perf = perf.get(day, {})
+
+        if not isinstance(day_perf, dict):
+            continue
+
+        rows = []
+
+        for symbol in candidates:
+
+            symbol = str(symbol).strip()
+
+            if not symbol:
+                continue
+
+            found = None
+
+            for item in day_perf.values():
+
+                if not isinstance(item, dict):
+                    continue
+
+                if item.get("symbol") == symbol:
+                    found = item
+                    break
+
+            if not found:
+                continue
+
+            pct = safe_float(
+                found.get("performance_pct"),
+                0.0
+            )
+
+            status = "FLAT"
+
+            if pct >= 3:
+                status = "SUCCESS"
+
+            elif pct <= -3:
+                status = "FAILED"
+
+            rows.append({
+                "symbol": symbol,
+                "model": model,
+                "performance_pct": round(pct, 2),
+                "status": status,
+            })
+
+        if not rows:
+            continue
+
+        success = len(
+            [r for r in rows if r["status"] == "SUCCESS"]
+        )
+
+        failed = len(
+            [r for r in rows if r["status"] == "FAILED"]
+        )
+
+        avg_pct = sum(
+            safe_float(r.get("performance_pct"), 0.0)
+            for r in rows
+        ) / len(rows)
+
+        result[day] = {
+            "model": model,
+            "total": len(rows),
+            "success": success,
+            "failed": failed,
+            "avg_pct": round(avg_pct, 2),
+            "items": rows,
+        }
+
+        updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE,
+        result
+    )
+
+    return updated
 
 async def cmd_ai_pick(
     update: Update,
