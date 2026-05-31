@@ -221,6 +221,7 @@ TAIPO_SIGNAL_HISTORY_FILE = os.path.join(DATA_DIR, "taipo_signal_history.json")
 TAIPO_SIGNAL_PERFORMANCE_FILE = os.path.join(DATA_DIR, "taipo_signal_performance.json")
 TAIPO_AI_MEMORY_FILE = os.path.join(DATA_DIR, "taipo_ai_memory.json")
 TAIPO_AI_DECISION_LOG_FILE = os.path.join(DATA_DIR, "taipo_ai_decision_log.json")
+TAIPO_AI_PICK_FILE = os.path.join(DATA_DIR, "taipo_ai_pick.json")
 TAIPO_DAILY_EOD_SNAPSHOTS_FILE = os.path.join(DATA_DIR, "taipo_daily_eod_snapshots.json")
 
 # ===============================
