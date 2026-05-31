@@ -6296,6 +6296,8 @@ async def cmd_ai_pick(
 ) -> None:
 
     pick = generate_ai_pick()
+    
+    save_ai_pick(pick)
 
     if not isinstance(pick, dict):
         await update.message.reply_text(
