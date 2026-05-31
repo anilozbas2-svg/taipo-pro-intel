@@ -5991,6 +5991,62 @@ async def cmd_ai_top(
         "\n".join(lines)
     )
 
+async def cmd_ai_memory(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    memory = _load_json(TAIPO_AI_MEMORY_FILE)
+
+    if not isinstance(memory, dict) or not memory:
+        await update.message.reply_text(
+            "TAIPO AI MEMORY\nHenüz AI memory yok."
+        )
+        return
+
+    rows = []
+
+    for sig, item in memory.items():
+        rows.append({
+            "signal_type": sig,
+            "weight": safe_float(item.get("weight"), 1.0),
+            "prev_weight": safe_float(item.get("prev_weight"), 1.0),
+            "trend": str(item.get("trend", "STABLE")),
+            "hit": safe_float(item.get("hit"), 0.0),
+            "avg": safe_float(item.get("avg"), 0.0),
+            "total": int(safe_float(item.get("total"), 0)),
+            "market_mode": str(item.get("market_mode", "UNKNOWN")),
+            "updated_at": str(item.get("updated_at", "-")),
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda x: x["weight"],
+        reverse=True
+    )
+
+    lines = [
+        "TAIPO AI MEMORY",
+        "",
+        "AI beynindeki kayıtlar:"
+    ]
+
+    for r in rows[:10]:
+        lines.append("")
+        lines.append(f"{r['signal_type']}")
+        lines.append(f"Weight: {r['weight']:.2f}")
+        lines.append(f"Prev weight: {r['prev_weight']:.2f}")
+        lines.append(f"Trend: {r['trend']}")
+        lines.append(f"Hit: %{r['hit']:.1f}")
+        lines.append(f"Avg: %{r['avg']:.2f}")
+        lines.append(f"Total: {r['total']}")
+        lines.append(f"Market: {r['market_mode']}")
+        lines.append(f"Updated: {r['updated_at']}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -7593,6 +7649,7 @@ def main() -> None:
     app.add_handler(CommandHandler(
     "learner_evolve", cmd_learner_evolve))
     app.add_handler(CommandHandler("ai_top", cmd_ai_top))
+    app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
