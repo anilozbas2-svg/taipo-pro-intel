@@ -6129,6 +6129,112 @@ async def cmd_ai_log(
         "\n".join(lines)
     )
 
+async def cmd_ai_score(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(decision_log, dict) or not decision_log:
+        await update.message.reply_text(
+            "TAIPO AI SCORE\nHenüz AI karar kaydı yok."
+        )
+        return
+
+    if not isinstance(perf, dict) or not perf:
+        await update.message.reply_text(
+            "TAIPO AI SCORE\nHenüz performans kaydı yok."
+        )
+        return
+
+    total = 0
+    success = 0
+    failed = 0
+    flat = 0
+    sum_pct = 0.0
+
+    lines = [
+        "TAIPO AI SCORE",
+        "",
+        "AI karar performansı:"
+    ]
+
+    days = sorted(decision_log.keys())[-10:]
+
+    for d in days:
+
+        decision = decision_log.get(d, {}) or {}
+        top_model = decision.get("top_model", "")
+
+        day_perf = perf.get(d, {}) or {}
+
+        if not top_model or not isinstance(day_perf, dict):
+            continue
+
+        model_items = []
+
+        for item in day_perf.values():
+
+            if item.get("signal_type") == top_model:
+                model_items.append(item)
+
+        if not model_items:
+            continue
+
+        day_sum = 0.0
+
+        for item in model_items:
+            day_sum += safe_float(
+                item.get("performance_pct"),
+                0.0
+            )
+
+        day_avg = day_sum / len(model_items)
+
+        status = "FLAT"
+
+        if day_avg >= 3:
+            status = "SUCCESS"
+            success += 1
+
+        elif day_avg <= -3:
+            status = "FAILED"
+            failed += 1
+
+        else:
+            flat += 1
+
+        total += 1
+        sum_pct += day_avg
+
+        lines.append("")
+        lines.append(f"{d}")
+        lines.append(f"AI model: {top_model}")
+        lines.append(f"Ort. sonuç: %{day_avg:.2f}")
+        lines.append(f"Durum: {status}")
+
+    if total <= 0:
+        await update.message.reply_text(
+            "TAIPO AI SCORE\nÖlçülebilir AI kararı yok."
+        )
+        return
+
+    hit_rate = (success / total) * 100
+    avg_return = sum_pct / total
+
+    lines.insert(3, f"Toplam ölçüm: {total}")
+    lines.insert(4, f"Başarılı: {success}")
+    lines.insert(5, f"Başarısız: {failed}")
+    lines.insert(6, f"Nötr: {flat}")
+    lines.insert(7, f"Hit-rate: %{hit_rate:.1f}")
+    lines.insert(8, f"Ort. getiri: %{avg_return:.2f}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ALARM_CHAT_ID:
         return
@@ -7733,6 +7839,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_top", cmd_ai_top))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
+    app.add_handler(CommandHandler("ai_score", cmd_ai_score))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
     app.add_handler(CommandHandler("altin_follow", cmd_altin_follow))
     app.add_handler(CommandHandler("acc", cmd_acc))
