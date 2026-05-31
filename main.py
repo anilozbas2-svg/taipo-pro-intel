@@ -6723,10 +6723,13 @@ async def cmd_ai_pick_evolve(
     context: ContextTypes.DEFAULT_TYPE
 ) -> None:
 
+    measured = update_ai_pick_performance()
     updated = evolve_ai_from_pick_performance()
 
     await update.message.reply_text(
-        f"TAIPO AI PICK EVOLVE\nGüncellenen model: {updated}"
+        "TAIPO AI PICK EVOLVE\n"
+        f"Ölçülen kayıt: {measured}\n"
+        f"Güncellenen model: {updated}"
     )
 
 async def cmd_ai_pick_history(
