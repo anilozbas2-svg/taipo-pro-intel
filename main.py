@@ -6733,7 +6733,32 @@ async def cmd_ai_pick_score(
         f"Başarılı: {item.get('success', 0)}",
         f"Başarısız: {item.get('failed', 0)}",
         f"Ort. Getiri: %{safe_float(item.get('avg_pct'), 0.0):.2f}",
+        "",
+        "Hisse detayları:"
     ]
+    
+    for r in item.get("items", []):
+
+        if not isinstance(r, dict):
+            continue
+
+        lines.append("")
+
+        lines.append(
+            f"{r.get('symbol', '-')}"
+        )
+
+        lines.append(
+            f"Gün: {r.get('measured_day', '-')}"
+        )
+
+        lines.append(
+            f"Getiri: %{safe_float(r.get('performance_pct'), 0.0):.2f}"
+        )
+
+        lines.append(
+            f"Durum: {r.get('status', '-')}"
+        )
 
     await update.message.reply_text(
         "\n".join(lines)
