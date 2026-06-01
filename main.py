@@ -6813,6 +6813,19 @@ async def cmd_ai_pick(
             lines.append(
                 f"AI Score: {safe_float(c.get('ai_score'), 0.0):.2f}"
             )
+            
+            lines.append(
+                f"Weight: {safe_float(c.get('symbol_weight'), 1.0):.2f}"
+            )
+
+            lines.append(
+                f"Hit: %{safe_float(c.get('symbol_hit_rate'), 0.0):.1f}"
+            )
+
+            lines.append(
+                f"Avg: %{safe_float(c.get('symbol_avg_pct'), 0.0):.2f}"
+            )
+            
             lines.append(
                 f"Perf: %{safe_float(c.get('performance_pct'), 0.0):.2f}"
             )
