@@ -6338,8 +6338,8 @@ def generate_ai_pick():
                     + best_weight * 10.0
                     + pick_hit_rate * 0.05
                     + pick_avg_pct * 1.50
-                    + symbol_hit_rate * 0.03
-                    + symbol_avg_pct * 1.20
+                    + symbol_hit_rate * 0.08
+                    + symbol_avg_pct * 2.00
                 ) * trend_boost * symbol_weight
 
                 candidates.append({
