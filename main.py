@@ -6525,14 +6525,21 @@ def evolve_ai_from_pick_performance():
         TAIPO_AI_MEMORY_FILE
     )
 
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
     if not isinstance(data, dict):
         return 0
 
     if not isinstance(memory, dict):
         return 0
 
+    if not isinstance(symbol_memory, dict):
+        symbol_memory = {}
+
     updated = 0
-    
+
     for day, item in data.items():
 
         if not isinstance(item, dict):
@@ -6560,11 +6567,6 @@ def evolve_ai_from_pick_performance():
             0.0
         )
 
-        failed = safe_float(
-            item.get("failed"),
-            0.0
-        )
-
         avg_pct = safe_float(
             item.get("avg_pct"),
             0.0
@@ -6574,11 +6576,6 @@ def evolve_ai_from_pick_performance():
             success / total
         ) * 100
 
-        old_weight = safe_float(
-            mem.get("weight"),
-            1.0
-        )
-        
         old_weight = safe_float(
             mem.get("weight"),
             1.0
@@ -6593,11 +6590,6 @@ def evolve_ai_from_pick_performance():
             min_weight = 0.65
 
         new_weight = old_weight
-
-        action = "KEEP"
-
-        new_weight = old_weight
-
         action = "KEEP"
 
         if hit_rate >= 60 and avg_pct >= 1:
@@ -6626,13 +6618,102 @@ def evolve_ai_from_pick_performance():
             mem["trend"] = "DOWN"
 
         memory[model] = mem
+
+        for row in item.get("items", []):
+
+            if not isinstance(row, dict):
+                continue
+
+            symbol = str(
+                row.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            sym = symbol_memory.get(symbol, {})
+
+            if not isinstance(sym, dict):
+                sym = {}
+
+            sym_total = int(
+                safe_float(sym.get("total"), 0)
+            ) + 1
+
+            perf_pct = safe_float(
+                row.get("performance_pct"),
+                0.0
+            )
+
+            sym_success = int(
+                safe_float(sym.get("success"), 0)
+            )
+
+            sym_failed = int(
+                safe_float(sym.get("failed"), 0)
+            )
+
+            status = str(
+                row.get("status", "FLAT")
+            )
+
+            if status == "SUCCESS":
+                sym_success += 1
+
+            elif status == "FAILED":
+                sym_failed += 1
+
+            old_sum = safe_float(
+                sym.get("sum_pct"),
+                0.0
+            )
+
+            new_sum = old_sum + perf_pct
+
+            sym_avg = new_sum / sym_total
+
+            sym_hit_rate = (
+                sym_success / sym_total
+            ) * 100
+
+            sym_weight = 1.00
+
+            if sym_total < 5:
+                sym_weight = 1.00
+
+            elif sym_hit_rate >= 70 and sym_avg >= 1:
+                sym_weight = 1.25
+
+            elif sym_hit_rate >= 60:
+                sym_weight = 1.10
+
+            elif sym_hit_rate <= 40 and sym_avg <= 0:
+                sym_weight = 0.85
+
+            symbol_memory[symbol] = {
+                "symbol": symbol,
+                "total": sym_total,
+                "success": sym_success,
+                "failed": sym_failed,
+                "sum_pct": round(new_sum, 2),
+                "avg_pct": round(sym_avg, 2),
+                "hit_rate": round(sym_hit_rate, 2),
+                "weight": round(sym_weight, 2),
+                "updated_at": day,
+            }
+
         updated += 1
 
     _atomic_write_json(
         TAIPO_AI_MEMORY_FILE,
         memory
     )
-    
+
+    _atomic_write_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE,
+        symbol_memory
+    )
+
     return updated
 
 async def cmd_ai_pick(
