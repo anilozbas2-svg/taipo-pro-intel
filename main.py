@@ -6814,6 +6814,23 @@ async def cmd_ai_pick(
                 f"AI Score: {safe_float(c.get('ai_score'), 0.0):.2f}"
             )
             
+            confidence = min(
+                100.0,
+                max(
+                    0.0,
+                    safe_float(
+                        c.get(
+                            "ai_score"
+                        ),
+                        0.0
+                    ) * 6.0
+                )
+            )
+
+            lines.append(
+                f"Confidence: %{confidence:.1f}"
+            )
+            
             lines.append(
                 f"Weight: {safe_float(c.get('symbol_weight'), 1.0):.2f}"
             )
