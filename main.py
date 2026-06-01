@@ -6532,7 +6532,67 @@ def evolve_ai_from_pick_performance():
         TAIPO_AI_MEMORY_FILE,
         memory
     )
+    
+    ai_memory = _load_json(
+        TAIPO_AI_MEMORY_FILE
+    )
 
+    if not isinstance(ai_memory, dict):
+        ai_memory = {}
+
+    for model, stat in model_stats.items():
+
+        if not isinstance(stat, dict):
+            continue
+
+        total = int(
+            stat.get("total", 0)
+        )
+
+        success = int(
+            stat.get("success", 0)
+        )
+
+        if total <= 0:
+            continue
+
+        hit_rate = success / total
+
+        weight = 1.0
+
+        if hit_rate >= 0.70:
+            weight = 1.30
+
+        elif hit_rate >= 0.60:
+            weight = 1.15
+
+        elif hit_rate >= 0.50:
+            weight = 1.00
+
+        else:
+            weight = 0.85
+
+        trend = "STABLE"
+
+        if hit_rate >= 0.60:
+            trend = "UP"
+
+        elif hit_rate < 0.50:
+            trend = "DOWN"
+
+        ai_memory[model] = {
+            "weight": weight,
+            "trend": trend,
+            "hit_rate": hit_rate,
+            "total": total,
+            "success": success,
+        }
+
+    _atomic_write_json(
+        TAIPO_AI_MEMORY_FILE,
+        ai_memory
+    )
+    
     return updated
 
 async def cmd_ai_pick(
