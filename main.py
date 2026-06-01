@@ -226,6 +226,10 @@ TAIPO_AI_PICK_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_pick_performance.json"
 )
+TAIPO_AI_SYMBOL_MEMORY_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_symbol_memory.json"
+)
 TAIPO_DAILY_EOD_SNAPSHOTS_FILE = os.path.join(DATA_DIR, "taipo_daily_eod_snapshots.json")
 
 # ===============================
@@ -6179,6 +6183,16 @@ def generate_ai_pick():
         TAIPO_SIGNAL_PERFORMANCE_FILE
     )
 
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(
+        symbol_memory,
+        dict
+    ):
+        symbol_memory = {}
+
     candidates = []
 
     if isinstance(perf, dict):
@@ -6250,6 +6264,29 @@ def generate_ai_pick():
                 elif trend == "DOWN":
                     trend_boost = 0.90
 
+                symbol_item = symbol_memory.get(
+                    symbol,
+                    {}
+                )
+
+                if not isinstance(symbol_item, dict):
+                    symbol_item = {}
+
+                symbol_hit_rate = safe_float(
+                    symbol_item.get("hit_rate"),
+                    0.0
+                )
+
+                symbol_avg_pct = safe_float(
+                    symbol_item.get("avg_pct"),
+                    0.0
+                )
+
+                symbol_weight = safe_float(
+                    symbol_item.get("weight"),
+                    1.0
+                )
+                
                 ai_score = (
                     perf_pct
                     + max_return * 0.50
@@ -6257,7 +6294,9 @@ def generate_ai_pick():
                     + best_weight * 10.0
                     + pick_hit_rate * 0.05
                     + pick_avg_pct * 1.50
-                ) * trend_boost
+                    + symbol_hit_rate * 0.03
+                    + symbol_avg_pct * 1.20
+                ) * trend_boost * symbol_weight
 
                 candidates.append({
                     "symbol": symbol,
@@ -6266,6 +6305,14 @@ def generate_ai_pick():
                     "max_return": max_return,
                     "min_return": min_return,
                     "ai_score": ai_score,
+                    "symbol_weight":
+                        symbol_weight,
+
+                    "symbol_hit_rate":
+                        symbol_hit_rate,
+
+                    "symbol_avg_pct":
+                        symbol_avg_pct,
                 })
 
     candidates = sorted(
