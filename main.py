@@ -6957,6 +6957,66 @@ async def cmd_ai_pick_score(
         "\n".join(lines)
     )
 
+async def cmd_ai_symbol_memory(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    data = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(data, dict) or not data:
+        await update.message.reply_text(
+            "TAIPO AI SYMBOL MEMORY\nHenüz hisse hafızası yok."
+        )
+        return
+
+    rows = []
+
+    for symbol, item in data.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        rows.append({
+            "symbol": symbol,
+            "total": int(safe_float(item.get("total"), 0)),
+            "hit_rate": safe_float(item.get("hit_rate"), 0.0),
+            "avg_pct": safe_float(item.get("avg_pct"), 0.0),
+            "weight": safe_float(item.get("weight"), 1.0),
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda x: (
+            x["weight"],
+            x["hit_rate"],
+            x["avg_pct"],
+            x["total"]
+        ),
+        reverse=True
+    )[:10]
+
+    lines = [
+        "TAIPO AI SYMBOL MEMORY",
+        "",
+        "AI'ın öğrendiği hisseler:"
+    ]
+
+    for i, r in enumerate(rows, 1):
+
+        lines.append("")
+        lines.append(f"{i}) {r['symbol']}")
+        lines.append(f"Total: {r['total']}")
+        lines.append(f"Hit: %{r['hit_rate']:.1f}")
+        lines.append(f"Avg: %{r['avg_pct']:.2f}")
+        lines.append(f"Weight: {r['weight']:.2f}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_pick_evolve(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -8618,6 +8678,9 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
     app.add_handler(CommandHandler("ai_score", cmd_ai_score))
     app.add_handler(CommandHandler("ai_pick_score", cmd_ai_pick_score))
+    app.add_handler(CommandHandler(
+        "ai_symbol_memory",
+        cmd_ai_symbol_memory))
     app.add_handler(CommandHandler("ai_pick_evolve", cmd_ai_pick_evolve))
     app.add_handler(CommandHandler("ai_pick_history", cmd_ai_pick_history))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
