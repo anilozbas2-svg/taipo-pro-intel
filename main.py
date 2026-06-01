@@ -6102,6 +6102,50 @@ async def cmd_ai_memory(
         lines.append(f"Market: {r['market_mode']}")
         lines.append(f"Updated: {r['updated_at']}")
 
+    symbol_data = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if isinstance(symbol_data, dict) and symbol_data:
+
+        symbol_rows = []
+
+        for symbol, item in symbol_data.items():
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol_rows.append({
+                "symbol": symbol,
+                "total": int(safe_float(item.get("total"), 0)),
+                "hit_rate": safe_float(item.get("hit_rate"), 0.0),
+                "avg_pct": safe_float(item.get("avg_pct"), 0.0),
+                "weight": safe_float(item.get("weight"), 1.0),
+            })
+
+        symbol_rows = sorted(
+            symbol_rows,
+            key=lambda x: (
+                x["weight"],
+                x["hit_rate"],
+                x["avg_pct"],
+                x["total"]
+            ),
+            reverse=True
+        )[:5]
+
+        lines.append("")
+        lines.append("AI HİSSE HAFIZASI")
+
+        for i, r in enumerate(symbol_rows, 1):
+
+            lines.append("")
+            lines.append(f"{i}) {r['symbol']}")
+            lines.append(f"Weight: {r['weight']:.2f}")
+            lines.append(f"Hit: %{r['hit_rate']:.1f}")
+            lines.append(f"Avg: %{r['avg_pct']:.2f}")
+            lines.append(f"Total: {r['total']}")
+    
     await update.message.reply_text(
         "\n".join(lines)
     )
