@@ -6531,6 +6531,23 @@ def evolve_ai_from_pick_performance():
             mem.get("weight"),
             1.0
         )
+        
+        old_weight = safe_float(
+            mem.get("weight"),
+            1.0
+        )
+
+        min_weight = 0.50
+
+        if total < 5:
+            min_weight = 0.75
+
+        elif total < 10:
+            min_weight = 0.65
+
+        new_weight = old_weight
+
+        action = "KEEP"
 
         new_weight = old_weight
 
@@ -6545,7 +6562,7 @@ def evolve_ai_from_pick_performance():
             action = "DEMOTE"
 
         new_weight = max(
-            0.50,
+            min_weight,
             min(new_weight, 1.50)
         )
 
