@@ -6631,19 +6631,33 @@ def evolve_ai_from_pick_performance():
             if not symbol:
                 continue
 
+            seen_key = f"{day}|{model}|{symbol}"
+
             sym = symbol_memory.get(symbol, {})
 
             if not isinstance(sym, dict):
                 sym = {}
 
-            sym_total = int(
-                safe_float(sym.get("total"), 0)
-            ) + 1
+            seen_keys = sym.get("seen_keys", [])
+
+            if not isinstance(seen_keys, list):
+                seen_keys = []
+
+            if seen_key in seen_keys:
+                continue
 
             perf_pct = safe_float(
                 row.get("performance_pct"),
                 0.0
             )
+
+            status = str(
+                row.get("status", "FLAT")
+            )
+
+            sym_total = int(
+                safe_float(sym.get("total"), 0)
+            ) + 1
 
             sym_success = int(
                 safe_float(sym.get("success"), 0)
@@ -6651,10 +6665,6 @@ def evolve_ai_from_pick_performance():
 
             sym_failed = int(
                 safe_float(sym.get("failed"), 0)
-            )
-
-            status = str(
-                row.get("status", "FLAT")
             )
 
             if status == "SUCCESS":
@@ -6669,7 +6679,6 @@ def evolve_ai_from_pick_performance():
             )
 
             new_sum = old_sum + perf_pct
-
             sym_avg = new_sum / sym_total
 
             sym_hit_rate = (
@@ -6690,6 +6699,8 @@ def evolve_ai_from_pick_performance():
             elif sym_hit_rate <= 40 and sym_avg <= 0:
                 sym_weight = 0.85
 
+            seen_keys.append(seen_key)
+
             symbol_memory[symbol] = {
                 "symbol": symbol,
                 "total": sym_total,
@@ -6700,6 +6711,7 @@ def evolve_ai_from_pick_performance():
                 "hit_rate": round(sym_hit_rate, 2),
                 "weight": round(sym_weight, 2),
                 "updated_at": day,
+                "seen_keys": seen_keys[-50:],
             }
 
         updated += 1
