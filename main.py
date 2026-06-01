@@ -6216,12 +6216,48 @@ def generate_ai_pick():
                     perf_pct
                 )
 
+                memory_item = ai_memory.get(
+                    best_model,
+                    {}
+                )
+
+                pick_hit_rate = safe_float(
+                    memory_item.get(
+                        "pick_hit_rate"
+                    ),
+                    0.0
+                )
+
+                pick_avg_pct = safe_float(
+                    memory_item.get(
+                        "pick_avg_pct"
+                    ),
+                    0.0
+                )
+
+                trend = str(
+                    memory_item.get(
+                        "trend",
+                        "STABLE"
+                    )
+                )
+
+                trend_boost = 1.00
+
+                if trend == "UP":
+                    trend_boost = 1.10
+
+                elif trend == "DOWN":
+                    trend_boost = 0.90
+
                 ai_score = (
                     perf_pct
                     + max_return * 0.50
                     + min_return * 0.25
                     + best_weight * 10.0
-                )
+                    + pick_hit_rate * 0.05
+                    + pick_avg_pct * 1.50
+                ) * trend_boost
 
                 candidates.append({
                     "symbol": symbol,
