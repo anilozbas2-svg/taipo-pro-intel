@@ -7252,6 +7252,18 @@ async def cmd_ai_pick(
             )
             
             lines.append(
+                f"Universe Total: {int(safe_float(c.get('universe_total'), 0))}"
+            )
+
+            lines.append(
+                f"Universe Power: {safe_float(c.get('universe_power'), 0.25):.2f}"
+            )
+
+            lines.append(
+                f"Effective U.W: {safe_float(c.get('effective_universe_weight'), 1.0):.2f}"
+            )
+            
+            lines.append(
                 f"Perf: %{safe_float(c.get('performance_pct'), 0.0):.2f}"
             )
             lines.append(
