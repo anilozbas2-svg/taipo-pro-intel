@@ -1545,20 +1545,94 @@ def _load_json(path: str) -> Dict[str, Any]:
     try:
         if not os.path.exists(path):
             return {}
+
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f) or {}
+
     except Exception as e:
         logger.warning("History load failed (%s): %s", path, e)
         return {}
 
+
 def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
     try:
         tmp = path + ".tmp"
+
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
+
         os.replace(tmp, path)
+
     except Exception as e:
         logger.warning("History write failed (%s): %s", path, e)
+
+
+def get_today_key():
+    return datetime.now(TZ).strftime("%Y-%m-%d")
+
+
+def build_ai_decision_item(item, rank_no=0):
+    symbol = (
+        item.get("symbol")
+        or item.get("ticker")
+        or item.get("name")
+        or ""
+    )
+
+    return {
+        "rank": rank_no,
+        "symbol": symbol,
+        "score": item.get("score"),
+        "final_score": item.get("final_score"),
+        "symbol_weight": item.get("symbol_weight"),
+        "universe_weight": item.get("universe_weight"),
+        "effective_universe_weight": item.get("effective_universe_weight"),
+        "universe_hit_rate": item.get("universe_hit_rate"),
+        "universe_avg": item.get("universe_avg"),
+        "universe_total": item.get("universe_total"),
+        "model": item.get("model") or item.get("signal_type") or "AI_PICK",
+        "entry_close": item.get("close"),
+        "created_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "t1_pct": None,
+        "t3_pct": None,
+        "t5_pct": None,
+        "status": "OPEN"
+    }
+
+
+def save_ai_decision_log(ai_items):
+    if not ai_items:
+        return 0
+
+    today_key = get_today_key()
+
+    decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
+    if not isinstance(decision_log, dict):
+        decision_log = {}
+
+    daily_items = []
+
+    for idx, item in enumerate(ai_items[:8], start=1):
+        daily_items.append(
+            build_ai_decision_item(
+                item,
+                rank_no=idx
+            )
+        )
+
+    decision_log[today_key] = {
+        "date": today_key,
+        "items": daily_items,
+        "count": len(daily_items),
+        "updated_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    _save_json(
+        TAIPO_AI_DECISION_LOG_FILE,
+        decision_log
+    )
+
+    return len(daily_items)
 
 def load_acc_entry_state():
     try:
@@ -7223,7 +7297,7 @@ async def cmd_ai_pick(
 ) -> None:
 
     pick = generate_ai_pick()
-    
+
     save_ai_pick(pick)
 
     if not isinstance(pick, dict):
@@ -7234,6 +7308,8 @@ async def cmd_ai_pick(
 
     candidates = pick.get("candidates", [])
 
+    decision_count = save_ai_decision_log(candidates)
+
     lines = [
         "TAIPO AI PICK",
         "",
@@ -7242,6 +7318,7 @@ async def cmd_ai_pick(
         "",
         f"Weight: {safe_float(pick.get('weight'), 0.0):.2f}",
         f"Trend: {pick.get('trend', 'STABLE')}",
+        f"Decision Log: {decision_count} aday kaydedildi",
         "",
         "AI aday hisseler:"
     ]
@@ -7258,15 +7335,13 @@ async def cmd_ai_pick(
             lines.append(
                 f"AI Score: {safe_float(c.get('ai_score'), 0.0):.2f}"
             )
-            
+
             confidence = min(
                 100.0,
                 max(
                     0.0,
                     safe_float(
-                        c.get(
-                            "ai_score"
-                        ),
+                        c.get("ai_score"),
                         0.0
                     ) * 6.0
                 )
@@ -7275,7 +7350,7 @@ async def cmd_ai_pick(
             lines.append(
                 f"Confidence: %{confidence:.1f}"
             )
-            
+
             lines.append(
                 f"Weight: {safe_float(c.get('symbol_weight'), 1.0):.2f}"
             )
@@ -7287,7 +7362,7 @@ async def cmd_ai_pick(
             lines.append(
                 f"Avg: %{safe_float(c.get('symbol_avg_pct'), 0.0):.2f}"
             )
-            
+
             lines.append(
                 f"Universe W: {safe_float(c.get('universe_weight'), 1.0):.2f}"
             )
@@ -7299,7 +7374,7 @@ async def cmd_ai_pick(
             lines.append(
                 f"Universe Avg: %{safe_float(c.get('universe_avg_pct'), 0.0):.2f}"
             )
-            
+
             lines.append(
                 f"Universe Total: {int(safe_float(c.get('universe_total'), 0))}"
             )
@@ -7311,13 +7386,15 @@ async def cmd_ai_pick(
             lines.append(
                 f"Effective U.W: {safe_float(c.get('effective_universe_weight'), 1.0):.2f}"
             )
-            
+
             lines.append(
                 f"Perf: %{safe_float(c.get('performance_pct'), 0.0):.2f}"
             )
+
             lines.append(
                 f"Max: %{safe_float(c.get('max_return'), 0.0):.2f}"
             )
+
             lines.append(
                 f"Min: %{safe_float(c.get('min_return'), 0.0):.2f}"
             )
