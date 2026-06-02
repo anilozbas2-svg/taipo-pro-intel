@@ -4964,8 +4964,17 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_change,
         rebound_picks,
     )
+    
+    universe_count = save_ai_universe_snapshot(
+        rows,
+        source="EOD"
+    )
 
-    msg += f"\n\n TAIPO LEARNER\nKayıt: {learner_count} sinyal"
+    msg += (
+        f"\n\n TAIPO LEARNER\n"
+        f"Kayıt: {learner_count} sinyal\n"
+        f"AI Universe kayıt: {universe_count}"
+    )
 
     await update.message.reply_text(
         msg,
