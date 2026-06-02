@@ -7419,6 +7419,112 @@ async def cmd_ai_symbol_memory(
         "\n".join(lines)
     )
 
+async def cmd_ai_symbol_rank(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    data = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(data, dict) or not data:
+        await update.message.reply_text(
+            "TAIPO AI SYMBOL RANK\nHenüz hisse sıralama verisi yok."
+        )
+        return
+
+    rows = []
+
+    for symbol, item in data.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        total = int(
+            safe_float(item.get("total"), 0)
+        )
+
+        universe_total = int(
+            safe_float(item.get("universe_total"), 0)
+        )
+
+        hit_rate = safe_float(
+            item.get("hit_rate"), 0.0
+        )
+
+        avg_pct = safe_float(
+            item.get("avg_pct"), 0.0
+        )
+
+        weight = safe_float(
+            item.get("weight"), 1.0
+        )
+
+        universe_hit_rate = safe_float(
+            item.get("universe_hit_rate"), 0.0
+        )
+
+        universe_avg_pct = safe_float(
+            item.get("universe_avg_pct"), 0.0
+        )
+
+        universe_weight = safe_float(
+            item.get("universe_weight"), 1.0
+        )
+
+        rank_score = (
+            weight * 20.0
+            + hit_rate * 0.20
+            + avg_pct * 4.0
+            + universe_weight * 25.0
+            + universe_hit_rate * 0.25
+            + universe_avg_pct * 5.0
+            + min(total + universe_total, 20) * 1.5
+        )
+
+        rows.append({
+            "symbol": symbol,
+            "rank_score": rank_score,
+            "total": total,
+            "hit_rate": hit_rate,
+            "avg_pct": avg_pct,
+            "weight": weight,
+            "universe_total": universe_total,
+            "universe_hit_rate": universe_hit_rate,
+            "universe_avg_pct": universe_avg_pct,
+            "universe_weight": universe_weight,
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda x: x["rank_score"],
+        reverse=True
+    )[:10]
+
+    lines = [
+        "TAIPO AI SYMBOL RANK",
+        "",
+        "AI hisse güç sıralaması:"
+    ]
+
+    for i, r in enumerate(rows, 1):
+
+        lines.append("")
+        lines.append(f"{i}) {r['symbol']}")
+        lines.append(f"Rank Score: {r['rank_score']:.2f}")
+        lines.append(f"Pick Weight: {r['weight']:.2f}")
+        lines.append(f"Pick Hit: %{r['hit_rate']:.1f}")
+        lines.append(f"Pick Avg: %{r['avg_pct']:.2f}")
+        lines.append(f"Universe Weight: {r['universe_weight']:.2f}")
+        lines.append(f"Universe Hit: %{r['universe_hit_rate']:.1f}")
+        lines.append(f"Universe Avg: %{r['universe_avg_pct']:.2f}")
+        lines.append(f"Total: {r['total']} / U: {r['universe_total']}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_universe_score(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -9160,6 +9266,9 @@ def main() -> None:
     app.add_handler(CommandHandler(
         "ai_symbol_memory",
         cmd_ai_symbol_memory))
+    app.add_handler(CommandHandler(
+        "ai_symbol_rank",
+        cmd_ai_symbol_rank))
     app.add_handler(CommandHandler(
         "ai_universe_score",
         cmd_ai_universe_score))
