@@ -234,6 +234,10 @@ TAIPO_AI_UNIVERSE_HISTORY_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_universe_history.json"
 )
+TAIPO_AI_UNIVERSE_PERFORMANCE_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_universe_performance.json"
+)
 TAIPO_DAILY_EOD_SNAPSHOTS_FILE = os.path.join(DATA_DIR, "taipo_daily_eod_snapshots.json")
 
 # ===============================
@@ -6630,6 +6634,123 @@ def save_ai_universe_snapshot(rows, source="EOD"):
 
     return len(items)
 
+def update_ai_universe_performance():
+
+    history = _load_json(TAIPO_AI_UNIVERSE_HISTORY_FILE)
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(history, dict):
+        return 0
+
+    if not isinstance(perf, dict):
+        return 0
+
+    result = _load_json(TAIPO_AI_UNIVERSE_PERFORMANCE_FILE)
+
+    if not isinstance(result, dict):
+        result = {}
+
+    updated = 0
+    perf_days = sorted(perf.keys())
+
+    for snap_day, snap in history.items():
+
+        if not isinstance(snap, dict):
+            continue
+
+        items = snap.get("items", [])
+
+        if not isinstance(items, list):
+            continue
+
+        rows = []
+
+        for entry in items:
+
+            if not isinstance(entry, dict):
+                continue
+
+            symbol = str(entry.get("symbol", "")).strip()
+
+            if not symbol:
+                continue
+
+            found = None
+            found_day = None
+
+            for perf_day in perf_days:
+
+                if perf_day <= snap_day:
+                    continue
+
+                day_perf = perf.get(perf_day, {})
+
+                if not isinstance(day_perf, dict):
+                    continue
+
+                for item in day_perf.values():
+
+                    if not isinstance(item, dict):
+                        continue
+
+                    if str(item.get("symbol", "")).strip() == symbol:
+                        found = item
+                        found_day = perf_day
+                        break
+
+                if found:
+                    break
+
+            if not found:
+                continue
+
+            pct = safe_float(found.get("performance_pct"), 0.0)
+
+            status = "FLAT"
+
+            if pct >= 3:
+                status = "SUCCESS"
+
+            elif pct <= -3:
+                status = "FAILED"
+
+            rows.append({
+                "symbol": symbol,
+                "snapshot_day": snap_day,
+                "measured_day": found_day,
+                "score": safe_float(entry.get("score"), 0.0),
+                "performance_pct": round(pct, 2),
+                "status": status,
+            })
+
+        if not rows:
+            continue
+
+        success = len([r for r in rows if r["status"] == "SUCCESS"])
+        failed = len([r for r in rows if r["status"] == "FAILED"])
+
+        avg_pct = sum(
+            safe_float(r.get("performance_pct"), 0.0)
+            for r in rows
+        ) / len(rows)
+
+        result[snap_day] = {
+            "total": len(rows),
+            "success": success,
+            "failed": failed,
+            "avg_pct": round(avg_pct, 2),
+            "items": rows,
+        }
+
+        updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_UNIVERSE_PERFORMANCE_FILE,
+        result
+    )
+
+    return updated
+
 def evolve_ai_from_pick_performance():
 
     data = _load_json(
@@ -7157,6 +7278,69 @@ async def cmd_ai_symbol_memory(
         lines.append(f"Hit: %{r['hit_rate']:.1f}")
         lines.append(f"Avg: %{r['avg_pct']:.2f}")
         lines.append(f"Weight: {r['weight']:.2f}")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+async def cmd_ai_universe_score(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    data = _load_json(
+        TAIPO_AI_UNIVERSE_PERFORMANCE_FILE
+    )
+
+    if not isinstance(data, dict) or not data:
+        await update.message.reply_text(
+            "TAIPO AI UNIVERSE SCORE\nHenüz veri yok."
+        )
+        return
+
+    total = 0
+    success = 0
+    failed = 0
+    avg_sum = 0.0
+
+    for item in data.values():
+
+        if not isinstance(item, dict):
+            continue
+
+        total += int(
+            safe_float(item.get("total"), 0)
+        )
+
+        success += int(
+            safe_float(item.get("success"), 0)
+        )
+
+        failed += int(
+            safe_float(item.get("failed"), 0)
+        )
+
+        avg_sum += safe_float(
+            item.get("avg_pct"),
+            0.0
+        )
+
+    hit_rate = 0.0
+
+    if total > 0:
+        hit_rate = (
+            success / total
+        ) * 100
+
+    lines = [
+        "TAIPO AI UNIVERSE SCORE",
+        "",
+        f"Total: {total}",
+        f"Success: {success}",
+        f"Failed: {failed}",
+        f"Hit Rate: %{hit_rate:.1f}",
+        f"Avg Score: %{avg_sum:.2f}",
+    ]
 
     await update.message.reply_text(
         "\n".join(lines)
@@ -8826,6 +9010,9 @@ def main() -> None:
     app.add_handler(CommandHandler(
         "ai_symbol_memory",
         cmd_ai_symbol_memory))
+    app.add_handler(CommandHandler(
+        "ai_universe_score",
+        cmd_ai_universe_score))
     app.add_handler(CommandHandler("ai_pick_evolve", cmd_ai_pick_evolve))
     app.add_handler(CommandHandler("ai_pick_history", cmd_ai_pick_history))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
