@@ -230,6 +230,10 @@ TAIPO_AI_SYMBOL_MEMORY_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_symbol_memory.json"
 )
+TAIPO_AI_UNIVERSE_HISTORY_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_universe_history.json"
+)
 TAIPO_DAILY_EOD_SNAPSHOTS_FILE = os.path.join(DATA_DIR, "taipo_daily_eod_snapshots.json")
 
 # ===============================
@@ -6446,6 +6450,9 @@ def update_ai_pick_performance():
         model = pick.get("model")
         candidates = pick.get("candidates", [])
 
+        if not model:
+            continue
+
         if not isinstance(candidates, list):
             continue
 
@@ -6463,7 +6470,7 @@ def update_ai_pick_performance():
 
             for perf_day in perf_days:
 
-                if perf_day < pick_day:
+                if perf_day <= pick_day:
                     continue
 
                 day_perf = perf.get(perf_day, {})
@@ -6476,7 +6483,11 @@ def update_ai_pick_performance():
                     if not isinstance(item, dict):
                         continue
 
-                    if str(item.get("symbol", "")).strip() == symbol:
+                    item_symbol = str(
+                        item.get("symbol", "")
+                    ).strip()
+
+                    if item_symbol == symbol:
                         found = item
                         found_day = perf_day
                         break
@@ -6485,32 +6496,21 @@ def update_ai_pick_performance():
                     break
 
             if not found:
-                for perf_day in reversed(perf_days):
-
-                    day_perf = perf.get(perf_day, {})
-
-                    if not isinstance(day_perf, dict):
-                        continue
-
-                    for item in day_perf.values():
-
-                        if not isinstance(item, dict):
-                            continue
-
-                        if str(item.get("symbol", "")).strip() == symbol:
-                            found = item
-                            found_day = perf_day
-                            break
-
-                    if found:
-                        break
-
-            if not found:
                 continue
 
             pct = safe_float(
                 found.get("performance_pct"),
                 0.0
+            )
+
+            max_return = safe_float(
+                found.get("max_return"),
+                pct
+            )
+
+            min_return = safe_float(
+                found.get("min_return"),
+                pct
             )
 
             status = "FLAT"
@@ -6527,14 +6527,21 @@ def update_ai_pick_performance():
                 "pick_day": pick_day,
                 "measured_day": found_day,
                 "performance_pct": round(pct, 2),
+                "max_return": round(max_return, 2),
+                "min_return": round(min_return, 2),
                 "status": status,
             })
 
         if not rows:
             continue
 
-        success = len([r for r in rows if r["status"] == "SUCCESS"])
-        failed = len([r for r in rows if r["status"] == "FAILED"])
+        success = len(
+            [r for r in rows if r["status"] == "SUCCESS"]
+        )
+
+        failed = len(
+            [r for r in rows if r["status"] == "FAILED"]
+        )
 
         avg_pct = sum(
             safe_float(r.get("performance_pct"), 0.0)
@@ -6558,6 +6565,61 @@ def update_ai_pick_performance():
     )
 
     return updated
+
+def save_ai_universe_snapshot(rows, source="EOD"):
+
+    if not isinstance(rows, list):
+        return 0
+
+    data = _load_json(
+        TAIPO_AI_UNIVERSE_HISTORY_FILE
+    )
+
+    if not isinstance(data, dict):
+        data = {}
+
+    today = today_key_tradingday()
+
+    items = []
+
+    for row in rows:
+
+        if not isinstance(row, dict):
+            continue
+
+        symbol = str(
+            row.get("symbol") or row.get("ticker") or ""
+        ).strip()
+
+        if not symbol:
+            continue
+
+        items.append({
+            "symbol": symbol,
+            "source": source,
+            "score": safe_float(row.get("score"), 0.0),
+            "change": safe_float(row.get("change"), 0.0),
+            "volume": safe_float(row.get("volume"), 0.0),
+            "vol_ratio": safe_float(row.get("vol_ratio"), 0.0),
+            "close_pos": safe_float(row.get("close_pos"), 0.0),
+        })
+
+    if not items:
+        return 0
+
+    data[today] = {
+        "date": today,
+        "source": source,
+        "total": len(items),
+        "items": items,
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_UNIVERSE_HISTORY_FILE,
+        data
+    )
+
+    return len(items)
 
 def evolve_ai_from_pick_performance():
 
