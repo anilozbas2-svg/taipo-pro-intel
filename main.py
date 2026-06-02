@@ -5076,16 +5076,21 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     universe_perf_count = (
         update_ai_universe_performance()
     )
+    
+    decision_perf_count = (
+        update_ai_decision_performance()
+    )
 
     universe_learn_count = (
         evolve_ai_from_universe_performance()
     )
 
     msg += (
-        f"\n\n TAIPO LEARNER\n"
+        f"\n\nTAIPO LEARNER\n"
         f"Kayıt: {learner_count} sinyal\n"
         f"AI Universe kayıt: {universe_count}\n"
         f"AI Universe ölçüm: {universe_perf_count}\n"
+        f"AI Decision ölçüm: {decision_perf_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
     )
 
@@ -6943,6 +6948,115 @@ def update_ai_universe_performance():
     _atomic_write_json(
         TAIPO_AI_UNIVERSE_PERFORMANCE_FILE,
         result
+    )
+
+    return updated
+
+def update_ai_decision_performance():
+
+    decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
+    perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+
+    if not isinstance(decision_log, dict):
+        return 0
+
+    if not isinstance(perf, dict):
+        return 0
+
+    updated = 0
+    perf_days = sorted(perf.keys())
+
+    for decision_day, day_data in decision_log.items():
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get("items", [])
+
+        if not isinstance(items, list):
+            continue
+
+        changed = False
+
+        for entry in items:
+
+            if not isinstance(entry, dict):
+                continue
+
+            symbol = str(entry.get("symbol", "")).strip()
+
+            if not symbol:
+                continue
+
+            target_map = {
+                "t1_pct": 1,
+                "t3_pct": 3,
+                "t5_pct": 5
+            }
+
+            for field_name, target_day in target_map.items():
+
+                if entry.get(field_name) is not None:
+                    continue
+
+                matched_pct = None
+
+                future_days = [
+                    d for d in perf_days
+                    if d > decision_day
+                ]
+
+                if len(future_days) < target_day:
+                    continue
+
+                target_perf_day = future_days[target_day - 1]
+                day_perf = perf.get(target_perf_day, {})
+
+                if not isinstance(day_perf, dict):
+                    continue
+
+                for perf_item in day_perf.values():
+
+                    if not isinstance(perf_item, dict):
+                        continue
+
+                    perf_symbol = str(
+                        perf_item.get("symbol", "")
+                    ).strip()
+
+                    if perf_symbol != symbol:
+                        continue
+
+                    matched_pct = safe_float(
+                        perf_item.get("performance_pct"),
+                        0.0
+                    )
+                    break
+
+                if matched_pct is None:
+                    continue
+
+                entry[field_name] = round(matched_pct, 2)
+                changed = True
+
+            if entry.get("t5_pct") is not None:
+                entry["status"] = "CLOSED"
+
+            elif (
+                entry.get("t1_pct") is not None
+                or entry.get("t3_pct") is not None
+            ):
+                entry["status"] = "MEASURED"
+
+        if changed:
+            day_data["updated_at"] = datetime.now(TZ).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_DECISION_LOG_FILE,
+        decision_log
     )
 
     return updated
