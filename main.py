@@ -5081,6 +5081,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update_ai_decision_performance()
     )
 
+    decision_learn_count = (
+        evolve_ai_from_decision_performance()
+    )
+
     universe_learn_count = (
         evolve_ai_from_universe_performance()
     )
@@ -5091,6 +5095,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Universe kayıt: {universe_count}\n"
         f"AI Universe ölçüm: {universe_perf_count}\n"
         f"AI Decision ölçüm: {decision_perf_count}\n"
+        f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
     )
 
@@ -7244,6 +7249,120 @@ def calculate_ai_decision_accuracy():
         ) if t5_total else 0.0,
         "symbols": symbol_rows
     }
+
+def evolve_ai_from_decision_performance():
+
+    decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
+    ai_memory = _load_json(TAIPO_AI_MEMORY_FILE)
+
+    if not isinstance(decision_log, dict):
+        return 0
+
+    if not isinstance(ai_memory, dict):
+        ai_memory = {}
+
+    symbols = ai_memory.get("symbols", {})
+
+    if not isinstance(symbols, dict):
+        symbols = {}
+
+    updated = 0
+
+    for day_data in decision_log.values():
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get("items", [])
+
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(item.get("symbol", "")).strip()
+
+            if not symbol:
+                continue
+
+            t1 = item.get("t1_pct")
+            t3 = item.get("t3_pct")
+            t5 = item.get("t5_pct")
+
+            if t1 is None and t3 is None and t5 is None:
+                continue
+
+            symbol_mem = symbols.get(symbol, {})
+
+            if not isinstance(symbol_mem, dict):
+                symbol_mem = {}
+
+            old_weight = safe_float(
+                symbol_mem.get("weight"),
+                1.0
+            )
+
+            score = 0.0
+
+            if t1 is not None:
+                score += safe_float(t1, 0.0) * 0.25
+
+            if t3 is not None:
+                score += safe_float(t3, 0.0) * 0.35
+
+            if t5 is not None:
+                score += safe_float(t5, 0.0) * 0.40
+
+            adjustment = 0.0
+
+            if score >= 5.0:
+                adjustment = 0.08
+
+            elif score >= 3.0:
+                adjustment = 0.05
+
+            elif score <= -5.0:
+                adjustment = -0.08
+
+            elif score <= -3.0:
+                adjustment = -0.05
+
+            if adjustment == 0.0:
+                continue
+
+            new_weight = old_weight + adjustment
+
+            new_weight = max(
+                0.50,
+                min(
+                    1.50,
+                    new_weight
+                )
+            )
+
+            symbol_mem["weight"] = round(new_weight, 3)
+            symbol_mem["last_decision_score"] = round(score, 2)
+            symbol_mem["last_decision_update"] = datetime.now(TZ).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            symbols[symbol] = symbol_mem
+            updated += 1
+
+    ai_memory["symbols"] = symbols
+    ai_memory["updated_at"] = datetime.now(TZ).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    _atomic_write_json(
+        TAIPO_AI_MEMORY_FILE,
+        ai_memory
+    )
+
+    return updated
 
 def evolve_ai_from_universe_performance():
 
