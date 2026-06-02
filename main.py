@@ -6283,10 +6283,7 @@ def generate_ai_pick():
         TAIPO_AI_SYMBOL_MEMORY_FILE
     )
 
-    if not isinstance(
-        symbol_memory,
-        dict
-    ):
+    if not isinstance(symbol_memory, dict):
         symbol_memory = {}
 
     candidates = []
@@ -6306,7 +6303,9 @@ def generate_ai_pick():
                 if item.get("signal_type") != best_model:
                     continue
 
-                symbol = str(item.get("symbol", "")).strip()
+                symbol = str(
+                    item.get("symbol", "")
+                ).strip()
 
                 if not symbol:
                     continue
@@ -6332,16 +6331,12 @@ def generate_ai_pick():
                 )
 
                 pick_hit_rate = safe_float(
-                    memory_item.get(
-                        "pick_hit_rate"
-                    ),
+                    memory_item.get("pick_hit_rate"),
                     0.0
                 )
 
                 pick_avg_pct = safe_float(
-                    memory_item.get(
-                        "pick_avg_pct"
-                    ),
+                    memory_item.get("pick_avg_pct"),
                     0.0
                 )
 
@@ -6382,7 +6377,22 @@ def generate_ai_pick():
                     symbol_item.get("weight"),
                     1.0
                 )
-                
+
+                universe_hit_rate = safe_float(
+                    symbol_item.get("universe_hit_rate"),
+                    0.0
+                )
+
+                universe_avg_pct = safe_float(
+                    symbol_item.get("universe_avg_pct"),
+                    0.0
+                )
+
+                universe_weight = safe_float(
+                    symbol_item.get("universe_weight"),
+                    1.0
+                )
+
                 ai_score = (
                     perf_pct
                     + max_return * 0.50
@@ -6392,7 +6402,9 @@ def generate_ai_pick():
                     + pick_avg_pct * 1.50
                     + symbol_hit_rate * 0.08
                     + symbol_avg_pct * 2.00
-                ) * trend_boost * symbol_weight
+                    + universe_hit_rate * 0.04
+                    + universe_avg_pct * 1.00
+                ) * trend_boost * symbol_weight * universe_weight
 
                 candidates.append({
                     "symbol": symbol,
@@ -6401,14 +6413,12 @@ def generate_ai_pick():
                     "max_return": max_return,
                     "min_return": min_return,
                     "ai_score": ai_score,
-                    "symbol_weight":
-                        symbol_weight,
-
-                    "symbol_hit_rate":
-                        symbol_hit_rate,
-
-                    "symbol_avg_pct":
-                        symbol_avg_pct,
+                    "symbol_weight": symbol_weight,
+                    "symbol_hit_rate": symbol_hit_rate,
+                    "symbol_avg_pct": symbol_avg_pct,
+                    "universe_weight": universe_weight,
+                    "universe_hit_rate": universe_hit_rate,
+                    "universe_avg_pct": universe_avg_pct,
                 })
 
     candidates = sorted(
@@ -7199,6 +7209,18 @@ async def cmd_ai_pick(
 
             lines.append(
                 f"Avg: %{safe_float(c.get('symbol_avg_pct'), 0.0):.2f}"
+            )
+            
+            lines.append(
+                f"Universe W: {safe_float(c.get('universe_weight'), 1.0):.2f}"
+            )
+
+            lines.append(
+                f"Universe Hit: %{safe_float(c.get('universe_hit_rate'), 0.0):.1f}"
+            )
+
+            lines.append(
+                f"Universe Avg: %{safe_float(c.get('universe_avg_pct'), 0.0):.2f}"
             )
             
             lines.append(
