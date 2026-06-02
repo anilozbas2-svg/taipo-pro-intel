@@ -1627,7 +1627,7 @@ def save_ai_decision_log(ai_items):
         "updated_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
     }
 
-    _save_json(
+    _atomic_write_json(
         TAIPO_AI_DECISION_LOG_FILE,
         decision_log
     )
