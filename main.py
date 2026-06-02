@@ -6282,11 +6282,60 @@ def generate_ai_pick():
     symbol_memory = _load_json(
         TAIPO_AI_SYMBOL_MEMORY_FILE
     )
+    
+    universe_history = _load_json(
+        TAIPO_AI_UNIVERSE_HISTORY_FILE
+    )
+
+    if not isinstance(
+        universe_history,
+        dict
+    ):
+        universe_history = {}
 
     if not isinstance(symbol_memory, dict):
         symbol_memory = {}
 
     candidates = []
+    
+    latest_day = None
+
+    if universe_history:
+
+        try:
+            latest_day = sorted(
+                universe_history.keys()
+            )[-1]
+
+        except Exception:
+            latest_day = None
+
+    universe_candidates = []
+
+    if latest_day:
+
+        latest_snapshot = universe_history.get(
+            latest_day,
+            {}
+        )
+
+        if isinstance(latest_snapshot, dict):
+            universe_candidates = latest_snapshot.get(
+                "items",
+                []
+            )
+
+        elif isinstance(latest_snapshot, list):
+            universe_candidates = latest_snapshot
+
+        else:
+            universe_candidates = []
+
+        if not isinstance(
+            universe_candidates,
+            list
+        ):
+            universe_candidates = []
 
     if isinstance(perf, dict):
 
