@@ -6756,6 +6756,137 @@ def update_ai_universe_performance():
 
     return updated
 
+def evolve_ai_from_universe_performance():
+
+    data = _load_json(
+        TAIPO_AI_UNIVERSE_PERFORMANCE_FILE
+    )
+
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(data, dict):
+        return 0
+
+    if not isinstance(symbol_memory, dict):
+        symbol_memory = {}
+
+    updated = 0
+
+    for day, block in data.items():
+
+        if not isinstance(block, dict):
+            continue
+
+        items = block.get("items", [])
+
+        if not isinstance(items, list):
+            continue
+
+        for row in items:
+
+            if not isinstance(row, dict):
+                continue
+
+            symbol = str(
+                row.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            seen_key = f"UNIVERSE|{day}|{symbol}"
+
+            sym = symbol_memory.get(symbol, {})
+
+            if not isinstance(sym, dict):
+                sym = {}
+
+            seen_keys = sym.get("universe_seen_keys", [])
+
+            if not isinstance(seen_keys, list):
+                seen_keys = []
+
+            if seen_key in seen_keys:
+                continue
+
+            perf_pct = safe_float(
+                row.get("performance_pct"),
+                0.0
+            )
+
+            status = str(
+                row.get("status", "FLAT")
+            )
+
+            total = int(
+                safe_float(sym.get("universe_total"), 0)
+            ) + 1
+
+            success = int(
+                safe_float(sym.get("universe_success"), 0)
+            )
+
+            failed = int(
+                safe_float(sym.get("universe_failed"), 0)
+            )
+
+            if status == "SUCCESS":
+                success += 1
+
+            elif status == "FAILED":
+                failed += 1
+
+            old_sum = safe_float(
+                sym.get("universe_sum_pct"),
+                0.0
+            )
+
+            new_sum = old_sum + perf_pct
+            avg_pct = new_sum / total
+
+            hit_rate = (
+                success / total
+            ) * 100
+
+            universe_weight = 1.00
+
+            if total < 5:
+                universe_weight = 1.00
+
+            elif hit_rate >= 70 and avg_pct >= 1:
+                universe_weight = 1.30
+
+            elif hit_rate >= 60:
+                universe_weight = 1.15
+
+            elif hit_rate <= 40 and avg_pct <= 0:
+                universe_weight = 0.85
+
+            seen_keys.append(seen_key)
+
+            sym["symbol"] = symbol
+            sym["universe_total"] = total
+            sym["universe_success"] = success
+            sym["universe_failed"] = failed
+            sym["universe_sum_pct"] = round(new_sum, 2)
+            sym["universe_avg_pct"] = round(avg_pct, 2)
+            sym["universe_hit_rate"] = round(hit_rate, 2)
+            sym["universe_weight"] = round(universe_weight, 2)
+            sym["universe_updated_at"] = day
+            sym["universe_seen_keys"] = seen_keys[-50:]
+
+            symbol_memory[symbol] = sym
+            updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE,
+        symbol_memory
+    )
+
+    return updated
+
 def evolve_ai_from_pick_performance():
 
     data = _load_json(
@@ -7349,6 +7480,20 @@ async def cmd_ai_universe_score(
 
     await update.message.reply_text(
         "\n".join(lines)
+    )
+
+async def cmd_ai_universe_learn(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    measured = update_ai_universe_performance()
+    learned = evolve_ai_from_universe_performance()
+
+    await update.message.reply_text(
+        "TAIPO AI UNIVERSE LEARN\n"
+        f"Ölçülen evren: {measured}\n"
+        f"Öğrenilen hisse: {learned}"
     )
 
 async def cmd_ai_pick_evolve(
@@ -9018,6 +9163,9 @@ def main() -> None:
     app.add_handler(CommandHandler(
         "ai_universe_score",
         cmd_ai_universe_score))
+    app.add_handler(CommandHandler(
+        "ai_universe_learn",
+        cmd_ai_universe_learn))
     app.add_handler(CommandHandler("ai_pick_evolve", cmd_ai_pick_evolve))
     app.add_handler(CommandHandler("ai_pick_history", cmd_ai_pick_history))
     app.add_handler(CommandHandler("alarm_run", cmd_alarm_run))
