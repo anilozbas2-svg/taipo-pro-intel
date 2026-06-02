@@ -4900,19 +4900,19 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(head + "\n" + r0_block + table, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-
 async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bist200_list = env_csv("BIST200_TICKERS")
     if not bist200_list:
         await update.message.reply_text("❌ BIST200_TICKERS env boş. Render → Environment’a ekle.")
         return
+
     await update.message.reply_text("⏳ EOD raporu hazırlanıyor...")
 
     xu_close, xu_change, xu_vol, xu_open = await get_xu100_summary()
     update_index_history(today_key_tradingday(), xu_close, xu_change, xu_vol, xu_open)
     reg = compute_regime(xu_close, xu_change, xu_vol, xu_open)
     top_n = dynamic_top_n(reg)
-        
+
     global LAST_REGIME
     LAST_REGIME = reg
 
@@ -4923,11 +4923,16 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"{format_regime_line(reg)}\n\n"
             f"⛔️ <b>Rejim BLOK (EOD gate açık).</b>"
         )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
         return
 
     rows = await build_rows_from_is_list(bist200_list, xu_change)
     update_history_from_rows(rows)
+
     top_n = dynamic_top_n(reg)
     min_vol = compute_signal_rows(rows, xu_change, top_n)
     thresh_s = format_threshold(min_vol)
@@ -4938,7 +4943,11 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     kar = [r for r in rows if r.get("signal_text") == "KÂR KORUMA"]
 
     def top_by_vol(lst: List[Dict[str, Any]], n: int = 10) -> List[Dict[str, Any]]:
-        return sorted(lst, key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0, reverse=True)[:n]
+        return sorted(
+            lst,
+            key=lambda x: (x.get("volume") or 0) if x.get("volume") == x.get("volume") else 0,
+            reverse=True
+        )[:n]
 
     msg = (
         f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
@@ -4947,19 +4956,35 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🧱 <b>Top{top_n} Eşik</b>: ≥ <b>{thresh_s}</b>\n\n"
         f"🧠 TOPLAMA: <b>{len(toplama)}</b> | 🧲 DİP: <b>{len(dip)}</b> | 🧠 AYR: <b>{len(ayr)}</b> | ⚠️ KAR: <b>{len(kar)}</b>\n"
     )
-    msg += "\n" + make_table(top_by_vol(toplama, 8), " TOPLAMA – Top 8", include_kind=True)
-    msg += "\n\n" + make_table(top_by_vol(dip, 8), " DİP TOPLAMA – Top 8", include_kind=True)
-    
+
+    msg += "\n" + make_table(
+        top_by_vol(toplama, 8),
+        " TOPLAMA – Top 8",
+        include_kind=True
+    )
+
+    msg += "\n\n" + make_table(
+        top_by_vol(dip, 8),
+        " DİP TOPLAMA – Top 8",
+        include_kind=True
+    )
+
     rebound_picks = []
-    
+
     if REBOUND_WATCH_ENABLED:
         try:
-            rebound_picks = build_rebound_watch(rows, xu100_pct=xu_change)
-            msg += format_rebound_watch(rebound_picks, xu100_pct=xu_change)
+            rebound_picks = build_rebound_watch(
+                rows,
+                xu100_pct=xu_change
+            )
+            msg += format_rebound_watch(
+                rebound_picks,
+                xu100_pct=xu_change
+            )
         except Exception as e:
             logger.warning("REBOUND WATCH block failed: %s", e)
             msg += "\n\n💪 <b>GÜÇLÜ KALANLAR / REBOUND WATCH</b>\nHesaplanamadı."
-            
+
     learner_count = learner_save_eod_snapshot(
         today_key_tradingday(),
         rows,
@@ -4968,7 +4993,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         xu_change,
         rebound_picks,
     )
-    
+
     universe_count = save_ai_universe_snapshot(
         rows,
         source="EOD"
@@ -4978,11 +5003,16 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update_ai_universe_performance()
     )
 
+    universe_learn_count = (
+        evolve_ai_from_universe_performance()
+    )
+
     msg += (
         f"\n\n TAIPO LEARNER\n"
         f"Kayıt: {learner_count} sinyal\n"
         f"AI Universe kayıt: {universe_count}\n"
-        f"AI Universe ölçüm: {universe_perf_count}"
+        f"AI Universe ölçüm: {universe_perf_count}\n"
+        f"AI Universe öğrenme: {universe_learn_count}"
     )
 
     await update.message.reply_text(
