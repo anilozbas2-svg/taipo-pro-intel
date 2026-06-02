@@ -6393,6 +6393,31 @@ def generate_ai_pick():
                     1.0
                 )
 
+                universe_total = int(
+                    safe_float(
+                        symbol_item.get("universe_total"),
+                        0
+                    )
+                )
+
+                universe_power = 0.25
+
+                if universe_total >= 20:
+                    universe_power = 1.00
+
+                elif universe_total >= 10:
+                    universe_power = 0.75
+
+                elif universe_total >= 5:
+                    universe_power = 0.50
+
+                effective_universe_weight = (
+                    1.0
+                    + (
+                        universe_weight - 1.0
+                    ) * universe_power
+                )
+
                 ai_score = (
                     perf_pct
                     + max_return * 0.50
@@ -6404,7 +6429,7 @@ def generate_ai_pick():
                     + symbol_avg_pct * 2.00
                     + universe_hit_rate * 0.04
                     + universe_avg_pct * 1.00
-                ) * trend_boost * symbol_weight * universe_weight
+                ) * trend_boost * symbol_weight * effective_universe_weight
 
                 candidates.append({
                     "symbol": symbol,
@@ -6419,6 +6444,9 @@ def generate_ai_pick():
                     "universe_weight": universe_weight,
                     "universe_hit_rate": universe_hit_rate,
                     "universe_avg_pct": universe_avg_pct,
+                    "universe_total": universe_total,
+                    "universe_power": universe_power,
+                    "effective_universe_weight": effective_universe_weight,
                 })
 
     candidates = sorted(
