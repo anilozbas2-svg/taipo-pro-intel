@@ -7061,6 +7061,190 @@ def update_ai_decision_performance():
 
     return updated
 
+def calculate_ai_decision_accuracy():
+
+    decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
+
+    if not isinstance(decision_log, dict):
+        return {
+            "total": 0,
+            "t1_total": 0,
+            "t3_total": 0,
+            "t5_total": 0,
+            "t1_success": 0,
+            "t3_success": 0,
+            "t5_success": 0,
+            "t1_rate": 0.0,
+            "t3_rate": 0.0,
+            "t5_rate": 0.0,
+            "symbols": []
+        }
+
+    symbol_stats = {}
+    total = 0
+
+    t1_total = 0
+    t3_total = 0
+    t5_total = 0
+
+    t1_success = 0
+    t3_success = 0
+    t5_success = 0
+
+    for day_data in decision_log.values():
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get("items", [])
+
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(item.get("symbol", "")).strip()
+
+            if not symbol:
+                continue
+
+            total += 1
+
+            if symbol not in symbol_stats:
+                symbol_stats[symbol] = {
+                    "symbol": symbol,
+                    "total": 0,
+                    "success": 0,
+                    "failed": 0,
+                    "avg_t1": 0.0,
+                    "avg_t3": 0.0,
+                    "avg_t5": 0.0,
+                    "t1_values": [],
+                    "t3_values": [],
+                    "t5_values": []
+                }
+
+            symbol_stats[symbol]["total"] += 1
+
+            t1 = item.get("t1_pct")
+            t3 = item.get("t3_pct")
+            t5 = item.get("t5_pct")
+
+            if t1 is not None:
+                t1_val = safe_float(t1, 0.0)
+                t1_total += 1
+                symbol_stats[symbol]["t1_values"].append(t1_val)
+
+                if t1_val >= 3.0:
+                    t1_success += 1
+                    symbol_stats[symbol]["success"] += 1
+
+                elif t1_val <= -3.0:
+                    symbol_stats[symbol]["failed"] += 1
+
+            if t3 is not None:
+                t3_val = safe_float(t3, 0.0)
+                t3_total += 1
+                symbol_stats[symbol]["t3_values"].append(t3_val)
+
+                if t3_val >= 3.0:
+                    t3_success += 1
+
+            if t5 is not None:
+                t5_val = safe_float(t5, 0.0)
+                t5_total += 1
+                symbol_stats[symbol]["t5_values"].append(t5_val)
+
+                if t5_val >= 3.0:
+                    t5_success += 1
+
+    symbol_rows = []
+
+    for symbol, stat in symbol_stats.items():
+
+        t1_values = stat.get("t1_values", [])
+        t3_values = stat.get("t3_values", [])
+        t5_values = stat.get("t5_values", [])
+
+        avg_t1 = (
+            sum(t1_values) / len(t1_values)
+            if t1_values
+            else 0.0
+        )
+
+        avg_t3 = (
+            sum(t3_values) / len(t3_values)
+            if t3_values
+            else 0.0
+        )
+
+        avg_t5 = (
+            sum(t5_values) / len(t5_values)
+            if t5_values
+            else 0.0
+        )
+
+        measured_total = (
+            len(t1_values)
+            + len(t3_values)
+            + len(t5_values)
+        )
+
+        success_rate = (
+            stat["success"] / stat["total"] * 100.0
+            if stat["total"] > 0
+            else 0.0
+        )
+
+        symbol_rows.append({
+            "symbol": symbol,
+            "total": stat["total"],
+            "measured": measured_total,
+            "success": stat["success"],
+            "failed": stat["failed"],
+            "success_rate": round(success_rate, 1),
+            "avg_t1": round(avg_t1, 2),
+            "avg_t3": round(avg_t3, 2),
+            "avg_t5": round(avg_t5, 2)
+        })
+
+    symbol_rows = sorted(
+        symbol_rows,
+        key=lambda x: (
+            x.get("success_rate", 0.0),
+            x.get("avg_t5", 0.0),
+            x.get("avg_t3", 0.0),
+            x.get("avg_t1", 0.0)
+        ),
+        reverse=True
+    )
+
+    return {
+        "total": total,
+        "t1_total": t1_total,
+        "t3_total": t3_total,
+        "t5_total": t5_total,
+        "t1_success": t1_success,
+        "t3_success": t3_success,
+        "t5_success": t5_success,
+        "t1_rate": round(
+            t1_success / t1_total * 100.0,
+            1
+        ) if t1_total else 0.0,
+        "t3_rate": round(
+            t3_success / t3_total * 100.0,
+            1
+        ) if t3_total else 0.0,
+        "t5_rate": round(
+            t5_success / t5_total * 100.0,
+            1
+        ) if t5_total else 0.0,
+        "symbols": symbol_rows
+    }
+
 def evolve_ai_from_universe_performance():
 
     data = _load_json(
@@ -7511,6 +7695,68 @@ async def cmd_ai_pick(
 
             lines.append(
                 f"Min: %{safe_float(c.get('min_return'), 0.0):.2f}"
+            )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+async def cmd_ai_accuracy(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    accuracy = calculate_ai_decision_accuracy()
+
+    symbols = accuracy.get("symbols", [])
+
+    lines = [
+        "TAIPO AI ACCURACY",
+        "",
+        f"Toplam karar: {accuracy.get('total', 0)}",
+        "",
+        "Genel başarı:",
+        f"T1: %{safe_float(accuracy.get('t1_rate'), 0.0):.1f} "
+        f"({accuracy.get('t1_success', 0)}/{accuracy.get('t1_total', 0)})",
+        f"T3: %{safe_float(accuracy.get('t3_rate'), 0.0):.1f} "
+        f"({accuracy.get('t3_success', 0)}/{accuracy.get('t3_total', 0)})",
+        f"T5: %{safe_float(accuracy.get('t5_rate'), 0.0):.1f} "
+        f"({accuracy.get('t5_success', 0)}/{accuracy.get('t5_total', 0)})",
+        "",
+        "En güçlü semboller:"
+    ]
+
+    top_symbols = symbols[:8]
+
+    if not top_symbols:
+        lines.append("Henüz ölçülmüş sembol yok.")
+
+    else:
+        for i, item in enumerate(top_symbols, 1):
+            lines.append(
+                f"{i}) {item.get('symbol', '-')} | "
+                f"Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f} | "
+                f"T1: %{safe_float(item.get('avg_t1'), 0.0):.2f} | "
+                f"T3: %{safe_float(item.get('avg_t3'), 0.0):.2f} | "
+                f"T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
+            )
+
+    weakest_symbols = list(reversed(symbols[-5:]))
+
+    lines.append("")
+    lines.append("Zayıf semboller:")
+
+    if not weakest_symbols:
+        lines.append("Henüz zayıf sembol yok.")
+
+    else:
+        for i, item in enumerate(weakest_symbols, 1):
+            lines.append(
+                f"{i}) {item.get('symbol', '-')} | "
+                f"Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f} | "
+                f"T1: %{safe_float(item.get('avg_t1'), 0.0):.2f} | "
+                f"T3: %{safe_float(item.get('avg_t3'), 0.0):.2f} | "
+                f"T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
             )
 
     await update.message.reply_text(
@@ -9591,6 +9837,7 @@ def main() -> None:
     "learner_evolve", cmd_learner_evolve))
     app.add_handler(CommandHandler("ai_top", cmd_ai_top))
     app.add_handler(CommandHandler("ai_pick", cmd_ai_pick))
+    app.add_handler(CommandHandler("ai_accuracy", cmd_ai_accuracy))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
     app.add_handler(CommandHandler("ai_score", cmd_ai_score))
