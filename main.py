@@ -4974,10 +4974,15 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         source="EOD"
     )
 
+    universe_perf_count = (
+        update_ai_universe_performance()
+    )
+
     msg += (
         f"\n\n TAIPO LEARNER\n"
         f"Kayıt: {learner_count} sinyal\n"
-        f"AI Universe kayıt: {universe_count}"
+        f"AI Universe kayıt: {universe_count}\n"
+        f"AI Universe ölçüm: {universe_perf_count}"
     )
 
     await update.message.reply_text(
