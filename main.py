@@ -229,6 +229,14 @@ TAIPO_AI_ENSEMBLE_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_ensemble.json"
 )
+TAIPO_AI_ENSEMBLE_HISTORY_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_ensemble_history.json"
+)
+TAIPO_AI_ENSEMBLE_PERFORMANCE_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_ensemble_performance.json"
+)
 TAIPO_AI_PICK_FILE = os.path.join(DATA_DIR, "taipo_ai_pick.json")
 TAIPO_AI_PICK_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
@@ -5085,6 +5093,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update_ai_universe_performance()
     )
     
+    ensemble_perf_count = (
+        update_ai_ensemble_performance()
+    )
+    
     decision_perf_count = (
         update_ai_decision_performance()
     )
@@ -5102,6 +5114,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Kayıt: {learner_count} sinyal\n"
         f"AI Universe kayıt: {universe_count}\n"
         f"AI Universe ölçüm: {universe_perf_count}\n"
+        f"AI Ensemble ölçüm: {ensemble_perf_count}\n"
         f"AI Decision ölçüm: {decision_perf_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
@@ -6337,6 +6350,194 @@ async def cmd_ai_log(
     await update.message.reply_text(
         "\n".join(lines)
     )
+
+def save_ai_ensemble_history(data):
+
+    if not isinstance(data, dict):
+        return False
+
+    history = _load_json(
+        TAIPO_AI_ENSEMBLE_HISTORY_FILE
+    )
+
+    if not isinstance(history, dict):
+        history = {}
+
+    day_key = datetime.now(TZ).strftime(
+        "%Y-%m-%d"
+    )
+
+    history[day_key] = {
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "count": int(
+            safe_float(
+                data.get("count"),
+                0
+            )
+        ),
+        "items": data.get(
+            "items",
+            []
+        )
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_ENSEMBLE_HISTORY_FILE,
+        history
+    )
+
+    return True
+
+def update_ai_ensemble_performance():
+
+    history = _load_json(
+        TAIPO_AI_ENSEMBLE_HISTORY_FILE
+    )
+
+    perf = _load_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE
+    )
+
+    if not isinstance(history, dict):
+        return 0
+
+    if not isinstance(perf, dict):
+        return 0
+
+    result = {}
+
+    updated = 0
+
+    perf_days = sorted(
+        perf.keys()
+    )
+
+    for snap_day, snap in history.items():
+
+        if not isinstance(snap, dict):
+            continue
+
+        items = snap.get(
+            "items",
+            []
+        )
+
+        if not isinstance(items, list):
+            continue
+
+        rows = []
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get(
+                    "symbol",
+                    ""
+                )
+            ).strip()
+
+            if not symbol:
+                continue
+
+            found = None
+            found_day = None
+
+            for perf_day in perf_days:
+
+                if perf_day <= snap_day:
+                    continue
+
+                day_perf = perf.get(
+                    perf_day,
+                    {}
+                )
+
+                if not isinstance(
+                    day_perf,
+                    dict
+                ):
+                    continue
+
+                for perf_item in day_perf.values():
+
+                    if not isinstance(
+                        perf_item,
+                        dict
+                    ):
+                        continue
+
+                    if str(
+                        perf_item.get(
+                            "symbol",
+                            ""
+                        )
+                    ).strip() == symbol:
+
+                        found = perf_item
+                        found_day = perf_day
+                        break
+
+                if found:
+                    break
+
+            if not found:
+                continue
+
+            pct = safe_float(
+                found.get(
+                    "performance_pct"
+                ),
+                0.0
+            )
+
+            rows.append({
+                "symbol": symbol,
+                "snapshot_day": snap_day,
+                "measured_day": found_day,
+                "performance_pct": round(
+                    pct,
+                    2
+                )
+            })
+
+        if not rows:
+            continue
+
+        avg_pct = (
+            sum(
+                safe_float(
+                    r.get(
+                        "performance_pct"
+                    ),
+                    0.0
+                )
+                for r in rows
+            )
+            / len(rows)
+        )
+
+        result[snap_day] = {
+            "total": len(rows),
+            "avg_pct": round(
+                avg_pct,
+                2
+            ),
+            "items": rows
+        }
+
+        updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_ENSEMBLE_PERFORMANCE_FILE,
+        result
+    )
+
+    return updated
 
 def generate_ai_ensemble():
 
@@ -8122,6 +8323,8 @@ async def cmd_ai_ensemble(
 ) -> None:
 
     data = generate_ai_ensemble()
+    
+    save_ai_ensemble_history(data)
 
     if not isinstance(data, dict):
         await update.message.reply_text(
