@@ -5108,6 +5108,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     decision_perf_count = (
         update_ai_decision_performance()
     )
+    
+    pick_perf_count = (
+        update_ai_pick_performance()
+    )
 
     decision_learn_count = (
         evolve_ai_from_decision_performance()
@@ -7315,13 +7319,90 @@ def save_ai_pick(pick):
             item.get("symbol", "")
         ).strip()
 
-        if symbol:
-            candidates.append(symbol)
+        if not symbol:
+            continue
+
+        candidates.append({
+            "symbol": symbol,
+            "ai_score": safe_float(
+                item.get("ai_score"),
+                0.0
+            ),
+            "confidence": min(
+                100.0,
+                max(
+                    0.0,
+                    safe_float(
+                        item.get("ai_score"),
+                        0.0
+                    ) * 6.0
+                )
+            ),
+            "signal_type": item.get("signal_type"),
+            "symbol_weight": safe_float(
+                item.get("symbol_weight"),
+                1.0
+            ),
+            "base_symbol_weight": safe_float(
+                item.get("base_symbol_weight"),
+                1.0
+            ),
+            "decision_symbol_weight": safe_float(
+                item.get("decision_symbol_weight"),
+                1.0
+            ),
+            "universe_weight": safe_float(
+                item.get("universe_weight"),
+                1.0
+            ),
+            "effective_universe_weight": safe_float(
+                item.get("effective_universe_weight"),
+                1.0
+            ),
+            "ensemble_score": safe_float(
+                item.get("ensemble_score"),
+                0.0
+            ),
+            "ensemble_confidence": safe_float(
+                item.get("ensemble_confidence"),
+                0.0
+            ),
+            "ensemble_vote_count": int(
+                safe_float(
+                    item.get("ensemble_vote_count"),
+                    0
+                )
+            ),
+            "ensemble_boost": safe_float(
+                item.get("ensemble_boost"),
+                1.0
+            ),
+            "performance_pct": safe_float(
+                item.get("performance_pct"),
+                0.0
+            ),
+            "max_return": safe_float(
+                item.get("max_return"),
+                0.0
+            ),
+            "min_return": safe_float(
+                item.get("min_return"),
+                0.0
+            )
+        })
 
     data[today] = {
+        "date": today,
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
         "model": pick.get("model"),
-        "weight": pick.get("weight"),
+        "weight": safe_float(
+            pick.get("weight"),
+            0.0
+        ),
         "trend": pick.get("trend"),
+        "count": len(candidates),
         "candidates": candidates
     }
 
@@ -7750,6 +7831,255 @@ def update_ai_decision_performance():
     _atomic_write_json(
         TAIPO_AI_DECISION_LOG_FILE,
         decision_log
+    )
+
+    return updated
+
+def update_ai_pick_performance():
+
+    pick_history = _load_json(
+        TAIPO_AI_PICK_FILE
+    )
+
+    perf = _load_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE
+    )
+
+    if not isinstance(pick_history, dict):
+        return 0
+
+    if not isinstance(perf, dict):
+        return 0
+
+    result = _load_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE
+    )
+
+    if not isinstance(result, dict):
+        result = {}
+
+    updated = 0
+
+    perf_days = sorted(
+        perf.keys()
+    )
+
+    for pick_day, pick_data in pick_history.items():
+
+        if not isinstance(pick_data, dict):
+            continue
+
+        candidates = pick_data.get(
+            "candidates",
+            []
+        )
+
+        if not isinstance(candidates, list):
+            continue
+
+        day_rows = result.get(
+            pick_day,
+            {}
+        )
+
+        if not isinstance(day_rows, dict):
+            day_rows = {
+                "date": pick_day,
+                "model": pick_data.get("model"),
+                "trend": pick_data.get("trend"),
+                "weight": pick_data.get("weight"),
+                "items": []
+            }
+
+        existing_items = day_rows.get(
+            "items",
+            []
+        )
+
+        if not isinstance(existing_items, list):
+            existing_items = []
+
+        existing_map = {}
+
+        for old_item in existing_items:
+
+            if not isinstance(old_item, dict):
+                continue
+
+            old_symbol = str(
+                old_item.get("symbol", "")
+            ).strip()
+
+            if old_symbol:
+                existing_map[old_symbol] = old_item
+
+        changed = False
+
+        future_days = [
+            d for d in perf_days
+            if d > pick_day
+        ]
+
+        for candidate in candidates:
+
+            if isinstance(candidate, str):
+                symbol = candidate.strip()
+                base_row = {
+                    "symbol": symbol
+                }
+
+            elif isinstance(candidate, dict):
+                symbol = str(
+                    candidate.get("symbol", "")
+                ).strip()
+                base_row = dict(candidate)
+
+            else:
+                continue
+
+            if not symbol:
+                continue
+
+            row = existing_map.get(
+                symbol,
+                base_row
+            )
+
+            row["symbol"] = symbol
+
+            target_map = {
+                "t1_pct": 1,
+                "t3_pct": 3,
+                "t5_pct": 5
+            }
+
+            for field_name, target_day in target_map.items():
+
+                if row.get(field_name) is not None:
+                    continue
+
+                if len(future_days) < target_day:
+                    continue
+
+                target_perf_day = future_days[target_day - 1]
+
+                day_perf = perf.get(
+                    target_perf_day,
+                    {}
+                )
+
+                if not isinstance(day_perf, dict):
+                    continue
+
+                matched_pct = None
+
+                for perf_item in day_perf.values():
+
+                    if not isinstance(perf_item, dict):
+                        continue
+
+                    perf_symbol = str(
+                        perf_item.get("symbol", "")
+                    ).strip()
+
+                    if perf_symbol != symbol:
+                        continue
+
+                    matched_pct = safe_float(
+                        perf_item.get("performance_pct"),
+                        0.0
+                    )
+                    break
+
+                if matched_pct is None:
+                    continue
+
+                row[field_name] = round(
+                    matched_pct,
+                    2
+                )
+
+                changed = True
+
+            if row.get("t5_pct") is not None:
+                row["status"] = "CLOSED"
+
+            elif (
+                row.get("t1_pct") is not None
+                or row.get("t3_pct") is not None
+            ):
+                row["status"] = "MEASURED"
+
+            else:
+                row["status"] = row.get(
+                    "status",
+                    "OPEN"
+                )
+
+            existing_map[symbol] = row
+
+        final_items = list(
+            existing_map.values()
+        )
+
+        if final_items:
+
+            avg_t1_values = [
+                safe_float(
+                    x.get("t1_pct"),
+                    0.0
+                )
+                for x in final_items
+                if x.get("t1_pct") is not None
+            ]
+
+            avg_t3_values = [
+                safe_float(
+                    x.get("t3_pct"),
+                    0.0
+                )
+                for x in final_items
+                if x.get("t3_pct") is not None
+            ]
+
+            avg_t5_values = [
+                safe_float(
+                    x.get("t5_pct"),
+                    0.0
+                )
+                for x in final_items
+                if x.get("t5_pct") is not None
+            ]
+
+            day_rows["items"] = final_items
+            day_rows["count"] = len(final_items)
+            day_rows["updated_at"] = datetime.now(TZ).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            day_rows["avg_t1"] = round(
+                sum(avg_t1_values) / len(avg_t1_values),
+                2
+            ) if avg_t1_values else 0.0
+
+            day_rows["avg_t3"] = round(
+                sum(avg_t3_values) / len(avg_t3_values),
+                2
+            ) if avg_t3_values else 0.0
+
+            day_rows["avg_t5"] = round(
+                sum(avg_t5_values) / len(avg_t5_values),
+                2
+            ) if avg_t5_values else 0.0
+
+            result[pick_day] = day_rows
+
+        if changed:
+            updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE,
+        result
     )
 
     return updated
