@@ -8539,10 +8539,24 @@ async def cmd_ai_ensemble(
 
             if isinstance(models, dict):
 
+                model_weights = item.get(
+                    "model_weights",
+                    {}
+                )
+
                 for model, score in models.items():
 
+                    model_w = 1.0
+
+                    if isinstance(model_weights, dict):
+                        model_w = safe_float(
+                            model_weights.get(model),
+                            1.0
+                        )
+
                     lines.append(
-                        f"• {model}: {safe_float(score, 0.0):.2f}"
+                        f"• {model}: {safe_float(score, 0.0):.2f} "
+                        f"(W: {model_w:.2f})"
                     )
 
             lines.append("")
