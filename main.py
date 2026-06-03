@@ -237,6 +237,10 @@ TAIPO_AI_ENSEMBLE_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_ensemble_performance.json"
 )
+TAIPO_AI_ENSEMBLE_LEARNING_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_ensemble_learning.json"
+)
 TAIPO_AI_PICK_FILE = os.path.join(DATA_DIR, "taipo_ai_pick.json")
 TAIPO_AI_PICK_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
@@ -5097,6 +5101,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update_ai_ensemble_performance()
     )
     
+    ensemble_learn_count = (
+        evolve_ai_from_ensemble_performance()
+    )
+    
     decision_perf_count = (
         update_ai_decision_performance()
     )
@@ -5115,6 +5123,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Universe kayıt: {universe_count}\n"
         f"AI Universe ölçüm: {universe_perf_count}\n"
         f"AI Ensemble ölçüm: {ensemble_perf_count}\n"
+        f"AI Ensemble öğrenme: {ensemble_learn_count}\n"
         f"AI Decision ölçüm: {decision_perf_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
@@ -6535,6 +6544,129 @@ def update_ai_ensemble_performance():
     _atomic_write_json(
         TAIPO_AI_ENSEMBLE_PERFORMANCE_FILE,
         result
+    )
+
+    return updated
+
+def evolve_ai_from_ensemble_performance():
+
+    perf = _load_json(
+        TAIPO_AI_ENSEMBLE_PERFORMANCE_FILE
+    )
+
+    learning = _load_json(
+        TAIPO_AI_ENSEMBLE_LEARNING_FILE
+    )
+
+    if not isinstance(perf, dict):
+        return 0
+
+    if not isinstance(learning, dict):
+        learning = {}
+
+    updated = 0
+
+    for day_data in perf.values():
+
+        if not isinstance(day_data, list):
+            continue
+
+        for item in day_data:
+
+            if not isinstance(item, dict):
+                continue
+
+            models = item.get(
+                "models",
+                []
+            )
+
+            if not isinstance(models, list):
+                continue
+
+            score = 0.0
+
+            t1 = item.get("t1_pct")
+            t3 = item.get("t3_pct")
+            t5 = item.get("t5_pct")
+
+            if t1 is not None:
+                score += safe_float(
+                    t1,
+                    0.0
+                ) * 0.25
+
+            if t3 is not None:
+                score += safe_float(
+                    t3,
+                    0.0
+                ) * 0.35
+
+            if t5 is not None:
+                score += safe_float(
+                    t5,
+                    0.0
+                ) * 0.40
+
+            for model in models:
+
+                data = learning.get(
+                    model,
+                    {}
+                )
+
+                if not isinstance(
+                    data,
+                    dict
+                ):
+                    data = {}
+
+                weight = safe_float(
+                    data.get(
+                        "weight",
+                        1.0
+                    ),
+                    1.0
+                )
+
+                if score >= 5:
+                    weight += 0.05
+
+                elif score <= -5:
+                    weight -= 0.05
+
+                weight = max(
+                    0.50,
+                    min(
+                        1.50,
+                        weight
+                    )
+                )
+
+                data["weight"] = round(
+                    weight,
+                    3
+                )
+
+                data["last_score"] = round(
+                    score,
+                    2
+                )
+
+                data["updated_at"] = (
+                    datetime.now(TZ)
+                    .strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                )
+
+                learning[model] = data
+
+                updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_ENSEMBLE_LEARNING_FILE,
+        learning
     )
 
     return updated
