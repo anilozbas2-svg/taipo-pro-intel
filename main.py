@@ -8912,6 +8912,68 @@ async def cmd_ai_accuracy(
         "\n".join(lines)
     )
 
+async def cmd_ai_pick_accuracy(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    accuracy = calculate_ai_pick_accuracy()
+
+    symbols = accuracy.get("symbols", [])
+
+    lines = [
+        "TAIPO AI PICK ACCURACY",
+        "",
+        f"Toplam Pick: {accuracy.get('total', 0)}",
+        "",
+        "Genel başarı:",
+        f"T1: %{safe_float(accuracy.get('t1_rate'), 0.0):.1f} "
+        f"({accuracy.get('t1_success', 0)}/{accuracy.get('t1_total', 0)})",
+        f"T3: %{safe_float(accuracy.get('t3_rate'), 0.0):.1f} "
+        f"({accuracy.get('t3_success', 0)}/{accuracy.get('t3_total', 0)})",
+        f"T5: %{safe_float(accuracy.get('t5_rate'), 0.0):.1f} "
+        f"({accuracy.get('t5_success', 0)}/{accuracy.get('t5_total', 0)})",
+        "",
+        "En güçlü Pick sembolleri:"
+    ]
+
+    top_symbols = symbols[:8]
+
+    if not top_symbols:
+        lines.append("Henüz ölçülmüş Pick verisi yok.")
+
+    else:
+        for i, item in enumerate(top_symbols, 1):
+            lines.append(
+                f"{i}) {item.get('symbol', '-')} | "
+                f"Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f} | "
+                f"T1: %{safe_float(item.get('avg_t1'), 0.0):.2f} | "
+                f"T3: %{safe_float(item.get('avg_t3'), 0.0):.2f} | "
+                f"T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
+            )
+
+    weakest_symbols = list(reversed(symbols[-5:]))
+
+    lines.append("")
+    lines.append("Zayıf Pick sembolleri:")
+
+    if not weakest_symbols:
+        lines.append("Henüz zayıf Pick verisi yok.")
+
+    else:
+        for i, item in enumerate(weakest_symbols, 1):
+            lines.append(
+                f"{i}) {item.get('symbol', '-')} | "
+                f"Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f} | "
+                f"T1: %{safe_float(item.get('avg_t1'), 0.0):.2f} | "
+                f"T3: %{safe_float(item.get('avg_t3'), 0.0):.2f} | "
+                f"T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
+            )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_score(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -10987,6 +11049,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_top", cmd_ai_top))
     app.add_handler(CommandHandler("ai_pick", cmd_ai_pick))
     app.add_handler(CommandHandler("ai_accuracy", cmd_ai_accuracy))
+    app.add_handler(CommandHandler("ai_pick_accuracy", cmd_ai_pick_accuracy))
     app.add_handler(CommandHandler("ai_ensemble", cmd_ai_ensemble))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
