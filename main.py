@@ -246,6 +246,10 @@ TAIPO_AI_PICK_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_pick_performance.json"
 )
+TAIPO_AI_HALL_OF_FAME_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_hall_of_fame.json"
+)
 TAIPO_AI_SYMBOL_MEMORY_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_symbol_memory.json"
@@ -8296,6 +8300,57 @@ def calculate_ai_pick_accuracy():
         "symbols": symbols
     }
 
+def build_ai_hall_of_fame():
+
+    accuracy = calculate_ai_pick_accuracy()
+
+    symbols = accuracy.get(
+        "symbols",
+        []
+    )
+
+    if not isinstance(symbols, list):
+        symbols = []
+
+    champions = symbols[:10]
+
+    losers = []
+
+    if symbols:
+        losers = list(
+            reversed(
+                symbols[-10:]
+            )
+        )
+
+    result = {
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "total_symbols": len(symbols),
+        "champions": champions,
+        "losers": losers,
+        "t1_rate": accuracy.get(
+            "t1_rate",
+            0.0
+        ),
+        "t3_rate": accuracy.get(
+            "t3_rate",
+            0.0
+        ),
+        "t5_rate": accuracy.get(
+            "t5_rate",
+            0.0
+        )
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_HALL_OF_FAME_FILE,
+        result
+    )
+
+    return result
+
 def evolve_ai_from_decision_performance():
 
     decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
@@ -9132,6 +9187,69 @@ async def cmd_ai_pick_accuracy(
 
     else:
         for i, item in enumerate(weakest_symbols, 1):
+            lines.append(
+                f"{i}) {item.get('symbol', '-')} | "
+                f"Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f} | "
+                f"T1: %{safe_float(item.get('avg_t1'), 0.0):.2f} | "
+                f"T3: %{safe_float(item.get('avg_t3'), 0.0):.2f} | "
+                f"T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
+            )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+async def cmd_ai_hof(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    hof = build_ai_hall_of_fame()
+
+    champions = hof.get(
+        "champions",
+        []
+    )
+
+    losers = hof.get(
+        "losers",
+        []
+    )
+
+    lines = [
+        "TAIPO AI HALL OF FAME",
+        "",
+        f"Toplam sembol: {hof.get('total_symbols', 0)}",
+        "",
+        "Genel oranlar:",
+        f"T1: %{safe_float(hof.get('t1_rate'), 0.0):.1f}",
+        f"T3: %{safe_float(hof.get('t3_rate'), 0.0):.1f}",
+        f"T5: %{safe_float(hof.get('t5_rate'), 0.0):.1f}",
+        "",
+        "🏆 Şampiyonlar:"
+    ]
+
+    if not champions:
+        lines.append("Henüz şampiyon veri yok.")
+
+    else:
+        for i, item in enumerate(champions, 1):
+            lines.append(
+                f"{i}) {item.get('symbol', '-')} | "
+                f"Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f} | "
+                f"T1: %{safe_float(item.get('avg_t1'), 0.0):.2f} | "
+                f"T3: %{safe_float(item.get('avg_t3'), 0.0):.2f} | "
+                f"T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
+            )
+
+    lines.append("")
+    lines.append("⚠️ Zayıf Liste:")
+
+    if not losers:
+        lines.append("Henüz zayıf veri yok.")
+
+    else:
+        for i, item in enumerate(losers, 1):
             lines.append(
                 f"{i}) {item.get('symbol', '-')} | "
                 f"Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f} | "
@@ -11220,6 +11338,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_pick", cmd_ai_pick))
     app.add_handler(CommandHandler("ai_accuracy", cmd_ai_accuracy))
     app.add_handler(CommandHandler("ai_pick_accuracy", cmd_ai_pick_accuracy))
+    app.add_handler(CommandHandler("ai_hof", cmd_ai_hof))
     app.add_handler(CommandHandler("ai_ensemble", cmd_ai_ensemble))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
