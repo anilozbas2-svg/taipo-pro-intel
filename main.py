@@ -6685,6 +6685,10 @@ def generate_ai_ensemble():
         TAIPO_AI_SYMBOL_MEMORY_FILE
     )
 
+    ensemble_learning = _load_json(
+        TAIPO_AI_ENSEMBLE_LEARNING_FILE
+    )
+
     if not isinstance(perf, dict):
         return None
 
@@ -6693,6 +6697,9 @@ def generate_ai_ensemble():
 
     if not isinstance(symbol_memory, dict):
         symbol_memory = {}
+
+    if not isinstance(ensemble_learning, dict):
+        ensemble_learning = {}
 
     votes = {}
 
@@ -6760,6 +6767,25 @@ def generate_ai_ensemble():
             elif model_trend == "DOWN":
                 trend_boost = 0.90
 
+            ensemble_model_memory = ensemble_learning.get(
+                model,
+                {}
+            )
+
+            if not isinstance(
+                ensemble_model_memory,
+                dict
+            ):
+                ensemble_model_memory = {}
+
+            ensemble_model_weight = safe_float(
+                ensemble_model_memory.get(
+                    "weight",
+                    1.0
+                ),
+                1.0
+            )
+
             symbol_item = symbol_memory.get(
                 symbol,
                 {}
@@ -6790,21 +6816,28 @@ def generate_ai_ensemble():
                 + model_weight * 8.0
                 + symbol_hit_rate * 0.05
                 + symbol_avg_pct * 1.50
-            ) * trend_boost * symbol_weight
+            ) * trend_boost * symbol_weight * ensemble_model_weight
 
             if symbol not in votes:
                 votes[symbol] = {
                     "symbol": symbol,
                     "total_score": 0.0,
                     "models": {},
+                    "model_weights": {},
                     "count": 0
                 }
 
             votes[symbol]["total_score"] += vote_score
             votes[symbol]["count"] += 1
+
             votes[symbol]["models"][model] = round(
                 vote_score,
                 2
+            )
+
+            votes[symbol]["model_weights"][model] = round(
+                ensemble_model_weight,
+                3
             )
 
     rows = list(votes.values())
