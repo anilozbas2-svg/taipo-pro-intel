@@ -221,6 +221,10 @@ TAIPO_SIGNAL_HISTORY_FILE = os.path.join(DATA_DIR, "taipo_signal_history.json")
 TAIPO_SIGNAL_PERFORMANCE_FILE = os.path.join(DATA_DIR, "taipo_signal_performance.json")
 TAIPO_AI_MEMORY_FILE = os.path.join(DATA_DIR, "taipo_ai_memory.json")
 TAIPO_AI_DECISION_LOG_FILE = os.path.join(DATA_DIR, "taipo_ai_decision_log.json")
+TAIPO_AI_DECISION_LEARNED_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_decision_learned.json"
+)
 TAIPO_AI_PICK_FILE = os.path.join(DATA_DIR, "taipo_ai_pick.json")
 TAIPO_AI_PICK_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
@@ -7299,12 +7303,21 @@ def evolve_ai_from_decision_performance():
 
     decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
     ai_memory = _load_json(TAIPO_AI_MEMORY_FILE)
+    learned = _load_json(
+        TAIPO_AI_DECISION_LEARNED_FILE
+    )
 
     if not isinstance(decision_log, dict):
         return 0
 
     if not isinstance(ai_memory, dict):
         ai_memory = {}
+
+    if not isinstance(
+        learned,
+        dict
+    ):
+        learned = {}
 
     symbols = ai_memory.get("symbols", {})
 
@@ -7333,11 +7346,41 @@ def evolve_ai_from_decision_performance():
             if not symbol:
                 continue
 
+            decision_day = str(
+                item.get(
+                    "created_at",
+                    ""
+                )
+            )[:10]
+
             t1 = item.get("t1_pct")
             t3 = item.get("t3_pct")
             t5 = item.get("t5_pct")
 
             if t1 is None and t3 is None and t5 is None:
+                continue
+
+            learn_keys = []
+
+            if t1 is not None:
+                learn_keys.append(
+                    f"{decision_day}_{symbol}_T1"
+                )
+
+            if t3 is not None:
+                learn_keys.append(
+                    f"{decision_day}_{symbol}_T3"
+                )
+
+            if t5 is not None:
+                learn_keys.append(
+                    f"{decision_day}_{symbol}_T5"
+                )
+
+            if learn_keys and all(
+                learned.get(k)
+                for k in learn_keys
+            ):
                 continue
 
             symbol_mem = symbols.get(symbol, {})
@@ -7394,12 +7437,20 @@ def evolve_ai_from_decision_performance():
                 "%Y-%m-%d %H:%M:%S"
             )
 
+            for k in learn_keys:
+                learned[k] = True
+
             symbols[symbol] = symbol_mem
             updated += 1
 
     ai_memory["symbols"] = symbols
     ai_memory["updated_at"] = datetime.now(TZ).strftime(
         "%Y-%m-%d %H:%M:%S"
+    )
+
+    _atomic_write_json(
+        TAIPO_AI_DECISION_LEARNED_FILE,
+        learned
     )
 
     _atomic_write_json(
