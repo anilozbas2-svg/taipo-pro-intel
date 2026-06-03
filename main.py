@@ -5129,6 +5129,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Ensemble ölçüm: {ensemble_perf_count}\n"
         f"AI Ensemble öğrenme: {ensemble_learn_count}\n"
         f"AI Decision ölçüm: {decision_perf_count}\n"
+        f"AI Pick ölçüm: {pick_perf_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
     )
