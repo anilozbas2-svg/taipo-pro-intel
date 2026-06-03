@@ -225,6 +225,10 @@ TAIPO_AI_DECISION_LEARNED_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_decision_learned.json"
 )
+TAIPO_AI_ENSEMBLE_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_ensemble.json"
+)
 TAIPO_AI_PICK_FILE = os.path.join(DATA_DIR, "taipo_ai_pick.json")
 TAIPO_AI_PICK_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
@@ -6334,6 +6338,194 @@ async def cmd_ai_log(
         "\n".join(lines)
     )
 
+def generate_ai_ensemble():
+
+    perf = _load_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE
+    )
+
+    ai_memory = _load_json(
+        TAIPO_AI_MEMORY_FILE
+    )
+
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(perf, dict):
+        return None
+
+    if not isinstance(ai_memory, dict):
+        ai_memory = {}
+
+    if not isinstance(symbol_memory, dict):
+        symbol_memory = {}
+
+    votes = {}
+
+    for day, items in perf.items():
+
+        if not isinstance(items, dict):
+            continue
+
+        for key, item in items.items():
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get("symbol", "")
+            ).strip()
+
+            model = str(
+                item.get("signal_type", "")
+            ).strip()
+
+            if not symbol or not model:
+                continue
+
+            perf_pct = safe_float(
+                item.get("performance_pct"),
+                0.0
+            )
+
+            max_return = safe_float(
+                item.get("max_return"),
+                perf_pct
+            )
+
+            min_return = safe_float(
+                item.get("min_return"),
+                perf_pct
+            )
+
+            model_memory = ai_memory.get(
+                model,
+                {}
+            )
+
+            if not isinstance(model_memory, dict):
+                model_memory = {}
+
+            model_weight = safe_float(
+                model_memory.get("weight"),
+                1.0
+            )
+
+            model_trend = str(
+                model_memory.get(
+                    "trend",
+                    "STABLE"
+                )
+            )
+
+            trend_boost = 1.0
+
+            if model_trend == "UP":
+                trend_boost = 1.10
+
+            elif model_trend == "DOWN":
+                trend_boost = 0.90
+
+            symbol_item = symbol_memory.get(
+                symbol,
+                {}
+            )
+
+            if not isinstance(symbol_item, dict):
+                symbol_item = {}
+
+            symbol_weight = safe_float(
+                symbol_item.get("weight"),
+                1.0
+            )
+
+            symbol_hit_rate = safe_float(
+                symbol_item.get("hit_rate"),
+                0.0
+            )
+
+            symbol_avg_pct = safe_float(
+                symbol_item.get("avg_pct"),
+                0.0
+            )
+
+            vote_score = (
+                perf_pct
+                + max_return * 0.50
+                + min_return * 0.25
+                + model_weight * 8.0
+                + symbol_hit_rate * 0.05
+                + symbol_avg_pct * 1.50
+            ) * trend_boost * symbol_weight
+
+            if symbol not in votes:
+                votes[symbol] = {
+                    "symbol": symbol,
+                    "total_score": 0.0,
+                    "models": {},
+                    "count": 0
+                }
+
+            votes[symbol]["total_score"] += vote_score
+            votes[symbol]["count"] += 1
+            votes[symbol]["models"][model] = round(
+                vote_score,
+                2
+            )
+
+    rows = list(votes.values())
+
+    for row in rows:
+        row["avg_score"] = round(
+            safe_float(row.get("total_score"), 0.0)
+            / max(1, int(row.get("count", 1))),
+            2
+        )
+
+        row["total_score"] = round(
+            safe_float(row.get("total_score"), 0.0),
+            2
+        )
+
+        row["confidence"] = min(
+            100.0,
+            max(
+                0.0,
+                row["avg_score"] * 6.0
+            )
+        )
+
+        row["confidence"] = round(
+            row["confidence"],
+            1
+        )
+
+    rows = sorted(
+        rows,
+        key=lambda x: (
+            x.get("confidence", 0.0),
+            x.get("total_score", 0.0),
+            x.get("count", 0)
+        ),
+        reverse=True
+    )[:10]
+
+    result = {
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "items": rows,
+        "count": len(rows)
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_ENSEMBLE_FILE,
+        result
+    )
+
+    return result
+
 def generate_ai_pick():
 
     ai_memory = _load_json(
@@ -7919,6 +8111,73 @@ async def cmd_ai_pick(
             lines.append(
                 f"Min: %{safe_float(c.get('min_return'), 0.0):.2f}"
             )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+async def cmd_ai_ensemble(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    data = generate_ai_ensemble()
+
+    if not isinstance(data, dict):
+        await update.message.reply_text(
+            "TAIPO AI ENSEMBLE\nVeri bulunamadı."
+        )
+        return
+
+    items = data.get("items", [])
+
+    lines = [
+        "TAIPO AI ENSEMBLE",
+        "",
+        f"Aday Sayısı: {len(items)}",
+        ""
+    ]
+
+    if not items:
+
+        lines.append(
+            "Henüz ensemble verisi yok."
+        )
+
+    else:
+
+        for i, item in enumerate(items, 1):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+            )
+
+            lines.append(
+                f"Confidence: %{safe_float(item.get('confidence'), 0.0):.1f}"
+            )
+
+            lines.append(
+                f"Total Score: {safe_float(item.get('total_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Vote Count: {int(item.get('count', 0))}"
+            )
+
+            models = item.get(
+                "models",
+                {}
+            )
+
+            if isinstance(models, dict):
+
+                for model, score in models.items():
+
+                    lines.append(
+                        f"• {model}: {safe_float(score, 0.0):.2f}"
+                    )
+
+            lines.append("")
 
     await update.message.reply_text(
         "\n".join(lines)
@@ -10061,6 +10320,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_top", cmd_ai_top))
     app.add_handler(CommandHandler("ai_pick", cmd_ai_pick))
     app.add_handler(CommandHandler("ai_accuracy", cmd_ai_accuracy))
+    app.add_handler(CommandHandler("ai_ensemble", cmd_ai_ensemble))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
     app.add_handler(CommandHandler("ai_log", cmd_ai_log))
     app.add_handler(CommandHandler("ai_score", cmd_ai_score))
