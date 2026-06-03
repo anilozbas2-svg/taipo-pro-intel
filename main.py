@@ -6958,6 +6958,52 @@ def generate_ai_pick():
 
     candidates = []
 
+    ensemble_data = generate_ai_ensemble()
+
+    ensemble_items = []
+
+    if isinstance(ensemble_data, dict):
+        ensemble_items = ensemble_data.get(
+            "items",
+            []
+        )
+
+    if not isinstance(ensemble_items, list):
+        ensemble_items = []
+
+    ensemble_score_map = {}
+    ensemble_confidence_map = {}
+    ensemble_vote_count_map = {}
+
+    for ensemble_item in ensemble_items:
+
+        if not isinstance(ensemble_item, dict):
+            continue
+
+        ensemble_symbol = str(
+            ensemble_item.get("symbol", "")
+        ).strip()
+
+        if not ensemble_symbol:
+            continue
+
+        ensemble_score_map[ensemble_symbol] = safe_float(
+            ensemble_item.get("total_score"),
+            0.0
+        )
+
+        ensemble_confidence_map[ensemble_symbol] = safe_float(
+            ensemble_item.get("confidence"),
+            0.0
+        )
+
+        ensemble_vote_count_map[ensemble_symbol] = int(
+            safe_float(
+                ensemble_item.get("count"),
+                0
+            )
+        )
+
     latest_day = None
 
     if universe_history:
@@ -7156,6 +7202,34 @@ def generate_ai_pick():
                     ) * universe_power
                 )
 
+                ensemble_score = safe_float(
+                    ensemble_score_map.get(symbol),
+                    0.0
+                )
+
+                ensemble_confidence = safe_float(
+                    ensemble_confidence_map.get(symbol),
+                    0.0
+                )
+
+                ensemble_vote_count = int(
+                    safe_float(
+                        ensemble_vote_count_map.get(symbol),
+                        0
+                    )
+                )
+
+                ensemble_boost = 1.0
+
+                if ensemble_vote_count >= 3:
+                    ensemble_boost = 1.15
+
+                elif ensemble_vote_count == 2:
+                    ensemble_boost = 1.08
+
+                elif ensemble_vote_count == 1:
+                    ensemble_boost = 1.03
+
                 ai_score = (
                     perf_pct
                     + max_return * 0.50
@@ -7167,7 +7241,10 @@ def generate_ai_pick():
                     + symbol_avg_pct * 2.00
                     + universe_hit_rate * 0.04
                     + universe_avg_pct * 1.00
-                ) * trend_boost * symbol_weight * effective_universe_weight
+                    + ensemble_score * 0.20
+                    + ensemble_confidence * 0.05
+                    + ensemble_vote_count * 1.50
+                ) * trend_boost * symbol_weight * effective_universe_weight * ensemble_boost
 
                 candidates.append({
                     "symbol": symbol,
@@ -7187,6 +7264,10 @@ def generate_ai_pick():
                     "universe_total": universe_total,
                     "universe_power": universe_power,
                     "effective_universe_weight": effective_universe_weight,
+                    "ensemble_score": ensemble_score,
+                    "ensemble_confidence": ensemble_confidence,
+                    "ensemble_vote_count": ensemble_vote_count,
+                    "ensemble_boost": ensemble_boost,
                 })
 
     candidates = sorted(
@@ -8464,6 +8545,22 @@ async def cmd_ai_pick(
 
             lines.append(
                 f"Effective U.W: {safe_float(c.get('effective_universe_weight'), 1.0):.2f}"
+            )
+            
+            lines.append(
+                f"Ensemble Score: {safe_float(c.get('ensemble_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Ensemble Conf: %{safe_float(c.get('ensemble_confidence'), 0.0):.1f}"
+            )
+
+            lines.append(
+                f"Ensemble Votes: {int(safe_float(c.get('ensemble_vote_count'), 0))}"
+            )
+
+            lines.append(
+                f"Ensemble Boost: {safe_float(c.get('ensemble_boost'), 1.0):.2f}"
             )
 
             lines.append(
