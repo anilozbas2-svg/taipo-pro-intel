@@ -6339,10 +6339,24 @@ def generate_ai_pick():
     if not isinstance(ai_memory, dict):
         return None
 
+    decision_symbol_memory = ai_memory.get(
+        "symbols",
+        {}
+    )
+
+    if not isinstance(
+        decision_symbol_memory,
+        dict
+    ):
+        decision_symbol_memory = {}
+
     best_model = None
     best_weight = -999
 
     for model, item in ai_memory.items():
+
+        if model == "symbols":
+            continue
 
         if not isinstance(item, dict):
             continue
@@ -6366,7 +6380,7 @@ def generate_ai_pick():
     symbol_memory = _load_json(
         TAIPO_AI_SYMBOL_MEMORY_FILE
     )
-    
+
     universe_history = _load_json(
         TAIPO_AI_UNIVERSE_HISTORY_FILE
     )
@@ -6381,7 +6395,7 @@ def generate_ai_pick():
         symbol_memory = {}
 
     candidates = []
-    
+
     latest_day = None
 
     if universe_history:
@@ -6506,9 +6520,38 @@ def generate_ai_pick():
                     0.0
                 )
 
-                symbol_weight = safe_float(
+                base_symbol_weight = safe_float(
                     symbol_item.get("weight"),
                     1.0
+                )
+
+                decision_symbol_item = decision_symbol_memory.get(
+                    symbol,
+                    {}
+                )
+
+                if not isinstance(
+                    decision_symbol_item,
+                    dict
+                ):
+                    decision_symbol_item = {}
+
+                decision_symbol_weight = safe_float(
+                    decision_symbol_item.get("weight"),
+                    1.0
+                )
+
+                symbol_weight = (
+                    base_symbol_weight
+                    * decision_symbol_weight
+                )
+
+                symbol_weight = max(
+                    0.50,
+                    min(
+                        1.75,
+                        symbol_weight
+                    )
                 )
 
                 universe_hit_rate = safe_float(
@@ -6572,6 +6615,8 @@ def generate_ai_pick():
                     "min_return": min_return,
                     "ai_score": ai_score,
                     "symbol_weight": symbol_weight,
+                    "base_symbol_weight": base_symbol_weight,
+                    "decision_symbol_weight": decision_symbol_weight,
                     "symbol_hit_rate": symbol_hit_rate,
                     "symbol_avg_pct": symbol_avg_pct,
                     "universe_weight": universe_weight,
@@ -7770,6 +7815,14 @@ async def cmd_ai_pick(
 
             lines.append(
                 f"Weight: {safe_float(c.get('symbol_weight'), 1.0):.2f}"
+            )
+            
+            lines.append(
+                f"Base W: {safe_float(c.get('base_symbol_weight'), 1.0):.2f}"
+            )
+
+            lines.append(
+                f"Decision W: {safe_float(c.get('decision_symbol_weight'), 1.0):.2f}"
             )
 
             lines.append(
