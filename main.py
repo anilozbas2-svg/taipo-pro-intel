@@ -8126,6 +8126,176 @@ def calculate_ai_decision_accuracy():
         "symbols": symbol_rows
     }
 
+def calculate_ai_pick_accuracy():
+
+    data = _load_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE
+    )
+
+    if not isinstance(data, dict):
+        return {
+            "total": 0,
+            "t1_rate": 0.0,
+            "t3_rate": 0.0,
+            "t5_rate": 0.0,
+            "t1_success": 0,
+            "t1_total": 0,
+            "t3_success": 0,
+            "t3_total": 0,
+            "t5_success": 0,
+            "t5_total": 0,
+            "symbols": []
+        }
+
+    symbol_stats = {}
+
+    t1_success = 0
+    t1_total = 0
+
+    t3_success = 0
+    t3_total = 0
+
+    t5_success = 0
+    t5_total = 0
+
+    total = 0
+
+    for day, rows in data.items():
+
+        if not isinstance(rows, list):
+            continue
+
+        for row in rows:
+
+            if not isinstance(row, dict):
+                continue
+
+            symbol = str(
+                row.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            total += 1
+
+            if symbol not in symbol_stats:
+                symbol_stats[symbol] = {
+                    "symbol": symbol,
+                    "count": 0,
+                    "success": 0,
+                    "t1": [],
+                    "t3": [],
+                    "t5": []
+                }
+
+            stat = symbol_stats[symbol]
+
+            stat["count"] += 1
+
+            t1 = row.get("t1_pct")
+            t3 = row.get("t3_pct")
+            t5 = row.get("t5_pct")
+
+            if t1 is not None:
+                t1_total += 1
+                stat["t1"].append(
+                    safe_float(t1, 0.0)
+                )
+
+                if safe_float(t1, 0.0) > 0:
+                    t1_success += 1
+                    stat["success"] += 1
+
+            if t3 is not None:
+                t3_total += 1
+                stat["t3"].append(
+                    safe_float(t3, 0.0)
+                )
+
+                if safe_float(t3, 0.0) > 0:
+                    t3_success += 1
+
+            if t5 is not None:
+                t5_total += 1
+                stat["t5"].append(
+                    safe_float(t5, 0.0)
+                )
+
+                if safe_float(t5, 0.0) > 0:
+                    t5_success += 1
+
+    symbols = []
+
+    for symbol, stat in symbol_stats.items():
+
+        count = max(
+            1,
+            int(stat["count"])
+        )
+
+        success_rate = (
+            stat["success"] / count
+        ) * 100.0
+
+        symbols.append({
+            "symbol": symbol,
+            "success_rate": round(
+                success_rate,
+                1
+            ),
+            "avg_t1": round(
+                sum(stat["t1"])
+                / max(1, len(stat["t1"])),
+                2
+            ),
+            "avg_t3": round(
+                sum(stat["t3"])
+                / max(1, len(stat["t3"])),
+                2
+            ),
+            "avg_t5": round(
+                sum(stat["t5"])
+                / max(1, len(stat["t5"])),
+                2
+            )
+        })
+
+    symbols = sorted(
+        symbols,
+        key=lambda x: (
+            x["success_rate"],
+            x["avg_t5"]
+        ),
+        reverse=True
+    )
+
+    return {
+        "total": total,
+        "t1_rate": round(
+            (t1_success / max(1, t1_total))
+            * 100.0,
+            1
+        ),
+        "t3_rate": round(
+            (t3_success / max(1, t3_total))
+            * 100.0,
+            1
+        ),
+        "t5_rate": round(
+            (t5_success / max(1, t5_total))
+            * 100.0,
+            1
+        ),
+        "t1_success": t1_success,
+        "t1_total": t1_total,
+        "t3_success": t3_success,
+        "t3_total": t3_total,
+        "t5_success": t5_success,
+        "t5_total": t5_total,
+        "symbols": symbols
+    }
+
 def evolve_ai_from_decision_performance():
 
     decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
