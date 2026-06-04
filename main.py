@@ -5140,6 +5140,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     top_pick_learn_count = (
         evolve_ai_from_top_pick_performance()
     )
+    
+    symbol_tune_count = (
+        evolve_symbol_weights_from_top_pick()
+    )
 
     universe_learn_count = (
         evolve_ai_from_universe_performance()
@@ -5155,6 +5159,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Decision ölçüm: {decision_perf_count}\n"
         f"AI Pick ölçüm: {pick_perf_count}\n"
         f"AI Top Pick öğrenme: {top_pick_learn_count}\n"
+        f"AI Symbol Tune: {symbol_tune_count}\n"
         f"AI Top Pick ölçüm: {top_pick_perf_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
@@ -7322,10 +7327,16 @@ def generate_ai_top_pick():
 
     ensemble_data = generate_ai_ensemble()
     pick_data = generate_ai_pick()
+
     symbol_memory = _load_json(
         TAIPO_AI_SYMBOL_MEMORY_FILE
     )
+
     hof = build_ai_hall_of_fame()
+
+    top_pick_learning = _load_json(
+        TAIPO_AI_TOP_PICK_LEARNING_FILE
+    )
 
     if not isinstance(ensemble_data, dict):
         return None
@@ -7338,6 +7349,9 @@ def generate_ai_top_pick():
 
     if not isinstance(hof, dict):
         hof = {}
+
+    if not isinstance(top_pick_learning, dict):
+        top_pick_learning = {}
 
     ensemble_items = ensemble_data.get("items", [])
     pick_items = pick_data.get("candidates", [])
@@ -7391,17 +7405,22 @@ def generate_ai_top_pick():
                 "pick_confidence": 0.0,
                 "symbol_weight": 1.0,
                 "hof_bonus": 0.0,
-                "penalty": 0.0
+                "penalty": 0.0,
+                "top_pick_avg_score": 0.0,
+                "top_pick_trend": "STABLE",
+                "top_pick_memory_bonus": 0.0
             }
 
         pool[symbol]["ensemble_score"] = safe_float(
             item.get("total_score"),
             0.0
         )
+
         pool[symbol]["ensemble_confidence"] = safe_float(
             item.get("confidence"),
             0.0
         )
+
         pool[symbol]["ensemble_votes"] = int(
             safe_float(
                 item.get("count"),
@@ -7429,7 +7448,10 @@ def generate_ai_top_pick():
                 "pick_confidence": 0.0,
                 "symbol_weight": 1.0,
                 "hof_bonus": 0.0,
-                "penalty": 0.0
+                "penalty": 0.0,
+                "top_pick_avg_score": 0.0,
+                "top_pick_trend": "STABLE",
+                "top_pick_memory_bonus": 0.0
             }
 
         pick_score = safe_float(
@@ -7469,6 +7491,40 @@ def generate_ai_top_pick():
         hof_bonus = 0.0
         penalty = 0.0
 
+        top_pick_memory = top_pick_learning.get(
+            symbol,
+            {}
+        )
+
+        if not isinstance(top_pick_memory, dict):
+            top_pick_memory = {}
+
+        top_pick_avg_score = safe_float(
+            top_pick_memory.get("avg_score"),
+            0.0
+        )
+
+        top_pick_trend = str(
+            top_pick_memory.get(
+                "trend",
+                "STABLE"
+            )
+        )
+
+        top_pick_memory_bonus = 0.0
+
+        if top_pick_trend == "UP":
+            top_pick_memory_bonus += 6.0
+
+        elif top_pick_trend == "DOWN":
+            top_pick_memory_bonus -= 6.0
+
+        if top_pick_avg_score >= 8.0:
+            top_pick_memory_bonus += 4.0
+
+        elif top_pick_avg_score <= -3.0:
+            top_pick_memory_bonus -= 4.0
+
         if symbol in champion_symbols:
             hof_bonus = 5.0
 
@@ -7477,6 +7533,15 @@ def generate_ai_top_pick():
 
         item["hof_bonus"] = hof_bonus
         item["penalty"] = penalty
+        item["top_pick_avg_score"] = round(
+            top_pick_avg_score,
+            2
+        )
+        item["top_pick_trend"] = top_pick_trend
+        item["top_pick_memory_bonus"] = round(
+            top_pick_memory_bonus,
+            2
+        )
 
         vote_bonus = 0.0
 
@@ -7503,6 +7568,7 @@ def generate_ai_top_pick():
             + safe_float(item.get("pick_confidence"), 0.0) * 0.25
             + vote_bonus
             + hof_bonus
+            + top_pick_memory_bonus
             - penalty
         ) * symbol_weight
 
@@ -7546,7 +7612,7 @@ def generate_ai_top_pick():
         TAIPO_AI_TOP_PICK_FILE,
         result
     )
-    
+
     save_ai_top_pick_learning(
         result
     )
@@ -7723,6 +7789,102 @@ def evolve_ai_from_top_pick_performance():
     _atomic_write_json(
         TAIPO_AI_TOP_PICK_LEARNING_FILE,
         learning
+    )
+
+    return updated
+
+def evolve_symbol_weights_from_top_pick():
+
+    learning = _load_json(
+        TAIPO_AI_TOP_PICK_LEARNING_FILE
+    )
+
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(learning, dict):
+        return 0
+
+    if not isinstance(symbol_memory, dict):
+        symbol_memory = {}
+
+    updated = 0
+
+    for symbol, item in learning.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        avg_score = safe_float(
+            item.get("avg_score"),
+            0.0
+        )
+
+        trend = str(
+            item.get(
+                "trend",
+                "STABLE"
+            )
+        )
+
+        symbol_item = symbol_memory.get(
+            symbol,
+            {}
+        )
+
+        if not isinstance(symbol_item, dict):
+            symbol_item = {}
+
+        old_weight = safe_float(
+            symbol_item.get("weight"),
+            1.0
+        )
+
+        adjustment = 0.0
+
+        if trend == "UP" and avg_score >= 8.0:
+            adjustment = 0.05
+
+        elif trend == "DOWN" and avg_score <= -3.0:
+            adjustment = -0.05
+
+        if adjustment == 0.0:
+            continue
+
+        new_weight = old_weight + adjustment
+
+        new_weight = max(
+            0.50,
+            min(
+                1.75,
+                new_weight
+            )
+        )
+
+        symbol_item["weight"] = round(
+            new_weight,
+            3
+        )
+
+        symbol_item["top_pick_avg_score"] = round(
+            avg_score,
+            2
+        )
+
+        symbol_item["top_pick_trend"] = trend
+
+        symbol_item["top_pick_weight_update"] = datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+        symbol_memory[symbol] = symbol_item
+
+        updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE,
+        symbol_memory
     )
 
     return updated
@@ -9854,6 +10016,23 @@ async def cmd_ai_top_pick(
     else:
         for i, item in enumerate(items, 1):
 
+            top_pick_avg_score = safe_float(
+                item.get("top_pick_avg_score"),
+                0.0
+            )
+
+            top_pick_memory_bonus = safe_float(
+                item.get("top_pick_memory_bonus"),
+                0.0
+            )
+
+            top_pick_trend = str(
+                item.get(
+                    "top_pick_trend",
+                    "STABLE"
+                )
+            )
+
             lines.append(
                 f"{i}) {item.get('symbol', '-')}"
             )
@@ -9884,6 +10063,18 @@ async def cmd_ai_top_pick(
 
             lines.append(
                 f"HOF Bonus: {safe_float(item.get('hof_bonus'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Memory Trend: {top_pick_trend}"
+            )
+
+            lines.append(
+                f"Memory Avg: {top_pick_avg_score:.2f}"
+            )
+
+            lines.append(
+                f"Memory Bonus: {top_pick_memory_bonus:.2f}"
             )
 
             lines.append(
