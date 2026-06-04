@@ -5136,6 +5136,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     decision_learn_count = (
         evolve_ai_from_decision_performance()
     )
+    
+    top_pick_learn_count = (
+        evolve_ai_from_top_pick_performance()
+    )
 
     universe_learn_count = (
         evolve_ai_from_universe_performance()
@@ -5150,6 +5154,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Ensemble öğrenme: {ensemble_learn_count}\n"
         f"AI Decision ölçüm: {decision_perf_count}\n"
         f"AI Pick ölçüm: {pick_perf_count}\n"
+        f"AI Top Pick öğrenme: {top_pick_learn_count}\n"
         f"AI Top Pick ölçüm: {top_pick_perf_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
