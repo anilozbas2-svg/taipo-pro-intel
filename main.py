@@ -250,6 +250,10 @@ TAIPO_AI_TOP_PICK_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_top_pick.json"
 )
+TAIPO_AI_TOP_PICK_LEARNING_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_top_pick_learning.json"
+)
 TAIPO_AI_TOP_PICK_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_top_pick_performance.json"
@@ -5124,6 +5128,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pick_perf_count = (
         update_ai_pick_performance()
     )
+    
+    top_pick_perf_count = (
+        update_ai_top_pick_performance()
+    )
 
     decision_learn_count = (
         evolve_ai_from_decision_performance()
@@ -5142,6 +5150,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Ensemble öğrenme: {ensemble_learn_count}\n"
         f"AI Decision ölçüm: {decision_perf_count}\n"
         f"AI Pick ölçüm: {pick_perf_count}\n"
+        f"AI Top Pick ölçüm: {top_pick_perf_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
     )
@@ -7532,8 +7541,260 @@ def generate_ai_top_pick():
         TAIPO_AI_TOP_PICK_FILE,
         result
     )
+    
+    save_ai_top_pick_learning(
+        result
+    )
 
     return result
+
+def save_ai_top_pick_learning(data):
+
+    if not isinstance(data, dict):
+        return
+
+    items = data.get(
+        "items",
+        []
+    )
+
+    if not isinstance(items, list):
+        return
+
+    history = _load_json(
+        TAIPO_AI_TOP_PICK_LEARNING_FILE
+    )
+
+    if not isinstance(history, dict):
+        history = {}
+
+    today = today_key_tradingday()
+
+    rows = []
+
+    for item in items:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if not symbol:
+            continue
+
+        rows.append({
+            "symbol": symbol,
+            "top_score": round(
+                safe_float(
+                    item.get("top_score"),
+                    0.0
+                ),
+                2
+            ),
+            "confidence": round(
+                safe_float(
+                    item.get("confidence"),
+                    0.0
+                ),
+                2
+            )
+        })
+
+    history[today] = rows
+
+    _atomic_write_json(
+        TAIPO_AI_TOP_PICK_LEARNING_FILE,
+        history
+    )
+
+def update_ai_top_pick_performance():
+
+    history = _load_json(
+        TAIPO_AI_TOP_PICK_LEARNING_FILE
+    )
+
+    perf = _load_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE
+    )
+
+    if not isinstance(history, dict):
+        return 0
+
+    if not isinstance(perf, dict):
+        return 0
+
+    result = _load_json(
+        TAIPO_AI_TOP_PICK_PERFORMANCE_FILE
+    )
+
+    if not isinstance(result, dict):
+        result = {}
+
+    updated = 0
+
+    perf_days = sorted(
+        perf.keys()
+    )
+
+    for pick_day, rows in history.items():
+
+        if not isinstance(rows, list):
+            continue
+
+        existing_day = result.get(
+            pick_day,
+            {}
+        )
+
+        if not isinstance(existing_day, dict):
+            existing_day = {
+                "date": pick_day,
+                "items": []
+            }
+
+        existing_items = existing_day.get(
+            "items",
+            []
+        )
+
+        if not isinstance(existing_items, list):
+            existing_items = []
+
+        existing_map = {}
+
+        for old_item in existing_items:
+
+            if not isinstance(old_item, dict):
+                continue
+
+            old_symbol = str(
+                old_item.get("symbol", "")
+            ).strip()
+
+            if old_symbol:
+                existing_map[old_symbol] = old_item
+
+        future_days = [
+            d for d in perf_days
+            if d > pick_day
+        ]
+
+        changed = False
+
+        for row in rows:
+
+            if not isinstance(row, dict):
+                continue
+
+            symbol = str(
+                row.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            item = existing_map.get(
+                symbol,
+                dict(row)
+            )
+
+            item["symbol"] = symbol
+
+            target_map = {
+                "t1_pct": 1,
+                "t3_pct": 3,
+                "t5_pct": 5
+            }
+
+            for field_name, target_day in target_map.items():
+
+                if item.get(field_name) is not None:
+                    continue
+
+                if len(future_days) < target_day:
+                    continue
+
+                target_perf_day = future_days[target_day - 1]
+
+                day_perf = perf.get(
+                    target_perf_day,
+                    {}
+                )
+
+                if not isinstance(day_perf, dict):
+                    continue
+
+                matched_pct = None
+
+                for perf_item in day_perf.values():
+
+                    if not isinstance(perf_item, dict):
+                        continue
+
+                    perf_symbol = str(
+                        perf_item.get("symbol", "")
+                    ).strip()
+
+                    if perf_symbol != symbol:
+                        continue
+
+                    matched_pct = safe_float(
+                        perf_item.get("performance_pct"),
+                        0.0
+                    )
+                    break
+
+                if matched_pct is None:
+                    continue
+
+                item[field_name] = round(
+                    matched_pct,
+                    2
+                )
+
+                changed = True
+
+            if item.get("t5_pct") is not None:
+                item["status"] = "CLOSED"
+
+            elif (
+                item.get("t1_pct") is not None
+                or item.get("t3_pct") is not None
+            ):
+                item["status"] = "MEASURED"
+
+            else:
+                item["status"] = item.get(
+                    "status",
+                    "OPEN"
+                )
+
+            existing_map[symbol] = item
+
+        final_items = list(
+            existing_map.values()
+        )
+
+        if final_items:
+            existing_day["items"] = final_items
+            existing_day["count"] = len(final_items)
+            existing_day["updated_at"] = datetime.now(TZ).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            result[pick_day] = existing_day
+
+        if changed:
+            updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_TOP_PICK_PERFORMANCE_FILE,
+        result
+    )
+
+    return updated
 
 def save_ai_pick(pick):
 
