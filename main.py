@@ -7307,8 +7307,11 @@ def generate_ai_pick():
 def generate_ai_top_pick():
 
     ensemble_data = generate_ai_ensemble()
-
     pick_data = generate_ai_pick()
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+    hof = build_ai_hall_of_fame()
 
     if not isinstance(ensemble_data, dict):
         return None
@@ -7316,15 +7319,14 @@ def generate_ai_top_pick():
     if not isinstance(pick_data, dict):
         return None
 
-    ensemble_items = ensemble_data.get(
-        "items",
-        []
-    )
+    if not isinstance(symbol_memory, dict):
+        symbol_memory = {}
 
-    pick_items = pick_data.get(
-        "candidates",
-        []
-    )
+    if not isinstance(hof, dict):
+        hof = {}
+
+    ensemble_items = ensemble_data.get("items", [])
+    pick_items = pick_data.get("candidates", [])
 
     if not isinstance(ensemble_items, list):
         ensemble_items = []
@@ -7332,14 +7334,206 @@ def generate_ai_top_pick():
     if not isinstance(pick_items, list):
         pick_items = []
 
-    return {
-        "ensemble_count": len(
-            ensemble_items
-        ),
-        "pick_count": len(
-            pick_items
+    champions = hof.get("champions", [])
+    losers = hof.get("losers", [])
+
+    champion_symbols = set()
+
+    if isinstance(champions, list):
+        for item in champions:
+            if isinstance(item, dict):
+                s = str(item.get("symbol", "")).strip()
+                if s:
+                    champion_symbols.add(s)
+
+    loser_symbols = set()
+
+    if isinstance(losers, list):
+        for item in losers:
+            if isinstance(item, dict):
+                s = str(item.get("symbol", "")).strip()
+                if s:
+                    loser_symbols.add(s)
+
+    pool = {}
+
+    for item in ensemble_items:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(item.get("symbol", "")).strip()
+
+        if not symbol:
+            continue
+
+        if symbol not in pool:
+            pool[symbol] = {
+                "symbol": symbol,
+                "ensemble_score": 0.0,
+                "ensemble_confidence": 0.0,
+                "ensemble_votes": 0,
+                "pick_score": 0.0,
+                "pick_confidence": 0.0,
+                "symbol_weight": 1.0,
+                "hof_bonus": 0.0,
+                "penalty": 0.0
+            }
+
+        pool[symbol]["ensemble_score"] = safe_float(
+            item.get("total_score"),
+            0.0
         )
+        pool[symbol]["ensemble_confidence"] = safe_float(
+            item.get("confidence"),
+            0.0
+        )
+        pool[symbol]["ensemble_votes"] = int(
+            safe_float(
+                item.get("count"),
+                0
+            )
+        )
+
+    for item in pick_items:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(item.get("symbol", "")).strip()
+
+        if not symbol:
+            continue
+
+        if symbol not in pool:
+            pool[symbol] = {
+                "symbol": symbol,
+                "ensemble_score": 0.0,
+                "ensemble_confidence": 0.0,
+                "ensemble_votes": 0,
+                "pick_score": 0.0,
+                "pick_confidence": 0.0,
+                "symbol_weight": 1.0,
+                "hof_bonus": 0.0,
+                "penalty": 0.0
+            }
+
+        pick_score = safe_float(
+            item.get("ai_score"),
+            0.0
+        )
+
+        pool[symbol]["pick_score"] = pick_score
+
+        pool[symbol]["pick_confidence"] = min(
+            100.0,
+            max(
+                0.0,
+                pick_score * 6.0
+            )
+        )
+
+    rows = []
+
+    for symbol, item in pool.items():
+
+        symbol_item = symbol_memory.get(
+            symbol,
+            {}
+        )
+
+        if not isinstance(symbol_item, dict):
+            symbol_item = {}
+
+        symbol_weight = safe_float(
+            symbol_item.get("weight"),
+            1.0
+        )
+
+        item["symbol_weight"] = symbol_weight
+
+        hof_bonus = 0.0
+        penalty = 0.0
+
+        if symbol in champion_symbols:
+            hof_bonus = 5.0
+
+        if symbol in loser_symbols:
+            penalty = 5.0
+
+        item["hof_bonus"] = hof_bonus
+        item["penalty"] = penalty
+
+        vote_bonus = 0.0
+
+        votes = int(
+            safe_float(
+                item.get("ensemble_votes"),
+                0
+            )
+        )
+
+        if votes >= 3:
+            vote_bonus = 8.0
+
+        elif votes == 2:
+            vote_bonus = 5.0
+
+        elif votes == 1:
+            vote_bonus = 2.0
+
+        top_score = (
+            safe_float(item.get("ensemble_score"), 0.0) * 1.40
+            + safe_float(item.get("ensemble_confidence"), 0.0) * 0.35
+            + safe_float(item.get("pick_score"), 0.0) * 1.60
+            + safe_float(item.get("pick_confidence"), 0.0) * 0.25
+            + vote_bonus
+            + hof_bonus
+            - penalty
+        ) * symbol_weight
+
+        item["vote_bonus"] = vote_bonus
+        item["top_score"] = round(
+            top_score,
+            2
+        )
+        item["confidence"] = round(
+            min(
+                100.0,
+                max(
+                    0.0,
+                    top_score
+                )
+            ),
+            1
+        )
+
+        rows.append(item)
+
+    rows = sorted(
+        rows,
+        key=lambda x: (
+            x.get("top_score", 0.0),
+            x.get("ensemble_votes", 0),
+            x.get("pick_score", 0.0)
+        ),
+        reverse=True
+    )[:5]
+
+    result = {
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "items": rows,
+        "count": len(rows)
     }
+
+    _atomic_write_json(
+        TAIPO_AI_TOP_PICK_FILE,
+        result
+    )
+
+    return result
 
 def save_ai_pick(pick):
 
@@ -9258,12 +9452,66 @@ async def cmd_ai_top_pick(
         )
         return
 
+    items = data.get(
+        "items",
+        []
+    )
+
+    if not isinstance(items, list):
+        items = []
+
     lines = [
         "TAIPO AI TOP PICK",
         "",
-        f"Ensemble Count: {data.get('ensemble_count', 0)}",
-        f"Pick Count: {data.get('pick_count', 0)}"
+        f"Aday Sayısı: {len(items)}",
+        ""
     ]
+
+    if not items:
+        lines.append(
+            "Henüz TOP PICK adayı yok."
+        )
+
+    else:
+        for i, item in enumerate(items, 1):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+            )
+
+            lines.append(
+                f"TOP Score: {safe_float(item.get('top_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Confidence: %{safe_float(item.get('confidence'), 0.0):.1f}"
+            )
+
+            lines.append(
+                f"Ensemble: {safe_float(item.get('ensemble_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Pick Score: {safe_float(item.get('pick_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Votes: {int(safe_float(item.get('ensemble_votes'), 0))}"
+            )
+
+            lines.append(
+                f"Symbol W: {safe_float(item.get('symbol_weight'), 1.0):.2f}"
+            )
+
+            lines.append(
+                f"HOF Bonus: {safe_float(item.get('hof_bonus'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Penalty: {safe_float(item.get('penalty'), 0.0):.2f}"
+            )
+
+            lines.append("")
 
     await update.message.reply_text(
         "\n".join(lines)
