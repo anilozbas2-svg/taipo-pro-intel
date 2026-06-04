@@ -7821,6 +7821,18 @@ def evolve_symbol_weights_from_top_pick():
             0.0
         )
 
+        last_score = safe_float(
+            item.get("last_score"),
+            0.0
+        )
+
+        count = int(
+            safe_float(
+                item.get("count"),
+                0
+            )
+        )
+
         trend = str(
             item.get(
                 "trend",
@@ -7841,13 +7853,43 @@ def evolve_symbol_weights_from_top_pick():
             1.0
         )
 
+        old_streak = int(
+            safe_float(
+                symbol_item.get("top_pick_streak"),
+                0
+            )
+        )
+
         adjustment = 0.0
 
         if trend == "UP" and avg_score >= 8.0:
-            adjustment = 0.05
+            adjustment += 0.04
 
         elif trend == "DOWN" and avg_score <= -3.0:
-            adjustment = -0.05
+            adjustment -= 0.04
+
+        if last_score >= 8.0:
+            adjustment += 0.03
+            old_streak += 1
+
+        elif last_score <= -3.0:
+            adjustment -= 0.03
+            old_streak -= 1
+
+        else:
+            old_streak = 0
+
+        if count >= 10 and avg_score >= 5.0:
+            adjustment += 0.02
+
+        elif count >= 10 and avg_score <= -2.0:
+            adjustment -= 0.02
+
+        if old_streak >= 3:
+            adjustment += 0.03
+
+        elif old_streak <= -3:
+            adjustment -= 0.03
 
         if adjustment == 0.0:
             continue
@@ -7872,7 +7914,18 @@ def evolve_symbol_weights_from_top_pick():
             2
         )
 
+        symbol_item["top_pick_last_score"] = round(
+            last_score,
+            2
+        )
+
+        symbol_item["top_pick_count"] = count
         symbol_item["top_pick_trend"] = trend
+        symbol_item["top_pick_streak"] = old_streak
+        symbol_item["top_pick_last_adjustment"] = round(
+            adjustment,
+            3
+        )
 
         symbol_item["top_pick_weight_update"] = datetime.now(TZ).strftime(
             "%Y-%m-%d %H:%M:%S"
