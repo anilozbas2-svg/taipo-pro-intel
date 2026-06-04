@@ -246,6 +246,14 @@ TAIPO_AI_PICK_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_pick_performance.json"
 )
+TAIPO_AI_TOP_PICK_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_top_pick.json"
+)
+TAIPO_AI_TOP_PICK_PERFORMANCE_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_top_pick_performance.json"
+)
 TAIPO_AI_HALL_OF_FAME_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_hall_of_fame.json"
@@ -7296,6 +7304,43 @@ def generate_ai_pick():
         "candidates": candidates,
     }
 
+def generate_ai_top_pick():
+
+    ensemble_data = generate_ai_ensemble()
+
+    pick_data = generate_ai_pick()
+
+    if not isinstance(ensemble_data, dict):
+        return None
+
+    if not isinstance(pick_data, dict):
+        return None
+
+    ensemble_items = ensemble_data.get(
+        "items",
+        []
+    )
+
+    pick_items = pick_data.get(
+        "candidates",
+        []
+    )
+
+    if not isinstance(ensemble_items, list):
+        ensemble_items = []
+
+    if not isinstance(pick_items, list):
+        pick_items = []
+
+    return {
+        "ensemble_count": len(
+            ensemble_items
+        ),
+        "pick_count": len(
+            pick_items
+        )
+    }
+
 def save_ai_pick(pick):
 
     if not isinstance(pick, dict):
@@ -9194,6 +9239,31 @@ async def cmd_ai_pick_accuracy(
                 f"T3: %{safe_float(item.get('avg_t3'), 0.0):.2f} | "
                 f"T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
             )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+async def cmd_ai_top_pick(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    data = generate_ai_top_pick()
+
+    if not isinstance(data, dict):
+
+        await update.message.reply_text(
+            "AI TOP PICK verisi yok."
+        )
+        return
+
+    lines = [
+        "TAIPO AI TOP PICK",
+        "",
+        f"Ensemble Count: {data.get('ensemble_count', 0)}",
+        f"Pick Count: {data.get('pick_count', 0)}"
+    ]
 
     await update.message.reply_text(
         "\n".join(lines)
@@ -11338,6 +11408,8 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_pick", cmd_ai_pick))
     app.add_handler(CommandHandler("ai_accuracy", cmd_ai_accuracy))
     app.add_handler(CommandHandler("ai_pick_accuracy", cmd_ai_pick_accuracy))
+    app.add_handler(CommandHandler(
+    "ai_top_pick", cmd_ai_top_pick))
     app.add_handler(CommandHandler("ai_hof", cmd_ai_hof))
     app.add_handler(CommandHandler("ai_ensemble", cmd_ai_ensemble))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
