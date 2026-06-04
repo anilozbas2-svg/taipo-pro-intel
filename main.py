@@ -7942,6 +7942,96 @@ def evolve_symbol_weights_from_top_pick():
 
     return updated
 
+def calculate_ai_top_pick_rank():
+
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(symbol_memory, dict):
+        return []
+
+    rows = []
+
+    for symbol, item in symbol_memory.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        top_pick_count = int(
+            safe_float(
+                item.get("top_pick_count"),
+                0
+            )
+        )
+
+        top_pick_avg_score = safe_float(
+            item.get("top_pick_avg_score"),
+            0.0
+        )
+
+        top_pick_last_score = safe_float(
+            item.get("top_pick_last_score"),
+            0.0
+        )
+
+        top_pick_trend = str(
+            item.get(
+                "top_pick_trend",
+                "STABLE"
+            )
+        )
+
+        weight = safe_float(
+            item.get("weight"),
+            1.0
+        )
+
+        if top_pick_count <= 0:
+            continue
+
+        rank_score = (
+            weight * 50.0
+            + top_pick_avg_score * 3.0
+            + top_pick_last_score * 1.5
+        )
+
+        if top_pick_trend == "UP":
+            rank_score += 10.0
+
+        elif top_pick_trend == "DOWN":
+            rank_score -= 10.0
+
+        rows.append({
+            "symbol": symbol,
+            "weight": round(weight, 3),
+            "top_pick_count": top_pick_count,
+            "top_pick_avg_score": round(
+                top_pick_avg_score,
+                2
+            ),
+            "top_pick_last_score": round(
+                top_pick_last_score,
+                2
+            ),
+            "top_pick_trend": top_pick_trend,
+            "rank_score": round(
+                rank_score,
+                2
+            )
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda x: x.get(
+            "rank_score",
+            0.0
+        ),
+        reverse=True
+    )[:15]
+
+    return rows
+
 def update_ai_top_pick_performance():
 
     history = _load_json(
@@ -10140,6 +10230,62 @@ async def cmd_ai_top_pick(
         "\n".join(lines)
     )
 
+async def cmd_ai_top_pick_rank(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    rows = calculate_ai_top_pick_rank()
+
+    lines = [
+        "TAIPO AI TOP PICK RANK",
+        "",
+        f"Kayıtlı sembol: {len(rows)}",
+        ""
+    ]
+
+    if not rows:
+        lines.append(
+            "Henüz Top Pick rank verisi yok."
+        )
+
+    else:
+        for i, item in enumerate(rows, 1):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+            )
+
+            lines.append(
+                f"Rank Score: {safe_float(item.get('rank_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Weight: {safe_float(item.get('weight'), 1.0):.3f}"
+            )
+
+            lines.append(
+                f"Trend: {item.get('top_pick_trend', 'STABLE')}"
+            )
+
+            lines.append(
+                f"Avg: {safe_float(item.get('top_pick_avg_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Last: {safe_float(item.get('top_pick_last_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Count: {int(safe_float(item.get('top_pick_count'), 0))}"
+            )
+
+            lines.append("")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_hof(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -12281,6 +12427,8 @@ def main() -> None:
     app.add_handler(CommandHandler("ai_pick_accuracy", cmd_ai_pick_accuracy))
     app.add_handler(CommandHandler(
     "ai_top_pick", cmd_ai_top_pick))
+    app.add_handler(CommandHandler(
+    "ai_top_pick_rank", cmd_ai_top_pick_rank))
     app.add_handler(CommandHandler("ai_hof", cmd_ai_hof))
     app.add_handler(CommandHandler("ai_ensemble", cmd_ai_ensemble))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
