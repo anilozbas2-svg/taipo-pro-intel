@@ -7609,6 +7609,119 @@ def save_ai_top_pick_learning(data):
         history
     )
 
+def evolve_ai_from_top_pick_performance():
+
+    perf = _load_json(
+        TAIPO_AI_TOP_PICK_PERFORMANCE_FILE
+    )
+
+    if not isinstance(perf, dict):
+        return 0
+
+    learning = _load_json(
+        TAIPO_AI_TOP_PICK_LEARNING_FILE
+    )
+
+    if not isinstance(learning, dict):
+        learning = {}
+
+    updated = 0
+
+    for day, rows in perf.items():
+
+        if not isinstance(rows, list):
+            continue
+
+        for row in rows:
+
+            if not isinstance(row, dict):
+                continue
+
+            symbol = str(
+                row.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            item = learning.get(
+                symbol,
+                {}
+            )
+
+            if not isinstance(item, dict):
+                item = {}
+
+            t1 = safe_float(
+                row.get("t1_pct", 0),
+                0.0
+            )
+
+            t3 = safe_float(
+                row.get("t3_pct", 0),
+                0.0
+            )
+
+            t5 = safe_float(
+                row.get("t5_pct", 0),
+                0.0
+            )
+
+            score = (
+                t1 * 0.30
+                + t3 * 0.30
+                + t5 * 0.40
+            )
+
+            count = int(
+                safe_float(
+                    item.get("count", 0),
+                    0
+                )
+            )
+
+            avg_score = safe_float(
+                item.get("avg_score", 0.0),
+                0.0
+            )
+
+            new_count = count + 1
+
+            new_avg = round(
+                (
+                    (avg_score * count)
+                    + score
+                ) / new_count,
+                2
+            )
+
+            item["count"] = new_count
+            item["avg_score"] = new_avg
+            item["last_score"] = round(score, 2)
+            item["updated_at"] = datetime.now(TZ).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            if new_avg >= 8:
+                item["trend"] = "UP"
+
+            elif new_avg <= -3:
+                item["trend"] = "DOWN"
+
+            else:
+                item["trend"] = "STABLE"
+
+            learning[symbol] = item
+
+            updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_TOP_PICK_LEARNING_FILE,
+        learning
+    )
+
+    return updated
+
 def update_ai_top_pick_performance():
 
     history = _load_json(
