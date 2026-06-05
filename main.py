@@ -254,6 +254,10 @@ TAIPO_AI_MASTER_SCORE_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_master_score.json"
 )
+TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_master_score_performance.json"
+)
 TAIPO_AI_TOP_PICK_LEARNING_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_top_pick_learning.json"
@@ -5136,6 +5140,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     top_pick_perf_count = (
         update_ai_top_pick_performance()
     )
+    
+    master_score_perf_count = (
+        update_ai_master_score_performance()
+    )
 
     decision_learn_count = (
         evolve_ai_from_decision_performance()
@@ -5165,6 +5173,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Top Pick öğrenme: {top_pick_learn_count}\n"
         f"AI Symbol Tune: {symbol_tune_count}\n"
         f"AI Top Pick ölçüm: {top_pick_perf_count}\n"
+        f"AI Master Score ölçüm: {master_score_perf_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
     )
@@ -7963,7 +7972,209 @@ def generate_ai_master_score():
         result
     )
 
+    save_ai_master_score(
+        result
+    )
+
     return result
+
+def save_ai_master_score(data):
+
+    if not isinstance(data, dict):
+        return
+
+    items = data.get(
+        "items",
+        []
+    )
+
+    if not isinstance(items, list):
+        return
+
+    history = _load_json(
+        TAIPO_AI_MASTER_SCORE_FILE
+    )
+
+    if not isinstance(history, dict):
+        history = {}
+
+    today = today_key_tradingday()
+
+    rows = []
+
+    for item in items:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if not symbol:
+            continue
+
+        rows.append({
+            "symbol": symbol,
+            "master_score": round(
+                safe_float(
+                    item.get("master_score"),
+                    0.0
+                ),
+                2
+            ),
+            "master_confidence": round(
+                safe_float(
+                    item.get("master_confidence"),
+                    0.0
+                ),
+                2
+            )
+        })
+
+    history[today] = {
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "items": rows,
+        "count": len(rows)
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_MASTER_SCORE_FILE,
+        history
+    )
+
+def update_ai_master_score_performance():
+
+    history = _load_json(
+        TAIPO_AI_MASTER_SCORE_FILE
+    )
+
+    perf = _load_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE
+    )
+
+    if not isinstance(history, dict):
+        return 0
+
+    if not isinstance(perf, dict):
+        return 0
+
+    result = _load_json(
+        TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE
+    )
+
+    if not isinstance(result, dict):
+        result = {}
+
+    updated = 0
+
+    perf_days = sorted(
+        perf.keys()
+    )
+
+    for score_day, score_data in history.items():
+
+        if not isinstance(score_data, dict):
+            continue
+
+        items = score_data.get(
+            "items",
+            []
+        )
+
+        if not isinstance(items, list):
+            continue
+
+        rows = []
+
+        future_days = [
+            d for d in perf_days
+            if d > score_day
+        ]
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            row = dict(item)
+
+            target_map = {
+                "t1_pct": 1,
+                "t3_pct": 3,
+                "t5_pct": 5
+            }
+
+            for field_name, target_day in target_map.items():
+
+                if row.get(field_name) is not None:
+                    continue
+
+                if len(future_days) < target_day:
+                    continue
+
+                target_perf_day = future_days[target_day - 1]
+
+                day_perf = perf.get(
+                    target_perf_day,
+                    {}
+                )
+
+                if not isinstance(day_perf, dict):
+                    continue
+
+                for perf_item in day_perf.values():
+
+                    if not isinstance(perf_item, dict):
+                        continue
+
+                    perf_symbol = str(
+                        perf_item.get("symbol", "")
+                    ).strip()
+
+                    if perf_symbol != symbol:
+                        continue
+
+                    row[field_name] = round(
+                        safe_float(
+                            perf_item.get("performance_pct"),
+                            0.0
+                        ),
+                        2
+                    )
+                    break
+
+            rows.append(row)
+
+        if not rows:
+            continue
+
+        result[score_day] = {
+            "date": score_day,
+            "items": rows,
+            "count": len(rows),
+            "updated_at": datetime.now(TZ).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        }
+
+        updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE,
+        result
+    )
+
+    return updated
 
 def save_ai_top_pick_learning(data):
 
