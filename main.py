@@ -8471,6 +8471,45 @@ def build_ai_master_hof():
 
     return result
 
+def get_master_hof_bonus(
+    symbol
+):
+
+    hof = _load_json(
+        TAIPO_AI_HOF_FILE
+    )
+
+    if not isinstance(
+        hof,
+        dict
+    ):
+        return 0.0
+
+    champions = hof.get(
+        "champions",
+        []
+    )
+
+    if not isinstance(
+        champions,
+        list
+    ):
+        return 0.0
+    
+    for item in champions:
+
+        if not isinstance(item, dict):
+            continue
+
+        champ_symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if champ_symbol == symbol:
+            return 7.5
+
+    return 0.0
+
 def calculate_ai_master_score_accuracy():
 
     perf = _load_json(
@@ -9186,10 +9225,15 @@ def calculate_ai_top_pick_rank():
         if top_pick_count <= 0:
             continue
 
+        master_hof_bonus = get_master_hof_bonus(
+            symbol
+        )
+        
         rank_score = (
             weight * 50.0
             + top_pick_avg_score * 3.0
             + top_pick_last_score * 1.5
+            + master_hof_bonus
         )
 
         if top_pick_trend == "UP":
@@ -9213,6 +9257,10 @@ def calculate_ai_top_pick_rank():
             "top_pick_trend": top_pick_trend,
             "rank_score": round(
                 rank_score,
+                2
+            ),
+            "master_hof_bonus": round(
+                master_hof_bonus,
                 2
             )
         })
@@ -11472,8 +11520,20 @@ async def cmd_ai_top_pick_rank(
                 f"Last: {safe_float(item.get('top_pick_last_score'), 0.0):.2f}"
             )
 
+            hof_bonus = safe_float(
+                item.get(
+                    "master_hof_bonus",
+                    0.0
+                ),
+                0.0
+            )
+
             lines.append(
                 f"Count: {int(safe_float(item.get('top_pick_count'), 0))}"
+            )
+
+            lines.append(
+                f"HOF Bonus: +{hof_bonus:.2f}"
             )
 
             lines.append("")
