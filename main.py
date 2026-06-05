@@ -262,6 +262,10 @@ TAIPO_AI_MASTER_RANK_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_master_rank.json"
 )
+TAIPO_AI_HOF_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_hof.json"
+)
 TAIPO_AI_TOP_PICK_LEARNING_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_top_pick_learning.json"
@@ -5160,6 +5164,21 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 []
             )
         )
+    
+    hall_of_fame_data = build_ai_master_hof()
+
+    hall_of_fame_count = 0
+
+    if isinstance(hall_of_fame_data, dict):
+        hall_of_fame_count = int(
+            safe_float(
+                hall_of_fame_data.get(
+                    "champion_count",
+                    0
+                ),
+                0
+            )
+        )
 
     decision_learn_count = (
         evolve_ai_from_decision_performance()
@@ -5196,6 +5215,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Master Score ölçüm: {master_score_perf_count}\n"
         f"AI Master öğrenme: {master_learn_count}\n"
         f"AI Master Rank: {master_rank_count}\n"
+        f"AI Master HOF: {hall_of_fame_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
     )
@@ -8386,6 +8406,71 @@ def generate_ai_master_rank():
 
     return result
     
+def build_ai_master_hof():
+
+    rank_data = generate_ai_master_rank()
+
+    if not isinstance(rank_data, dict):
+        return {}
+
+    items = rank_data.get(
+        "items",
+        []
+    )
+
+    if not isinstance(items, list):
+        items = []
+
+    champions = []
+    weak = []
+
+    for item in items:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if not symbol:
+            continue
+
+        rank_score = safe_float(
+            item.get("rank_score"),
+            0.0
+        )
+
+        count = int(
+            safe_float(
+                item.get("count"),
+                0
+            )
+        )
+
+        if count >= 3 and rank_score >= 65:
+            champions.append(item)
+
+        elif count >= 3 and rank_score <= 25:
+            weak.append(item)
+
+    result = {
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "champions": champions[:10],
+        "weak": weak[:10],
+        "champion_count": len(champions[:10]),
+        "weak_count": len(weak[:10])
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_HOF_FILE,
+        result
+    )
+
+    return result
+
 def calculate_ai_master_score_accuracy():
 
     perf = _load_json(
@@ -11550,6 +11635,82 @@ async def cmd_ai_master_rank(
         "\n".join(lines)
     )
 
+async def cmd_ai_master_hof(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    data = build_ai_master_hof()
+
+    if not isinstance(data, dict):
+
+        await update.message.reply_text(
+            "AI MASTER HOF verisi yok."
+        )
+        return
+
+    champions = data.get(
+        "champions",
+        []
+    )
+
+    weak = data.get(
+        "weak",
+        []
+    )
+
+    if not isinstance(champions, list):
+        champions = []
+
+    if not isinstance(weak, list):
+        weak = []
+
+    lines = [
+        "TAIPO AI MASTER HOF",
+        "",
+        f"Şampiyon: {len(champions)}",
+        f"Zayıf: {len(weak)}",
+        "",
+        "🏆 Şampiyonlar:"
+    ]
+
+    if not champions:
+        lines.append(
+            "Henüz Master şampiyon yok."
+        )
+
+    else:
+        for i, item in enumerate(champions, 1):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+                f" | Rank: {safe_float(item.get('rank_score'), 0.0):.2f}"
+                f" | Count: {int(safe_float(item.get('count'), 0))}"
+            )
+
+    lines.append("")
+    lines.append(
+        "⚠️ Zayıf Liste:"
+    )
+
+    if not weak:
+        lines.append(
+            "Henüz Master zayıf veri yok."
+        )
+
+    else:
+        for i, item in enumerate(weak, 1):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+                f" | Rank: {safe_float(item.get('rank_score'), 0.0):.2f}"
+                f" | Count: {int(safe_float(item.get('count'), 0))}"
+            )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_master_accuracy(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -13783,6 +13944,9 @@ def main() -> None:
     app.add_handler(CommandHandler(
         "ai_master_rank",
         cmd_ai_master_rank))
+    app.add_handler(CommandHandler(
+    "ai_master_hof",
+    cmd_ai_master_hof))
     app.add_handler(CommandHandler(
     "ai_master_accuracy",
     cmd_ai_master_accuracy))
