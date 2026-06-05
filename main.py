@@ -6198,6 +6198,9 @@ async def cmd_ai_top(
 
     for sig, item in memory.items():
 
+        if not isinstance(item, dict):
+            continue
+
         weight = safe_float(item.get("weight"), 1.0)
         hit = safe_float(item.get("hit"), 0.0)
         avg = safe_float(item.get("avg"), 0.0)
@@ -6209,6 +6212,7 @@ async def cmd_ai_top(
 
         if trend == "UP":
             trend_bonus = 10.0
+
         elif trend == "DOWN":
             trend_bonus = -10.0
 
@@ -6233,9 +6237,18 @@ async def cmd_ai_top(
             "score": score,
         })
 
+    if not rows:
+        await update.message.reply_text(
+            "TAIPO AI TOP\nGeçerli AI memory kaydı yok."
+        )
+        return
+
     rows = sorted(
         rows,
-        key=lambda x: x["score"],
+        key=lambda x: x.get(
+            "score",
+            0.0
+        ),
         reverse=True
     )
 
