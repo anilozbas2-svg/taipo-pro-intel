@@ -6200,6 +6200,15 @@ async def cmd_ai_top(
 
         if not isinstance(item, dict):
             continue
+        
+        if sig in [
+            "symbols",
+            "items",
+            "count",
+            "created_at",
+            "updated_at"
+        ]:
+            continue
 
         weight = safe_float(item.get("weight"), 1.0)
         hit = safe_float(item.get("hit"), 0.0)
