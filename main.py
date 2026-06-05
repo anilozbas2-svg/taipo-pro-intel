@@ -258,6 +258,10 @@ TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_master_score_performance.json"
 )
+TAIPO_AI_MASTER_RANK_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_master_rank.json"
+)
 TAIPO_AI_TOP_PICK_LEARNING_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_top_pick_learning.json"
@@ -8185,6 +8189,190 @@ def update_ai_master_score_performance():
 
     return updated
 
+def generate_ai_master_rank():
+
+    perf = _load_json(
+        TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE
+    )
+
+    if not isinstance(perf, dict):
+        return {}
+
+    symbol_stats = {}
+
+    for day_data in perf.values():
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get(
+            "items",
+            []
+        )
+
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            stats = symbol_stats.setdefault(
+                symbol,
+                {
+                    "count": 0,
+                    "t1_hit": 0,
+                    "t3_hit": 0,
+                    "t5_hit": 0,
+                    "t1_sum": 0.0,
+                    "t3_sum": 0.0,
+                    "t5_sum": 0.0
+                }
+            )
+
+            stats["count"] += 1
+            
+            t1 = item.get("t1_pct")
+            t3 = item.get("t3_pct")
+            t5 = item.get("t5_pct")
+
+            if t1 is not None:
+
+                t1 = safe_float(
+                    t1,
+                    0.0
+                )
+
+                stats["t1_sum"] += t1
+
+                if t1 > 0:
+                    stats["t1_hit"] += 1
+
+            if t3 is not None:
+
+                t3 = safe_float(
+                    t3,
+                    0.0
+                )
+
+                stats["t3_sum"] += t3
+
+                if t3 > 0:
+                    stats["t3_hit"] += 1
+
+            if t5 is not None:
+
+                t5 = safe_float(
+                    t5,
+                    0.0
+                )
+
+                stats["t5_sum"] += t5
+
+                if t5 > 0:
+                    stats["t5_hit"] += 1
+    
+    rows = []
+
+    for symbol, stats in symbol_stats.items():
+
+        count = max(
+            1,
+            stats["count"]
+        )
+
+        t1_rate = round(
+            (stats["t1_hit"] / count) * 100,
+            2
+        )
+
+        t3_rate = round(
+            (stats["t3_hit"] / count) * 100,
+            2
+        )
+
+        t5_rate = round(
+            (stats["t5_hit"] / count) * 100,
+            2
+        )
+
+        t1_avg = round(
+            stats["t1_sum"] / count,
+            2
+        )
+
+        t3_avg = round(
+            stats["t3_sum"] / count,
+            2
+        )
+
+        t5_avg = round(
+            stats["t5_sum"] / count,
+            2
+        )
+
+        rank_score = round(
+            (
+                t1_rate * 0.20 +
+                t3_rate * 0.30 +
+                t5_rate * 0.50
+            ) +
+            (
+                t1_avg +
+                t3_avg +
+                t5_avg
+            ),
+            2
+        )
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "count": count,
+                "t1_rate": t1_rate,
+                "t3_rate": t3_rate,
+                "t5_rate": t5_rate,
+                "t1_avg": t1_avg,
+                "t3_avg": t3_avg,
+                "t5_avg": t5_avg,
+                "rank_score": rank_score
+            }
+        )
+    
+    rows = sorted(
+        rows,
+        key=lambda x: x.get(
+            "rank_score",
+            0.0
+        ),
+        reverse=True
+    )
+
+    rows = rows[:20]
+
+    result = {
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "count": len(rows),
+        "items": rows
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_MASTER_RANK_FILE,
+        result
+    )
+
+    return result
+    
 def calculate_ai_master_score_accuracy():
 
     perf = _load_json(
@@ -11279,6 +11467,76 @@ async def cmd_ai_master_score(
         "\n".join(lines)
     )
 
+async def cmd_ai_master_rank(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    data = generate_ai_master_rank()
+
+    if not isinstance(data, dict):
+
+        await update.message.reply_text(
+            "AI MASTER RANK verisi yok."
+        )
+        return
+
+    items = data.get(
+        "items",
+        []
+    )
+
+    if not isinstance(items, list):
+        items = []
+
+    lines = [
+        "TAIPO AI MASTER RANK",
+        "",
+        f"Aday Sayısı: {len(items)}",
+        ""
+    ]
+    
+    if not items:
+        lines.append(
+            "Henüz MASTER RANK verisi yok."
+        )
+
+    else:
+        for i, item in enumerate(items, 1):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+            )
+
+            lines.append(
+                f"Rank Score: {safe_float(item.get('rank_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Count: {int(safe_float(item.get('count'), 0))}"
+            )
+
+            lines.append(
+                f"T1: %{safe_float(item.get('t1_rate'), 0.0):.1f} "
+                f"| Avg: {safe_float(item.get('t1_avg'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"T3: %{safe_float(item.get('t3_rate'), 0.0):.1f} "
+                f"| Avg: {safe_float(item.get('t3_avg'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"T5: %{safe_float(item.get('t5_rate'), 0.0):.1f} "
+                f"| Avg: {safe_float(item.get('t5_avg'), 0.0):.2f}"
+            )
+
+            lines.append("")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_master_accuracy(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -13509,6 +13767,9 @@ def main() -> None:
     "ai_top_pick_rank", cmd_ai_top_pick_rank))
     app.add_handler(CommandHandler(
     "ai_master_score", cmd_ai_master_score))
+    app.add_handler(CommandHandler(
+        "ai_master_rank",
+        cmd_ai_master_rank))
     app.add_handler(CommandHandler(
     "ai_master_accuracy",
     cmd_ai_master_accuracy))
