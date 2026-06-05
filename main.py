@@ -8088,6 +8088,7 @@ def update_ai_master_score_performance():
             continue
 
         rows = []
+        changed = False
 
         future_days = [
             d for d in perf_days
@@ -8151,6 +8152,8 @@ def update_ai_master_score_performance():
                         ),
                         2
                     )
+
+                    changed = True
                     break
 
             rows.append(row)
@@ -8167,7 +8170,8 @@ def update_ai_master_score_performance():
             )
         }
 
-        updated += 1
+        if changed:
+            updated += 1
 
     _atomic_write_json(
         TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE,
@@ -8175,6 +8179,222 @@ def update_ai_master_score_performance():
     )
 
     return updated
+
+def calculate_ai_master_score_accuracy():
+
+    perf = _load_json(
+        TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE
+    )
+
+    if not isinstance(perf, dict):
+        return {
+            "total": 0,
+            "t1_total": 0,
+            "t1_success": 0,
+            "t1_rate": 0.0,
+            "t3_total": 0,
+            "t3_success": 0,
+            "t3_rate": 0.0,
+            "t5_total": 0,
+            "t5_success": 0,
+            "t5_rate": 0.0,
+            "symbols": []
+        }
+
+    total = 0
+
+    t1_total = 0
+    t1_success = 0
+
+    t3_total = 0
+    t3_success = 0
+
+    t5_total = 0
+    t5_success = 0
+
+    symbol_map = {}
+
+    for day, day_data in perf.items():
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get(
+            "items",
+            []
+        )
+
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            total += 1
+
+            if symbol not in symbol_map:
+                symbol_map[symbol] = {
+                    "symbol": symbol,
+                    "total": 0,
+                    "success": 0,
+                    "t1_values": [],
+                    "t3_values": [],
+                    "t5_values": []
+                }
+
+            symbol_map[symbol]["total"] += 1
+
+            t1 = item.get("t1_pct")
+            t3 = item.get("t3_pct")
+            t5 = item.get("t5_pct")
+
+            if t1 is not None:
+
+                t1_value = safe_float(
+                    t1,
+                    0.0
+                )
+
+                t1_total += 1
+                symbol_map[symbol]["t1_values"].append(
+                    t1_value
+                )
+
+                if t1_value > 0:
+                    t1_success += 1
+                    symbol_map[symbol]["success"] += 1
+
+            if t3 is not None:
+
+                t3_value = safe_float(
+                    t3,
+                    0.0
+                )
+
+                t3_total += 1
+                symbol_map[symbol]["t3_values"].append(
+                    t3_value
+                )
+
+                if t3_value > 0:
+                    t3_success += 1
+                    symbol_map[symbol]["success"] += 1
+
+            if t5 is not None:
+
+                t5_value = safe_float(
+                    t5,
+                    0.0
+                )
+
+                t5_total += 1
+                symbol_map[symbol]["t5_values"].append(
+                    t5_value
+                )
+
+                if t5_value > 0:
+                    t5_success += 1
+                    symbol_map[symbol]["success"] += 1
+
+    symbols = []
+
+    for symbol, item in symbol_map.items():
+
+        total_checks = (
+            len(item.get("t1_values", []))
+            + len(item.get("t3_values", []))
+            + len(item.get("t5_values", []))
+        )
+
+        success_rate = 0.0
+
+        if total_checks > 0:
+            success_rate = (
+                item.get("success", 0)
+                / total_checks
+            ) * 100.0
+
+        t1_values = item.get("t1_values", [])
+        t3_values = item.get("t3_values", [])
+        t5_values = item.get("t5_values", [])
+
+        avg_t1 = (
+            sum(t1_values) / len(t1_values)
+            if t1_values else 0.0
+        )
+
+        avg_t3 = (
+            sum(t3_values) / len(t3_values)
+            if t3_values else 0.0
+        )
+
+        avg_t5 = (
+            sum(t5_values) / len(t5_values)
+            if t5_values else 0.0
+        )
+
+        symbols.append({
+            "symbol": symbol,
+            "total": item.get("total", 0),
+            "success_rate": round(
+                success_rate,
+                1
+            ),
+            "avg_t1": round(
+                avg_t1,
+                2
+            ),
+            "avg_t3": round(
+                avg_t3,
+                2
+            ),
+            "avg_t5": round(
+                avg_t5,
+                2
+            )
+        })
+
+    symbols = sorted(
+        symbols,
+        key=lambda x: (
+            x.get("success_rate", 0.0),
+            x.get("avg_t5", 0.0),
+            x.get("avg_t3", 0.0)
+        ),
+        reverse=True
+    )
+
+    return {
+        "total": total,
+        "t1_total": t1_total,
+        "t1_success": t1_success,
+        "t1_rate": round(
+            (t1_success / t1_total) * 100.0,
+            1
+        ) if t1_total else 0.0,
+        "t3_total": t3_total,
+        "t3_success": t3_success,
+        "t3_rate": round(
+            (t3_success / t3_total) * 100.0,
+            1
+        ) if t3_total else 0.0,
+        "t5_total": t5_total,
+        "t5_success": t5_success,
+        "t5_rate": round(
+            (t5_success / t5_total) * 100.0,
+            1
+        ) if t5_total else 0.0,
+        "symbols": symbols
+    }
 
 def save_ai_top_pick_learning(data):
 
@@ -10926,6 +11146,91 @@ async def cmd_ai_master_score(
         "\n".join(lines)
     )
 
+async def cmd_ai_master_accuracy(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    accuracy = calculate_ai_master_score_accuracy()
+
+    symbols = accuracy.get(
+        "symbols",
+        []
+    )
+
+    lines = [
+        "TAIPO AI MASTER ACCURACY",
+        "",
+        f"Toplam Master Pick: {accuracy.get('total', 0)}",
+        "",
+        "Genel başarı:",
+        f"T1: %{safe_float(accuracy.get('t1_rate'), 0.0):.1f} "
+        f"({accuracy.get('t1_success', 0)}/{accuracy.get('t1_total', 0)})",
+        f"T3: %{safe_float(accuracy.get('t3_rate'), 0.0):.1f} "
+        f"({accuracy.get('t3_success', 0)}/{accuracy.get('t3_total', 0)})",
+        f"T5: %{safe_float(accuracy.get('t5_rate'), 0.0):.1f} "
+        f"({accuracy.get('t5_success', 0)}/{accuracy.get('t5_total', 0)})",
+        "",
+        "En güçlü Master sembolleri:"
+    ]
+
+    top_symbols = symbols[:8]
+
+    if not top_symbols:
+
+        lines.append(
+            "Henüz ölçülmüş Master Score verisi yok."
+        )
+
+    else:
+
+        for i, item in enumerate(
+            top_symbols,
+            1
+        ):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+                f" | Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f}"
+                f" | T1: %{safe_float(item.get('avg_t1'), 0.0):.2f}"
+                f" | T3: %{safe_float(item.get('avg_t3'), 0.0):.2f}"
+                f" | T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
+            )
+
+    weakest_symbols = list(
+        reversed(symbols[-5:])
+    )
+
+    lines.append("")
+    lines.append(
+        "Zayıf Master sembolleri:"
+    )
+
+    if not weakest_symbols:
+
+        lines.append(
+            "Henüz zayıf Master verisi yok."
+        )
+
+    else:
+
+        for i, item in enumerate(
+            weakest_symbols,
+            1
+        ):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+                f" | Başarı: %{safe_float(item.get('success_rate'), 0.0):.1f}"
+                f" | T1: %{safe_float(item.get('avg_t1'), 0.0):.2f}"
+                f" | T3: %{safe_float(item.get('avg_t3'), 0.0):.2f}"
+                f" | T5: %{safe_float(item.get('avg_t5'), 0.0):.2f}"
+            )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_hof(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -13071,6 +13376,9 @@ def main() -> None:
     "ai_top_pick_rank", cmd_ai_top_pick_rank))
     app.add_handler(CommandHandler(
     "ai_master_score", cmd_ai_master_score))
+    app.add_handler(CommandHandler(
+    "ai_master_accuracy",
+    cmd_ai_master_accuracy))
     app.add_handler(CommandHandler("ai_hof", cmd_ai_hof))
     app.add_handler(CommandHandler("ai_ensemble", cmd_ai_ensemble))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
