@@ -250,6 +250,10 @@ TAIPO_AI_TOP_PICK_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_top_pick.json"
 )
+TAIPO_AI_MASTER_SCORE_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_master_score.json"
+)
 TAIPO_AI_TOP_PICK_LEARNING_FILE = os.path.join(
     DATA_DIR,
     "taipo_ai_top_pick_learning.json"
@@ -7619,6 +7623,348 @@ def generate_ai_top_pick():
 
     return result
 
+def generate_ai_master_score():
+
+    ensemble_data = generate_ai_ensemble()
+    pick_data = generate_ai_pick()
+    top_pick_data = generate_ai_top_pick()
+
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    hof = build_ai_hall_of_fame()
+
+    top_pick_rank = calculate_ai_top_pick_rank()
+
+    if not isinstance(ensemble_data, dict):
+        return None
+
+    if not isinstance(pick_data, dict):
+        return None
+
+    if not isinstance(top_pick_data, dict):
+        return None
+
+    if not isinstance(symbol_memory, dict):
+        symbol_memory = {}
+
+    if not isinstance(hof, dict):
+        hof = {}
+
+    if not isinstance(top_pick_rank, list):
+        top_pick_rank = []
+
+    ensemble_items = ensemble_data.get(
+        "items",
+        []
+    )
+
+    pick_items = pick_data.get(
+        "candidates",
+        []
+    )
+
+    top_pick_items = top_pick_data.get(
+        "items",
+        []
+    )
+
+    if not isinstance(ensemble_items, list):
+        ensemble_items = []
+
+    if not isinstance(pick_items, list):
+        pick_items = []
+
+    if not isinstance(top_pick_items, list):
+        top_pick_items = []
+
+    pool = {}
+    
+    def ensure_symbol(symbol):
+
+        if symbol not in pool:
+            pool[symbol] = {
+                "symbol": symbol,
+                "ensemble_score": 0.0,
+                "ensemble_confidence": 0.0,
+                "ensemble_votes": 0,
+                "pick_score": 0.0,
+                "pick_confidence": 0.0,
+                "top_pick_score": 0.0,
+                "top_pick_confidence": 0.0,
+                "rank_score": 0.0,
+                "symbol_weight": 1.0,
+                "hof_bonus": 0.0,
+                "penalty": 0.0
+            }
+
+        return pool[symbol]
+
+    for item in ensemble_items:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if not symbol:
+            continue
+
+        row = ensure_symbol(symbol)
+
+        row["ensemble_score"] = safe_float(
+            item.get("total_score"),
+            0.0
+        )
+
+        row["ensemble_confidence"] = safe_float(
+            item.get("confidence"),
+            0.0
+        )
+
+        row["ensemble_votes"] = int(
+            safe_float(
+                item.get("count"),
+                0
+            )
+        )
+        
+    for item in pick_items:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if not symbol:
+            continue
+
+        row = ensure_symbol(symbol)
+
+        row["pick_score"] = safe_float(
+            item.get("ai_score"),
+            0.0
+        )
+
+        row["pick_confidence"] = min(
+            100.0,
+            max(
+                0.0,
+                safe_float(
+                    item.get("ai_score"),
+                    0.0
+                ) * 6.0
+            )
+        )
+
+    for item in top_pick_items:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if not symbol:
+            continue
+
+        row = ensure_symbol(symbol)
+
+        row["top_pick_score"] = safe_float(
+            item.get("top_score"),
+            0.0
+        )
+
+        row["top_pick_confidence"] = safe_float(
+            item.get("confidence"),
+            0.0
+        )
+    
+    champions = hof.get(
+        "champions",
+        []
+    )
+
+    losers = hof.get(
+        "losers",
+        []
+    )
+
+    champion_symbols = set()
+    loser_symbols = set()
+
+    if isinstance(champions, list):
+        for item in champions:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get("symbol", "")
+            ).strip()
+
+            if symbol:
+                champion_symbols.add(symbol)
+
+    if isinstance(losers, list):
+        for item in losers:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get("symbol", "")
+            ).strip()
+
+            if symbol:
+                loser_symbols.add(symbol)
+
+    rank_map = {}
+
+    for item in top_pick_rank:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "")
+        ).strip()
+
+        if not symbol:
+            continue
+
+        rank_map[symbol] = item
+
+    for symbol, row in pool.items():
+
+        symbol_item = symbol_memory.get(
+            symbol,
+            {}
+        )
+
+        if not isinstance(symbol_item, dict):
+            symbol_item = {}
+
+        row["symbol_weight"] = safe_float(
+            symbol_item.get("weight"),
+            1.0
+        )
+
+        if symbol in champion_symbols:
+            row["hof_bonus"] = 5.0
+
+        if symbol in loser_symbols:
+            row["penalty"] = 5.0
+
+        rank_item = rank_map.get(
+            symbol,
+            {}
+        )
+
+        if not isinstance(rank_item, dict):
+            rank_item = {}
+
+        row["rank_score"] = safe_float(
+            rank_item.get("rank_score"),
+            0.0
+        )
+    
+    rows = []
+
+    for symbol, row in pool.items():
+
+        master_score = (
+            safe_float(
+                row.get("ensemble_score"),
+                0.0
+            ) * 1.20
+            +
+            safe_float(
+                row.get("pick_score"),
+                0.0
+            ) * 1.40
+            +
+            safe_float(
+                row.get("top_pick_score"),
+                0.0
+            ) * 1.60
+            +
+            safe_float(
+                row.get("rank_score"),
+                0.0
+            ) * 1.80
+            +
+            safe_float(
+                row.get("hof_bonus"),
+                0.0
+            )
+            -
+            safe_float(
+                row.get("penalty"),
+                0.0
+            )
+        )
+
+        master_score = (
+            master_score
+            *
+            safe_float(
+                row.get(
+                    "symbol_weight",
+                    1.0
+                ),
+                1.0
+            )
+        )
+
+        row["master_score"] = round(
+            master_score,
+            2
+        )
+
+        row["master_confidence"] = round(
+            min(
+                100.0,
+                max(
+                    0.0,
+                    master_score
+                )
+            ),
+            1
+        )
+
+        rows.append(row)
+
+    rows = sorted(
+        rows,
+        key=lambda x: x.get(
+            "master_score",
+            0.0
+        ),
+        reverse=True
+    )[:10]
+    
+    result = {
+        "created_at": datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "items": rows,
+        "count": len(rows)
+    }
+
+    _atomic_write_json(
+        TAIPO_AI_MASTER_SCORE_FILE,
+        result
+    )
+
+    return result
+
 def save_ai_top_pick_learning(data):
 
     if not isinstance(data, dict):
@@ -10286,6 +10632,89 @@ async def cmd_ai_top_pick_rank(
         "\n".join(lines)
     )
 
+async def cmd_ai_master_score(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    data = generate_ai_master_score()
+
+    if not isinstance(data, dict):
+
+        await update.message.reply_text(
+            "AI MASTER SCORE verisi yok."
+        )
+        return
+
+    items = data.get(
+        "items",
+        []
+    )
+
+    if not isinstance(items, list):
+        items = []
+
+    lines = [
+        "TAIPO AI MASTER SCORE",
+        "",
+        f"Aday Sayısı: {len(items)}",
+        ""
+    ]
+    
+    if not items:
+        lines.append(
+            "Henüz MASTER SCORE adayı yok."
+        )
+
+    else:
+        for i, item in enumerate(items, 1):
+
+            lines.append(
+                f"{i}) {item.get('symbol', '-')}"
+            )
+
+            lines.append(
+                f"Master Score: {safe_float(item.get('master_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Confidence: %{safe_float(item.get('master_confidence'), 0.0):.1f}"
+            )
+
+            lines.append(
+                f"Ensemble: {safe_float(item.get('ensemble_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Pick: {safe_float(item.get('pick_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Top Pick: {safe_float(item.get('top_pick_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Rank: {safe_float(item.get('rank_score'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Weight: {safe_float(item.get('symbol_weight'), 1.0):.2f}"
+            )
+
+            lines.append(
+                f"HOF Bonus: {safe_float(item.get('hof_bonus'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Penalty: {safe_float(item.get('penalty'), 0.0):.2f}"
+            )
+
+            lines.append("")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_hof(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -12429,6 +12858,8 @@ def main() -> None:
     "ai_top_pick", cmd_ai_top_pick))
     app.add_handler(CommandHandler(
     "ai_top_pick_rank", cmd_ai_top_pick_rank))
+    app.add_handler(CommandHandler(
+    "ai_master_score", cmd_ai_master_score))
     app.add_handler(CommandHandler("ai_hof", cmd_ai_hof))
     app.add_handler(CommandHandler("ai_ensemble", cmd_ai_ensemble))
     app.add_handler(CommandHandler("ai_memory", cmd_ai_memory))
