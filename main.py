@@ -5148,6 +5148,18 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     master_score_perf_count = (
         update_ai_master_score_performance()
     )
+    
+    master_rank_data = generate_ai_master_rank()
+
+    master_rank_count = 0
+
+    if isinstance(master_rank_data, dict):
+        master_rank_count = len(
+            master_rank_data.get(
+                "items",
+                []
+            )
+        )
 
     decision_learn_count = (
         evolve_ai_from_decision_performance()
@@ -5183,6 +5195,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Top Pick ölçüm: {top_pick_perf_count}\n"
         f"AI Master Score ölçüm: {master_score_perf_count}\n"
         f"AI Master öğrenme: {master_learn_count}\n"
+        f"AI Master Rank: {master_rank_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
     )
