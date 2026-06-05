@@ -5153,6 +5153,10 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         evolve_ai_from_top_pick_performance()
     )
     
+    master_learn_count = (
+        evolve_ai_from_master_score_performance()
+    )
+    
     symbol_tune_count = (
         evolve_symbol_weights_from_top_pick()
     )
@@ -5174,6 +5178,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"AI Symbol Tune: {symbol_tune_count}\n"
         f"AI Top Pick ölçüm: {top_pick_perf_count}\n"
         f"AI Master Score ölçüm: {master_score_perf_count}\n"
+        f"AI Master öğrenme: {master_learn_count}\n"
         f"AI Decision öğrenme: {decision_learn_count}\n"
         f"AI Universe öğrenme: {universe_learn_count}"
     )
@@ -8395,6 +8400,134 @@ def calculate_ai_master_score_accuracy():
         ) if t5_total else 0.0,
         "symbols": symbols
     }
+
+def evolve_ai_from_master_score_performance():
+
+    perf = _load_json(
+        TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE
+    )
+
+    symbol_memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(perf, dict):
+        return 0
+
+    if not isinstance(symbol_memory, dict):
+        symbol_memory = {}
+
+    updated = 0
+
+    for day, day_data in perf.items():
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get(
+            "items",
+            []
+        )
+
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            t1 = safe_float(
+                item.get("t1_pct"),
+                0.0
+            )
+
+            t3 = safe_float(
+                item.get("t3_pct"),
+                0.0
+            )
+
+            t5 = safe_float(
+                item.get("t5_pct"),
+                0.0
+            )
+
+            score = (
+                t1 * 0.30
+                + t3 * 0.30
+                + t5 * 0.40
+            )
+
+            symbol_item = symbol_memory.get(
+                symbol,
+                {}
+            )
+
+            if not isinstance(symbol_item, dict):
+                symbol_item = {}
+
+            old_weight = safe_float(
+                symbol_item.get("weight"),
+                1.0
+            )
+
+            adjustment = 0.0
+
+            if score >= 8.0:
+                adjustment = 0.05
+
+            elif score <= -3.0:
+                adjustment = -0.05
+
+            if adjustment == 0.0:
+                continue
+
+            new_weight = old_weight + adjustment
+
+            new_weight = max(
+                0.50,
+                min(
+                    1.75,
+                    new_weight
+                )
+            )
+
+            symbol_item["weight"] = round(
+                new_weight,
+                3
+            )
+
+            symbol_item["master_last_score"] = round(
+                score,
+                2
+            )
+
+            symbol_item["master_last_adjustment"] = round(
+                adjustment,
+                3
+            )
+
+            symbol_item["master_weight_update"] = datetime.now(TZ).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            symbol_memory[symbol] = symbol_item
+
+            updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE,
+        symbol_memory
+    )
+
+    return updated
 
 def save_ai_top_pick_learning(data):
 
