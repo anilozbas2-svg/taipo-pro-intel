@@ -7616,6 +7616,10 @@ def generate_ai_top_pick():
         elif votes == 1:
             vote_bonus = 2.0
 
+        master_hof_bonus = get_master_hof_bonus(
+            symbol
+        )
+        
         top_score = (
             safe_float(item.get("ensemble_score"), 0.0) * 1.40
             + safe_float(item.get("ensemble_confidence"), 0.0) * 0.35
@@ -7624,10 +7628,15 @@ def generate_ai_top_pick():
             + vote_bonus
             + hof_bonus
             + top_pick_memory_bonus
+            + master_hof_bonus
             - penalty
         ) * symbol_weight
 
         item["vote_bonus"] = vote_bonus
+        item["master_hof_bonus"] = round(
+            master_hof_bonus,
+            2
+        )
         item["top_score"] = round(
             top_score,
             2
