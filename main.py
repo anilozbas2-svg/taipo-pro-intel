@@ -8596,6 +8596,17 @@ def generate_ai_master_rank():
             "failed_rate": failed_rate,
             "signal_types": signal_types,
             "dominant_signal": dominant_signal,
+            "dominant_signal_count": (
+                signal_types.get(
+                    dominant_signal,
+                    0
+                )
+                if isinstance(
+                    signal_types,
+                    dict
+                )
+                else 0
+            ),
             "rank_score": rank_score
         })
 
@@ -11998,6 +12009,10 @@ async def cmd_ai_master_rank(
             lines.append(
                 f"Signal: {item.get('dominant_signal', '-')}"
             )
+            
+            lines.append(
+                    f"Signal Count: {int(safe_float(item.get('dominant_signal_count'), 0))}"
+                )
 
             lines.append(
                 f"Count: {int(safe_float(item.get('count'), 0))}"
