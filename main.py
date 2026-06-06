@@ -8669,18 +8669,24 @@ def calculate_ai_master_score_accuracy():
         if not isinstance(day_data, dict):
             continue
 
-        items = day_data.get(
-            "items",
-            []
-        )
+        if day_data.get("symbol"):
+            items = [
+                day_data
+            ]
 
-        if not isinstance(items, list):
-            items = []
-
-        if not items:
-            items = list(
-                day_data.values()
+        else:
+            items = day_data.get(
+                "items",
+                []
             )
+
+            if not isinstance(items, list):
+                items = []
+
+            if not items:
+                items = list(
+                    day_data.values()
+                )
 
         for item in items:
 
