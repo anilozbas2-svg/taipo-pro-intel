@@ -8330,6 +8330,14 @@ def generate_ai_master_rank():
 
     if not isinstance(perf, dict):
         return {}
+    
+    if not perf:
+        perf = _load_json(
+            TAIPO_SIGNAL_PERFORMANCE_FILE
+        )
+
+    if not isinstance(perf, dict):
+        return {}
 
     symbol_stats = {}
 
@@ -8373,9 +8381,9 @@ def generate_ai_master_rank():
 
             stats["count"] += 1
             
-            t1 = item.get("t1_pct")
-            t3 = item.get("t3_pct")
-            t5 = item.get("t5_pct")
+            t1 = item.get("t1")
+            t3 = item.get("t3")
+            t5 = item.get("t5")
 
             if t1 is not None:
 
@@ -8490,6 +8498,11 @@ def generate_ai_master_rank():
     )
 
     rows = rows[:20]
+    
+    logger.info(
+        "AI MASTER RANK generated: %s symbols",
+        len(rows)
+    )
 
     result = {
         "created_at": datetime.now(TZ).strftime(
@@ -8655,7 +8668,12 @@ def calculate_ai_master_score_accuracy():
         )
 
         if not isinstance(items, list):
-            continue
+            items = []
+
+        if not items:
+            items = list(
+                day_data.values()
+            )
 
         for item in items:
 
