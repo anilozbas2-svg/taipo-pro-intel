@@ -8358,6 +8358,11 @@ def generate_ai_master_rank():
 
         if not isinstance(source, dict):
             continue
+            
+            logger.info(
+                "MASTER RANK SAMPLE ITEM: %s",
+                item
+            )
 
         for item in walk_records(source):
 
