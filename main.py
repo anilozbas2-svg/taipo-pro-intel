@@ -6369,16 +6369,61 @@ async def cmd_ai_memory(
     rows = []
 
     for sig, item in memory.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        if sig in [
+            "symbols",
+            "items",
+            "count",
+            "created_at",
+            "updated_at"
+        ]:
+            continue
+
         rows.append({
             "signal_type": sig,
-            "weight": safe_float(item.get("weight"), 1.0),
-            "prev_weight": safe_float(item.get("prev_weight"), 1.0),
-            "trend": str(item.get("trend", "STABLE")),
-            "hit": safe_float(item.get("hit"), 0.0),
-            "avg": safe_float(item.get("avg"), 0.0),
-            "total": int(safe_float(item.get("total"), 0)),
-            "market_mode": str(item.get("market_mode", "UNKNOWN")),
-            "updated_at": str(item.get("updated_at", "-")),
+            "weight": safe_float(
+                item.get("weight"),
+                1.0
+            ),
+            "prev_weight": safe_float(
+                item.get("prev_weight"),
+                1.0
+            ),
+            "trend": str(
+                item.get(
+                    "trend",
+                    "STABLE"
+                )
+            ),
+            "hit": safe_float(
+                item.get("hit"),
+                0.0
+            ),
+            "avg": safe_float(
+                item.get("avg"),
+                0.0
+            ),
+            "total": int(
+                safe_float(
+                    item.get("total"),
+                    0
+                )
+            ),
+            "market_mode": str(
+                item.get(
+                    "market_mode",
+                    "UNKNOWN"
+                )
+            ),
+            "updated_at": str(
+                item.get(
+                    "updated_at",
+                    "-"
+                )
+            ),
         })
 
     rows = sorted(
