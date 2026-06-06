@@ -8390,6 +8390,13 @@ def generate_ai_master_rank():
             )
 
             stats["count"] += 1
+            
+            if stats["count"] == 1:
+                logger.info(
+                    "MASTER ITEM FIELDS %s = %s",
+                    symbol,
+                    item
+                )
 
             t1 = item.get(
                 "t1",
