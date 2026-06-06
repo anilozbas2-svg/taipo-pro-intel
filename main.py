@@ -6285,6 +6285,20 @@ async def cmd_ai_top(
     )
 
     top = rows[0]
+    
+    ai_badge = "⚪ TAKİP"
+
+    if safe_float(top.get("score"), 0.0) >= 30:
+        ai_badge = "🥇 ELİT"
+
+    elif safe_float(top.get("score"), 0.0) >= 20:
+        ai_badge = "🥈 GÜÇLÜ"
+
+    elif safe_float(top.get("score"), 0.0) >= 10:
+        ai_badge = "🥉 ORTA"
+
+    else:
+        ai_badge = "⚠️ ZAYIF"
 
     decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
 
@@ -6333,6 +6347,7 @@ async def cmd_ai_top(
         top["signal_type"],
         "",
         f"AI Skor: {top['score']:.2f}",
+        f"Badge: {ai_badge}",
         f"Weight: {top['weight']:.2f}",
         f"Hit: %{top['hit']:.1f}",
         f"AI Güven: %{top['confidence']:.1f}",
