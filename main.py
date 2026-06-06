@@ -8533,6 +8533,24 @@ def generate_ai_master_rank():
             ) * 100,
             2
         )
+        
+        signal_bonus = 0.0
+
+        signal_types = stats.get(
+            "signal_types",
+            {}
+        )
+
+        if isinstance(signal_types, dict):
+
+            if signal_types.get("KÂR KORUMA", 0) > 0:
+                signal_bonus += 2.0
+
+            if signal_types.get("REBOUND WATCH", 0) > 0:
+                signal_bonus += 1.5
+
+            if signal_types.get("AYRIŞMA", 0) > 0:
+                signal_bonus += 1.0
 
         rank_score = round(
             (
@@ -8547,6 +8565,7 @@ def generate_ai_master_rank():
             + t5_avg
             + (best_day_avg * 2.0)
             + (follow_days_avg * 0.50),
+            + signal_bonus,
             2
         )
 
@@ -8563,6 +8582,7 @@ def generate_ai_master_rank():
             "follow_days_avg": follow_days_avg,
             "success_rate": success_rate,
             "failed_rate": failed_rate,
+            "signal_types": signal_types,
             "rank_score": rank_score
         })
 
