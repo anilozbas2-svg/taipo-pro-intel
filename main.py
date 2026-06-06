@@ -6233,6 +6233,23 @@ async def cmd_ai_top(
             + avg * 5
             + trend_bonus
         )
+        
+        confidence = (
+            weight * 35
+            + hit * 0.45
+            + max(
+                0.0,
+                avg
+            ) * 5
+        )
+
+        confidence = max(
+            0.0,
+            min(
+                100.0,
+                confidence
+            )
+        )
 
         if total < 5:
             score *= 0.75
@@ -6246,6 +6263,10 @@ async def cmd_ai_top(
             "trend": trend,
             "market_mode": market_mode,
             "score": score,
+            "confidence": round(
+                confidence,
+                1
+            ),
         })
 
     if not rows:
@@ -6314,6 +6335,7 @@ async def cmd_ai_top(
         f"AI Skor: {top['score']:.2f}",
         f"Weight: {top['weight']:.2f}",
         f"Hit: %{top['hit']:.1f}",
+        f"AI Güven: %{top['confidence']:.1f}",
         f"Avg: %{top['avg']:.2f}",
         f"Trend: {top['trend']}",
         f"Market mode: {top['market_mode']}",
@@ -6324,7 +6346,7 @@ async def cmd_ai_top(
 
     for r in rows[:5]:
         lines.append(
-            f"{r['signal_type']} | AI {r['score']:.2f} | W {r['weight']:.2f} | {r['trend']}"
+            f"{r['signal_type']} | AI {r['score']:.2f} | G {r['confidence']:.1f} | W {r['weight']:.2f} | {r['trend']}"
         )
 
     await update.message.reply_text(
