@@ -8564,7 +8564,7 @@ def generate_ai_master_rank():
             + t3_avg
             + t5_avg
             + (best_day_avg * 2.0)
-            + (follow_days_avg * 0.50),
+            + (follow_days_avg * 0.50)
             + signal_bonus,
             2
         )
