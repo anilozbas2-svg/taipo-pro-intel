@@ -11965,6 +11965,18 @@ async def cmd_ai_master_rank(
             lines.append(
                 f"Count: {int(safe_float(item.get('count'), 0))}"
             )
+            
+            lines.append(
+                f"Best Day Avg: {safe_float(item.get('best_day_avg'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Follow Avg: {safe_float(item.get('follow_days_avg'), 0.0):.2f}"
+            )
+
+            lines.append(
+                f"Success: %{safe_float(item.get('success_rate'), 0.0):.1f} | Failed: %{safe_float(item.get('failed_rate'), 0.0):.1f}"
+            )
 
             lines.append(
                 f"T1: %{safe_float(item.get('t1_rate'), 0.0):.1f} "
