@@ -8331,7 +8331,14 @@ def generate_ai_master_rank():
     if not isinstance(perf, dict):
         return {}
     
-    if not perf:
+    if (
+        not perf
+        or (
+            isinstance(perf, dict)
+            and "items" in perf
+            and not perf.get("items")
+        )
+    ):
         perf = _load_json(
             TAIPO_SIGNAL_PERFORMANCE_FILE
         )
