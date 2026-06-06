@@ -8380,8 +8380,57 @@ def generate_ai_master_rank():
                     "t5_hit": 0,
                     "t1_sum": 0.0,
                     "t3_sum": 0.0,
-                    "t5_sum": 0.0
+                    "t5_sum": 0.0,
+                    "best_day_sum": 0.0,
+                    "follow_days_sum": 0.0,
+                    "success_count": 0,
+                    "failed_count": 0,
+                    "flat_count": 0,
+                    "signal_types": {}
                 }
+            )
+            
+            best_day = safe_float(
+                item.get("best_day"),
+                0.0
+            )
+
+            follow_days = safe_float(
+                item.get("follow_days"),
+                0.0
+            )
+
+            status = str(
+                item.get("status", "FLAT")
+            ).upper()
+
+            signal_type = str(
+                item.get(
+                    "signal_type",
+                    "UNKNOWN"
+                )
+            )
+
+            stats["best_day_sum"] += best_day
+            stats["follow_days_sum"] += follow_days
+
+            if status == "SUCCESS":
+                stats["success_count"] += 1
+
+            elif status == "FAILED":
+                stats["failed_count"] += 1
+
+            else:
+                stats["flat_count"] += 1
+
+            stats["signal_types"][
+                signal_type
+            ] = (
+                stats["signal_types"].get(
+                    signal_type,
+                    0
+                )
+                + 1
             )
 
             stats["count"] += 1
@@ -8460,16 +8509,44 @@ def generate_ai_master_rank():
             stats["t5_sum"] / count,
             2
         )
+        
+        best_day_avg = round(
+            stats["best_day_sum"] / count,
+            2
+        )
+
+        follow_days_avg = round(
+            stats["follow_days_sum"] / count,
+            2
+        )
+
+        success_rate = round(
+            (
+                stats["success_count"] / count
+            ) * 100,
+            2
+        )
+
+        failed_rate = round(
+            (
+                stats["failed_count"] / count
+            ) * 100,
+            2
+        )
 
         rank_score = round(
             (
-                t1_rate * 0.20
-                + t3_rate * 0.30
-                + t5_rate * 0.50
+                t1_rate * 0.15
+                + t3_rate * 0.25
+                + t5_rate * 0.40
+                + success_rate * 0.15
+                - failed_rate * 0.05
             )
             + t1_avg
             + t3_avg
-            + t5_avg,
+            + t5_avg
+            + (best_day_avg * 2.0)
+            + (follow_days_avg * 0.50),
             2
         )
 
@@ -8482,6 +8559,10 @@ def generate_ai_master_rank():
             "t1_avg": t1_avg,
             "t3_avg": t3_avg,
             "t5_avg": t5_avg,
+            "best_day_avg": best_day_avg,
+            "follow_days_avg": follow_days_avg,
+            "success_rate": success_rate,
+            "failed_rate": failed_rate,
             "rank_score": rank_score
         })
 
