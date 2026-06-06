@@ -5421,6 +5421,8 @@ async def cmd_learner_update(
         TAIPO_SIGNAL_PERFORMANCE_FILE,
         perf
     )
+    
+    self_weight_updated = evolve_ai_self_weights()
 
     await update.message.reply_text(
         f"TAIPO LEARNER UPDATE\nGüncellendi: {updated} kayıt"
@@ -10706,6 +10708,94 @@ def evolve_ai_from_decision_performance():
     _atomic_write_json(
         TAIPO_AI_MEMORY_FILE,
         ai_memory
+    )
+
+    return updated
+
+def evolve_ai_self_weights():
+
+    memory = _load_json(
+        TAIPO_AI_MEMORY_FILE
+    )
+
+    if not isinstance(memory, dict):
+        return 0
+
+    updated = 0
+    
+    for model_name, item in memory.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        weight = safe_float(
+            item.get("weight"),
+            1.0
+        )
+
+        hit = safe_float(
+            item.get("hit"),
+            0.0
+        )
+
+        avg = safe_float(
+            item.get("avg"),
+            0.0
+        )
+
+        total = int(
+            safe_float(
+                item.get("total"),
+                0
+            )
+        )
+        
+        if total < 3:
+            continue
+
+        old_weight = weight
+        adjustment = 0.0
+
+        if hit >= 60 and avg > 0:
+            adjustment = 0.05
+
+        elif hit <= 35 or avg < -1.0:
+            adjustment = -0.05
+
+        if adjustment == 0.0:
+            continue
+
+        new_weight = old_weight + adjustment
+
+        new_weight = max(
+            0.40,
+            min(
+                1.50,
+                new_weight
+            )
+        )
+        
+    item["weight"] = round(
+            new_weight,
+            3
+        )
+
+        item["last_self_adjustment"] = round(
+            adjustment,
+            3
+        )
+
+        item["last_self_update"] = datetime.now(TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+        memory[model_name] = item
+
+        updated += 1
+    
+    _atomic_write_json(
+        TAIPO_AI_MEMORY_FILE,
+        memory
     )
 
     return updated
