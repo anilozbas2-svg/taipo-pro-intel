@@ -8324,44 +8324,42 @@ def update_ai_master_score_performance():
 
 def generate_ai_master_rank():
 
-    perf = _load_json(
-        TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE
-    )
-
-    if not isinstance(perf, dict):
-        return {}
-    
-    if (
-        not perf
-        or (
-            isinstance(perf, dict)
-            and "items" in perf
-            and not perf.get("items")
-        )
-    ):
-        perf = _load_json(
-            TAIPO_SIGNAL_PERFORMANCE_FILE
-        )
-
-    if not isinstance(perf, dict):
-        return {}
+    sources = [
+        _load_json(TAIPO_AI_MASTER_SCORE_PERFORMANCE_FILE),
+        _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
+    ]
 
     symbol_stats = {}
 
-    for day_data in perf.values():
+    def walk_records(node):
 
-        if not isinstance(day_data, dict):
+        records = []
+
+        if isinstance(node, list):
+            for x in node:
+                records.extend(
+                    walk_records(x)
+                )
+
+        elif isinstance(node, dict):
+
+            if node.get("symbol"):
+                records.append(node)
+
+            else:
+                for v in node.values():
+                    records.extend(
+                        walk_records(v)
+                    )
+
+        return records
+
+    for source in sources:
+
+        if not isinstance(source, dict):
             continue
 
-        items = day_data.get(
-            "items",
-            []
-        )
-
-        if not isinstance(items, list):
-            continue
-
-        for item in items:
+        for item in walk_records(source):
 
             if not isinstance(item, dict):
                 continue
@@ -8387,47 +8385,43 @@ def generate_ai_master_rank():
             )
 
             stats["count"] += 1
-            
-            t1 = item.get("t1")
-            t3 = item.get("t3")
-            t5 = item.get("t5")
+
+            t1 = item.get(
+                "t1",
+                item.get("t1_pct")
+            )
+
+            t3 = item.get(
+                "t3",
+                item.get("t3_pct")
+            )
+
+            t5 = item.get(
+                "t5",
+                item.get("t5_pct")
+            )
 
             if t1 is not None:
-
-                t1 = safe_float(
-                    t1,
-                    0.0
-                )
-
+                t1 = safe_float(t1, 0.0)
                 stats["t1_sum"] += t1
 
                 if t1 > 0:
                     stats["t1_hit"] += 1
 
             if t3 is not None:
-
-                t3 = safe_float(
-                    t3,
-                    0.0
-                )
-
+                t3 = safe_float(t3, 0.0)
                 stats["t3_sum"] += t3
 
                 if t3 > 0:
                     stats["t3_hit"] += 1
 
             if t5 is not None:
-
-                t5 = safe_float(
-                    t5,
-                    0.0
-                )
-
+                t5 = safe_float(t5, 0.0)
                 stats["t5_sum"] += t5
 
                 if t5 > 0:
                     stats["t5_hit"] += 1
-    
+
     rows = []
 
     for symbol, stats in symbol_stats.items():
@@ -8469,32 +8463,28 @@ def generate_ai_master_rank():
 
         rank_score = round(
             (
-                t1_rate * 0.20 +
-                t3_rate * 0.30 +
-                t5_rate * 0.50
-            ) +
-            (
-                t1_avg +
-                t3_avg +
-                t5_avg
-            ),
+                t1_rate * 0.20
+                + t3_rate * 0.30
+                + t5_rate * 0.50
+            )
+            + t1_avg
+            + t3_avg
+            + t5_avg,
             2
         )
 
-        rows.append(
-            {
-                "symbol": symbol,
-                "count": count,
-                "t1_rate": t1_rate,
-                "t3_rate": t3_rate,
-                "t5_rate": t5_rate,
-                "t1_avg": t1_avg,
-                "t3_avg": t3_avg,
-                "t5_avg": t5_avg,
-                "rank_score": rank_score
-            }
-        )
-    
+        rows.append({
+            "symbol": symbol,
+            "count": count,
+            "t1_rate": t1_rate,
+            "t3_rate": t3_rate,
+            "t5_rate": t5_rate,
+            "t1_avg": t1_avg,
+            "t3_avg": t3_avg,
+            "t5_avg": t5_avg,
+            "rank_score": rank_score
+        })
+
     rows = sorted(
         rows,
         key=lambda x: x.get(
@@ -8502,10 +8492,8 @@ def generate_ai_master_rank():
             0.0
         ),
         reverse=True
-    )
+    )[:20]
 
-    rows = rows[:20]
-    
     logger.info(
         "AI MASTER RANK generated: %s symbols",
         len(rows)
