@@ -8580,6 +8580,20 @@ def generate_ai_master_rank():
             + signal_bonus,
             2
         )
+        
+        rank_badge = "⚪ TAKİP"
+
+        if rank_score >= 15:
+            rank_badge = "🥇 ELİT"
+
+        elif rank_score >= 10:
+            rank_badge = "🥈 GÜÇLÜ"
+
+        elif rank_score >= 6:
+            rank_badge = "🥉 ORTA"
+
+        elif rank_score < 3:
+            rank_badge = "⚠️ ZAYIF"
 
         rows.append({
             "symbol": symbol,
@@ -8596,6 +8610,7 @@ def generate_ai_master_rank():
             "failed_rate": failed_rate,
             "signal_types": signal_types,
             "dominant_signal": dominant_signal,
+            "rank_badge": rank_badge,
             "dominant_signal_count": (
                 signal_types.get(
                     dominant_signal,
@@ -12004,6 +12019,10 @@ async def cmd_ai_master_rank(
 
             lines.append(
                 f"Rank Score: {safe_float(item.get('rank_score'), 0.0):.2f}"
+            )
+            
+            lines.append(
+                f"Badge: {item.get('rank_badge', '⚪ TAKİP')}"
             )
             
             lines.append(
