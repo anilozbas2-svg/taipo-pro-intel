@@ -8534,6 +8534,18 @@ def generate_ai_master_rank():
             2
         )
         
+        dominant_signal = "-"
+
+        if isinstance(
+            stats.get("signal_types"),
+            dict
+        ) and stats.get("signal_types"):
+
+            dominant_signal = max(
+                stats.get("signal_types").items(),
+                key=lambda x: x[1]
+            )[0]
+        
         signal_bonus = 0.0
 
         signal_types = stats.get(
@@ -8583,6 +8595,7 @@ def generate_ai_master_rank():
             "success_rate": success_rate,
             "failed_rate": failed_rate,
             "signal_types": signal_types,
+            "dominant_signal": dominant_signal,
             "rank_score": rank_score
         })
 
@@ -11980,6 +11993,10 @@ async def cmd_ai_master_rank(
 
             lines.append(
                 f"Rank Score: {safe_float(item.get('rank_score'), 0.0):.2f}"
+            )
+            
+            lines.append(
+                f"Signal: {item.get('dominant_signal', '-')}"
             )
 
             lines.append(
