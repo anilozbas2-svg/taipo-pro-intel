@@ -10722,10 +10722,19 @@ def evolve_ai_self_weights():
         return 0
 
     updated = 0
-    
+
     for model_name, item in memory.items():
 
         if not isinstance(item, dict):
+            continue
+
+        if model_name in [
+            "symbols",
+            "items",
+            "count",
+            "created_at",
+            "updated_at"
+        ]:
             continue
 
         weight = safe_float(
@@ -10749,7 +10758,7 @@ def evolve_ai_self_weights():
                 0
             )
         )
-        
+
         if total < 3:
             continue
 
@@ -10774,8 +10783,8 @@ def evolve_ai_self_weights():
                 new_weight
             )
         )
-        
-    item["weight"] = round(
+
+        item["weight"] = round(
             new_weight,
             3
         )
@@ -10792,7 +10801,7 @@ def evolve_ai_self_weights():
         memory[model_name] = item
 
         updated += 1
-    
+
     _atomic_write_json(
         TAIPO_AI_MEMORY_FILE,
         memory
