@@ -753,12 +753,35 @@ def update_ai_memory_from_evolve(
         trend = "STABLE"
         
         auto_action = "KEEP"
+        new_weight = weight
 
-        if hit >= 60 and avg >= 2:
+        if total >= 5 and hit >= 70 and avg >= 2:
             auto_action = "PROMOTE"
+            new_weight = min(
+                2.00,
+                weight + 0.10
+            )
 
-        elif hit <= 40 and avg <= 0:
+        elif total >= 5 and hit <= 40 and avg <= 0:
             auto_action = "DEMOTE"
+            new_weight = max(
+                0.30,
+                weight - 0.10
+            )
+
+        elif total >= 5 and hit >= 60 and avg > 0:
+            auto_action = "SOFT_PROMOTE"
+            new_weight = min(
+                2.00,
+                weight + 0.05
+            )
+
+        elif total >= 5 and hit < 45 and avg < 0:
+            auto_action = "SOFT_DEMOTE"
+            new_weight = max(
+                0.30,
+                weight - 0.05
+            )
 
         if trend_score >= 3:
             trend = "UP"
@@ -768,7 +791,7 @@ def update_ai_memory_from_evolve(
 
         memory[sig] = {
             "signal_type": sig,
-            "weight": round(weight, 2),
+            "weight": round(new_weight, 2),
             "prev_weight": round(prev_weight, 2),
             "trend": trend,
             "auto_action": auto_action,
@@ -785,7 +808,7 @@ def update_ai_memory_from_evolve(
             "trend_score": round(trend_score, 2),
             "trend": trend,
             "auto_action": auto_action,
-            "weight": round(weight, 2),
+            "weight": round(new_weight, 2),
             "prev_weight": round(prev_weight, 2),
             "hit": round(hit, 2),
             "prev_hit": round(prev_hit, 2),
