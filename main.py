@@ -6286,6 +6286,32 @@ async def cmd_ai_top(
 
     top = rows[0]
     
+    all_time_leader = rows[0].get(
+        "signal_type",
+        "-"
+    )
+
+    trend_leader = "-"
+
+    for r in rows:
+        if r.get("trend") == "UP":
+            trend_leader = r.get(
+                "signal_type",
+                "-"
+            )
+            break
+
+    confidence_leader = max(
+        rows,
+        key=lambda x: safe_float(
+            x.get("confidence"),
+            0.0
+        )
+    ).get(
+        "signal_type",
+        "-"
+    )
+    
     ai_badge = "⚪ TAKİP"
 
     if safe_float(top.get("score"), 0.0) >= 30:
@@ -6377,6 +6403,9 @@ async def cmd_ai_top(
         f"Market mode: {top['market_mode']}",
         f"Toplam kayıt: {top['total']}",
         "",
+        f"🏆 All Time: {all_time_leader}",
+        f"📈 Trend Lideri: {trend_leader}",
+        f"🎯 Güven Lideri: {confidence_leader}",
         "AI sıralama:"
     ]
 
