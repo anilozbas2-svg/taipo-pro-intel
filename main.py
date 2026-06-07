@@ -7630,8 +7630,29 @@ def generate_ai_pick():
                     "ensemble_boost": ensemble_boost,
                 })
 
+    unique_candidates = {}
+
+    for c in candidates:
+        symbol = str(
+            c.get("symbol", "")
+        ).strip()
+
+        if not symbol:
+            continue
+
+        old = unique_candidates.get(symbol)
+
+        if old is None or safe_float(
+            c.get("ai_score"),
+            0.0
+        ) > safe_float(
+            old.get("ai_score"),
+            0.0
+        ):
+            unique_candidates[symbol] = c
+
     candidates = sorted(
-        candidates,
+        unique_candidates.values(),
         key=lambda x: x["ai_score"],
         reverse=True
     )[:5]
