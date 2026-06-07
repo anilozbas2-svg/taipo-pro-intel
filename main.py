@@ -11618,6 +11618,17 @@ async def cmd_ai_pick(
             lines.append(
                 f"{i}) {c.get('symbol', '-')}"
             )
+            
+            entry_close = safe_float(
+                c.get("entry_close")
+                or c.get("close"),
+                0.0
+            )
+
+            lines.append(
+                f"Fiyat: {entry_close:.2f}"
+            )
+            
             lines.append(
                 f"AI Score: {safe_float(c.get('ai_score'), 0.0):.2f}"
             )
