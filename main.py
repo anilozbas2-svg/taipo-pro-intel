@@ -6525,6 +6525,8 @@ async def cmd_ai_top(
         "\n".join(lines)
     )
 
+
+
 async def cmd_ai_memory(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -12062,6 +12064,80 @@ async def cmd_ai_top_pick(
         "\n".join(lines)
     )
 
+async def cmd_ai_evolve(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    evolution = _load_json(
+        TAIPO_MODEL_EVOLUTION_FILE
+    )
+
+    if not isinstance(evolution, dict) or not evolution:
+        await update.message.reply_text(
+            "TAIPO AI EVOLUTION\nHenüz evolution kaydı yok."
+        )
+        return
+
+    rows = []
+
+    for sig, item in evolution.items():
+
+        if not isinstance(item, dict):
+            continue
+
+        rows.append({
+            "signal_type": sig,
+            "weight": safe_float(item.get("weight"), 0.0),
+            "prev_weight": safe_float(item.get("prev_weight"), 0.0),
+            "hit": safe_float(item.get("hit"), 0.0),
+            "prev_hit": safe_float(item.get("prev_hit"), 0.0),
+            "avg": safe_float(item.get("avg"), 0.0),
+            "prev_avg": safe_float(item.get("prev_avg"), 0.0),
+            "trend": str(item.get("trend", "STABLE")),
+            "auto_action": str(item.get("auto_action", "KEEP")),
+            "trend_score": safe_float(item.get("trend_score"), 0.0),
+            "total": int(safe_float(item.get("total"), 0)),
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda x: x.get("trend_score", 0.0),
+        reverse=True
+    )
+
+    lines = [
+        "TAIPO AI EVOLUTION",
+        "",
+        "Model ağırlık değişimleri:"
+    ]
+
+    for r in rows[:8]:
+
+        arrow = "→"
+
+        if r["weight"] > r["prev_weight"]:
+            arrow = "↑"
+
+        elif r["weight"] < r["prev_weight"]:
+            arrow = "↓"
+
+        lines.extend([
+            "",
+            f"{r['signal_type']}",
+            f"Weight: {r['prev_weight']:.2f} → {r['weight']:.2f} {arrow}",
+            f"Hit: %{r['prev_hit']:.1f} → %{r['hit']:.1f}",
+            f"Avg: %{r['prev_avg']:.2f} → %{r['avg']:.2f}",
+            f"Trend: {r['trend']}",
+            f"Aksiyon: {r['auto_action']}",
+            f"Trend Skor: {r['trend_score']:.2f}",
+            f"Kayıt: {r['total']}",
+        ])
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_top_pick_rank(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -14604,6 +14680,10 @@ def main() -> None:
     app.add_handler(CommandHandler(
     "learner_evolve", cmd_learner_evolve))
     app.add_handler(CommandHandler("ai_top", cmd_ai_top))
+    app.add_handler(CommandHandler(
+            "ai_evolve",
+            cmd_ai_evolve
+        ))
     app.add_handler(CommandHandler("ai_pick", cmd_ai_pick))
     app.add_handler(CommandHandler("ai_accuracy", cmd_ai_accuracy))
     app.add_handler(CommandHandler("ai_pick_accuracy", cmd_ai_pick_accuracy))
