@@ -6348,6 +6348,17 @@ async def cmd_ai_top(
     elif safe_float(top.get("confidence"), 0.0) >= 45:
         confidence_badge = "🟡 ORTA"
 
+    ai_comment = "AI yorumu: Model takipte."
+
+    if top["trend"] == "UP":
+        ai_comment = "AI yorumu: Model yükseliş trendinde, takip gücü artıyor."
+
+    elif top["trend"] == "DOWN":
+        ai_comment = "AI yorumu: Model zayıflama eğiliminde, temkinli takip edilmeli."
+
+    elif safe_float(top.get("confidence"), 0.0) < 35:
+        ai_comment = "AI yorumu: Skor güçlü olsa da güven düşük, veri olgunlaşması beklenmeli."
+    
     lines = [
         "TAIPO AI TOP",
         "",
@@ -6360,6 +6371,7 @@ async def cmd_ai_top(
         f"Hit: %{top['hit']:.1f}",
         f"AI Güven: %{top['confidence']:.1f}",
         f"Güven Rozeti: {confidence_badge}",
+        ai_comment,
         f"Avg: %{top['avg']:.2f}",
         f"Trend: {top['trend']}",
         f"Market mode: {top['market_mode']}",
