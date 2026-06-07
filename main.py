@@ -220,6 +220,10 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 TAIPO_SIGNAL_HISTORY_FILE = os.path.join(DATA_DIR, "taipo_signal_history.json")
 TAIPO_SIGNAL_PERFORMANCE_FILE = os.path.join(DATA_DIR, "taipo_signal_performance.json")
 TAIPO_AI_MEMORY_FILE = os.path.join(DATA_DIR, "taipo_ai_memory.json")
+TAIPO_MODEL_EVOLUTION_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_model_evolution.json"
+)
 TAIPO_AI_DECISION_LOG_FILE = os.path.join(DATA_DIR, "taipo_ai_decision_log.json")
 TAIPO_AI_DECISION_LEARNED_FILE = os.path.join(
     DATA_DIR,
@@ -695,6 +699,13 @@ def update_ai_memory_from_evolve(
 ) -> int:
 
     memory = _load_json(TAIPO_AI_MEMORY_FILE)
+    
+    evolution = _load_json(
+        TAIPO_MODEL_EVOLUTION_FILE
+    )
+
+    if not isinstance(evolution, dict):
+        evolution = {}
 
     if not isinstance(memory, dict):
         memory = {}
@@ -733,6 +744,11 @@ def update_ai_memory_from_evolve(
             + avg_diff * 4.00
             + weight_diff * 20.00
         )
+        
+        evolution_score = round(
+            trend_score,
+            2
+        )
 
         trend = "STABLE"
         
@@ -762,12 +778,34 @@ def update_ai_memory_from_evolve(
             "market_mode": market_mode,
             "updated_at": now_key,
         }
+        
+        evolution[sig] = {
+            "signal_type": sig,
+            "evolution_score": evolution_score,
+            "trend_score": round(trend_score, 2),
+            "trend": trend,
+            "auto_action": auto_action,
+            "weight": round(weight, 2),
+            "prev_weight": round(prev_weight, 2),
+            "hit": round(hit, 2),
+            "prev_hit": round(prev_hit, 2),
+            "avg": round(avg, 2),
+            "prev_avg": round(prev_avg, 2),
+            "total": total,
+            "market_mode": market_mode,
+            "updated_at": now_key,
+        }
 
         updated += 1
 
     _atomic_write_json(
         TAIPO_AI_MEMORY_FILE,
         memory
+    )
+    
+    _atomic_write_json(
+        TAIPO_MODEL_EVOLUTION_FILE,
+        evolution
     )
 
     return updated
