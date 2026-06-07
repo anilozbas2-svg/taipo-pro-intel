@@ -6369,8 +6369,23 @@ async def cmd_ai_top(
     ]
 
     for r in rows[:5]:
+
+        row_badge = "⚪"
+
+        if safe_float(r.get("score"), 0.0) >= 30:
+            row_badge = "🥇"
+
+        elif safe_float(r.get("score"), 0.0) >= 20:
+            row_badge = "🥈"
+
+        elif safe_float(r.get("score"), 0.0) >= 10:
+            row_badge = "🥉"
+
+        elif safe_float(r.get("score"), 0.0) < 3:
+            row_badge = "⚠️"
+
         lines.append(
-            f"{r['signal_type']} | AI {r['score']:.2f} | G {r['confidence']:.1f} | W {r['weight']:.2f} | {r['trend']}"
+            f"{row_badge} {r['signal_type']} | AI {r['score']:.2f} | G {r['confidence']:.1f} | W {r['weight']:.2f} | {r['trend']}"
         )
 
     await update.message.reply_text(
