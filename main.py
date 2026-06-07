@@ -10051,6 +10051,10 @@ def save_ai_universe_snapshot(rows, source="EOD"):
             "volume": safe_float(row.get("volume"), 0.0),
             "vol_ratio": safe_float(row.get("vol_ratio"), 0.0),
             "close_pos": safe_float(row.get("close_pos"), 0.0),
+            "close": safe_float(
+                row.get("close"),
+                0.0
+            ),
         })
 
     if not items:
