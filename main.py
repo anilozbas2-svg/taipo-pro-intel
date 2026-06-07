@@ -6291,7 +6291,7 @@ async def cmd_ai_top(
         "-"
     )
 
-    trend_leader = "-"
+    trend_leader = "Henüz UP model yok"
 
     for r in rows:
         if r.get("trend") == "UP":
