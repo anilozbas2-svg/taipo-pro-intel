@@ -12206,6 +12206,178 @@ async def cmd_ai_top_pick_rank(
         "\n".join(lines)
     )
 
+def generate_ai_super_ensemble():
+    master_data = generate_ai_master_score()
+    symbol_rank_data = generate_ai_symbol_rank()
+
+    master_items = []
+    symbol_items = []
+
+    if isinstance(master_data, dict):
+        master_items = master_data.get("items", [])
+
+    if isinstance(symbol_rank_data, dict):
+        symbol_items = symbol_rank_data.get("items", [])
+
+    if not isinstance(master_items, list):
+        master_items = []
+
+    if not isinstance(symbol_items, list):
+        symbol_items = []
+
+    symbol_map = {}
+
+    for item in symbol_items:
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(item.get("symbol", "")).strip()
+
+        if not symbol:
+            continue
+
+        symbol_map[symbol] = item
+
+    rows = []
+
+    for item in master_items:
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(item.get("symbol", "")).strip()
+
+        if not symbol:
+            continue
+
+        symbol_item = symbol_map.get(symbol, {})
+
+        master_score = safe_float(
+            item.get("master_score"),
+            0.0
+        )
+
+        symbol_rank_score = safe_float(
+            symbol_item.get("rank_score"),
+            0.0
+        )
+
+        confidence = safe_float(
+            item.get("confidence"),
+            0.0
+        )
+
+        ensemble_score = safe_float(
+            item.get("ensemble_score"),
+            0.0
+        )
+
+        top_pick_score = safe_float(
+            item.get("top_pick_score"),
+            0.0
+        )
+
+        symbol_weight = safe_float(
+            symbol_item.get("weight"),
+            1.0
+        )
+
+        universe_weight = safe_float(
+            symbol_item.get("universe_weight"),
+            1.0
+        )
+
+        super_score = (
+            master_score * 0.40
+            + symbol_rank_score * 0.30
+            + confidence * 0.10
+            + ensemble_score * 0.10
+            + top_pick_score * 0.10
+        )
+
+        super_score = (
+            super_score
+            * symbol_weight
+            * universe_weight
+        )
+
+        rows.append({
+            "symbol": symbol,
+            "super_score": round(super_score, 2),
+            "master_score": round(master_score, 2),
+            "symbol_rank_score": round(symbol_rank_score, 2),
+            "confidence": round(confidence, 1),
+            "ensemble_score": round(ensemble_score, 2),
+            "top_pick_score": round(top_pick_score, 2),
+            "symbol_weight": round(symbol_weight, 2),
+            "universe_weight": round(universe_weight, 2),
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda x: x["super_score"],
+        reverse=True
+    )[:10]
+
+    return {
+        "items": rows,
+        "count": len(rows),
+    }
+
+
+async def cmd_ai_super(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    data = generate_ai_super_ensemble()
+
+    items = data.get("items", [])
+
+    if not items:
+        await update.message.reply_text(
+            "TAIPO AI SUPER ENSEMBLE\nHenüz ortak beyin verisi yok."
+        )
+        return
+
+    lines = [
+        "TAIPO AI SUPER ENSEMBLE",
+        "",
+        "Beyinlerin ortak kararı:",
+    ]
+
+    for i, item in enumerate(items, 1):
+        lines.append("")
+        lines.append(
+            f"{i}) {item.get('symbol', '-')}"
+        )
+        lines.append(
+            f"Super Score: {safe_float(item.get('super_score'), 0.0):.2f}"
+        )
+        lines.append(
+            f"Master: {safe_float(item.get('master_score'), 0.0):.2f}"
+        )
+        lines.append(
+            f"Symbol Rank: {safe_float(item.get('symbol_rank_score'), 0.0):.2f}"
+        )
+        lines.append(
+            f"Confidence: %{safe_float(item.get('confidence'), 0.0):.1f}"
+        )
+        lines.append(
+            f"Ensemble: {safe_float(item.get('ensemble_score'), 0.0):.2f}"
+        )
+        lines.append(
+            f"Top Pick: {safe_float(item.get('top_pick_score'), 0.0):.2f}"
+        )
+        lines.append(
+            f"Symbol W: {safe_float(item.get('symbol_weight'), 1.0):.2f}"
+        )
+        lines.append(
+            f"Universe W: {safe_float(item.get('universe_weight'), 1.0):.2f}"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 async def cmd_ai_master_score(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -14714,6 +14886,9 @@ def main() -> None:
     app.add_handler(CommandHandler(
         "ai_symbol_rank",
         cmd_ai_symbol_rank))
+    app.add_handler(CommandHandler(
+        "ai_super",
+        cmd_ai_super))
     app.add_handler(CommandHandler(
         "ai_universe_score",
         cmd_ai_universe_score))
