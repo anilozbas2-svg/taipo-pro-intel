@@ -12206,6 +12206,107 @@ async def cmd_ai_top_pick_rank(
         "\n".join(lines)
     )
 
+def generate_ai_symbol_rank():
+    memory = _load_json(
+        TAIPO_AI_SYMBOL_MEMORY_FILE
+    )
+
+    if not isinstance(memory, dict):
+        memory = {}
+
+    rows = []
+
+    for symbol, item in memory.items():
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol") or symbol
+        ).strip()
+
+        if not symbol:
+            continue
+
+        pick_weight = safe_float(
+            item.get("weight"),
+            1.0
+        )
+
+        pick_hit = safe_float(
+            item.get("hit_rate"),
+            0.0
+        )
+
+        pick_avg = safe_float(
+            item.get("avg_pct"),
+            0.0
+        )
+
+        universe_weight = safe_float(
+            item.get("universe_weight"),
+            1.0
+        )
+
+        universe_hit = safe_float(
+            item.get("universe_hit_rate"),
+            0.0
+        )
+
+        universe_avg = safe_float(
+            item.get("universe_avg_pct"),
+            0.0
+        )
+
+        total = int(
+            safe_float(
+                item.get("total"),
+                0
+            )
+        )
+
+        universe_total = int(
+            safe_float(
+                item.get("universe_total"),
+                0
+            )
+        )
+
+        rank_score = (
+            45.0
+            + pick_weight * 5.0
+            + universe_weight * 5.0
+            + pick_hit * 0.10
+            + universe_hit * 0.05
+            + pick_avg * 2.0
+            + universe_avg * 1.0
+            + min(total, 5) * 0.50
+            + min(universe_total, 5) * 0.50
+        )
+
+        rows.append({
+            "symbol": symbol,
+            "rank_score": round(rank_score, 2),
+            "weight": round(pick_weight, 2),
+            "hit_rate": round(pick_hit, 2),
+            "avg_pct": round(pick_avg, 2),
+            "universe_weight": round(universe_weight, 2),
+            "universe_hit_rate": round(universe_hit, 2),
+            "universe_avg_pct": round(universe_avg, 2),
+            "total": total,
+            "universe_total": universe_total,
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda x: x["rank_score"],
+        reverse=True
+    )[:10]
+
+    return {
+        "items": rows,
+        "count": len(rows),
+    }
+
 def generate_ai_super_ensemble():
     master_data = generate_ai_master_score()
     symbol_rank_data = generate_ai_symbol_rank()
