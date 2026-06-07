@@ -1681,7 +1681,13 @@ def build_ai_decision_item(item, rank_no=0):
         "universe_avg": item.get("universe_avg"),
         "universe_total": item.get("universe_total"),
         "model": item.get("model") or item.get("signal_type") or "AI_PICK",
-        "entry_close": item.get("close"),
+        "entry_close": (
+            item.get("close")
+            or item.get("entry_close")
+            or item.get("last_close")
+            or item.get("current_close")
+            or item.get("price")
+        ),
         "created_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"),
         "t1_pct": None,
         "t3_pct": None,
@@ -7368,6 +7374,29 @@ def generate_ai_pick():
         ):
             universe_candidates = []
 
+    latest_close_map = {}
+
+    for u in universe_candidates:
+        if not isinstance(u, dict):
+            continue
+
+        s = str(
+            u.get("symbol")
+            or u.get("ticker")
+            or u.get("name")
+            or ""
+        ).strip()
+
+        if not s:
+            continue
+
+        latest_close_map[s] = (
+            u.get("close")
+            or u.get("last_close")
+            or u.get("current_close")
+            or u.get("price")
+        )
+    
     if isinstance(perf, dict):
 
         for day, items in perf.items():
@@ -7389,7 +7418,11 @@ def generate_ai_pick():
 
                 if not symbol:
                     continue
-
+                
+                latest_close = latest_close_map.get(
+                    symbol
+                )
+                
                 perf_pct = safe_float(
                     item.get("performance_pct"),
                     0.0
@@ -7573,6 +7606,8 @@ def generate_ai_pick():
 
                 candidates.append({
                     "symbol": symbol,
+                    "close": latest_close,
+                    "entry_close": latest_close,
                     "signal_type": best_model,
                     "performance_pct": perf_pct,
                     "max_return": max_return,
