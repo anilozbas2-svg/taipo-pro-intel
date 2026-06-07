@@ -12362,6 +12362,9 @@ def generate_ai_super_ensemble():
             0.0
         )
 
+        if symbol_rank_score <= 0:
+            symbol_rank_score = 45.0
+
         confidence = safe_float(
             item.get("confidence"),
             0.0
