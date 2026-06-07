@@ -6340,6 +6340,14 @@ async def cmd_ai_top(
         decision_log
     )
 
+    confidence_badge = "🔴 DÜŞÜK"
+
+    if safe_float(top.get("confidence"), 0.0) >= 70:
+        confidence_badge = "🟢 YÜKSEK"
+
+    elif safe_float(top.get("confidence"), 0.0) >= 45:
+        confidence_badge = "🟡 ORTA"
+
     lines = [
         "TAIPO AI TOP",
         "",
@@ -6351,6 +6359,7 @@ async def cmd_ai_top(
         f"Weight: {top['weight']:.2f}",
         f"Hit: %{top['hit']:.1f}",
         f"AI Güven: %{top['confidence']:.1f}",
+        f"Güven Rozeti: {confidence_badge}",
         f"Avg: %{top['avg']:.2f}",
         f"Trend: {top['trend']}",
         f"Market mode: {top['market_mode']}",
