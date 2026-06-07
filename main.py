@@ -6300,6 +6300,26 @@ async def cmd_ai_top(
                 "-"
             )
             break
+    
+    up_count = sum(
+        1
+        for r in rows
+        if r.get("trend") == "UP"
+    )
+
+    down_count = sum(
+        1
+        for r in rows
+        if r.get("trend") == "DOWN"
+    )
+
+    stable_count = sum(
+        1
+        for r in rows
+        if r.get("trend") == "STABLE"
+    )
+
+    total_models = len(rows)
 
     confidence_leader = max(
         rows,
@@ -6403,6 +6423,11 @@ async def cmd_ai_top(
         f"Market mode: {top['market_mode']}",
         f"Toplam kayıt: {top['total']}",
         "",
+        "📊 AI Hafıza Özeti",
+        f"Toplam Model: {total_models}",
+        f"UP Trend: {up_count}",
+        f"DOWN Trend: {down_count}",
+        f"STABLE: {stable_count}",
         f"🏆 All Time: {all_time_leader}",
         f"📈 Trend Lideri: {trend_leader}",
         f"🎯 Güven Lideri: {confidence_leader}",
