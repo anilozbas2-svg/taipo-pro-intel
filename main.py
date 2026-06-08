@@ -10632,19 +10632,30 @@ def update_ai_super_performance():
         TAIPO_AI_SUPER_FILE
     )
 
-    perf = _load_json(
+    signal_perf = _load_json(
+        TAIPO_SIGNAL_PERFORMANCE_FILE
+    )
+
+    result = _load_json(
         TAIPO_AI_SUPER_PERFORMANCE_FILE
     )
 
     if not isinstance(history, dict):
         return 0
 
-    if not isinstance(perf, dict):
-        perf = {}
+    if not isinstance(signal_perf, dict):
+        return 0
+
+    if not isinstance(result, dict):
+        result = {}
 
     updated = 0
 
-    for day, day_data in history.items():
+    perf_days = sorted(
+        signal_perf.keys()
+    )
+
+    for pick_day, day_data in history.items():
 
         if not isinstance(day_data, dict):
             continue
@@ -10657,29 +10668,40 @@ def update_ai_super_performance():
         if not isinstance(items, list):
             continue
 
-        perf_day = perf.get(
-            day,
+        future_days = [
+            d for d in perf_days
+            if d > pick_day
+        ]
+
+        day_rows = result.get(
+            pick_day,
             {}
         )
 
-        if not isinstance(perf_day, dict):
-            perf_day = {
+        if not isinstance(day_rows, dict):
+            day_rows = {
+                "date": pick_day,
                 "items": []
             }
 
-        existing = {}
-
-        for row in perf_day.get(
+        old_items = day_rows.get(
             "items",
             []
-        ):
+        )
 
-            if isinstance(row, dict):
-                existing[
-                    row.get("symbol")
-                ] = row
+        old_map = {}
 
-        result_items = []
+        if isinstance(old_items, list):
+            for old in old_items:
+                if isinstance(old, dict):
+                    old_symbol = str(
+                        old.get("symbol", "")
+                    ).strip()
+
+                    if old_symbol:
+                        old_map[old_symbol] = old
+
+        new_items = []
 
         for item in items:
 
@@ -10693,36 +10715,126 @@ def update_ai_super_performance():
             if not symbol:
                 continue
 
-            result_items.append({
+            row = old_map.get(
+                symbol,
+                {}
+            )
 
-                "symbol":
-                    symbol,
+            if not isinstance(row, dict):
+                row = {}
 
-                "super_score":
-                    item.get(
-                        "super_score",
-                        0
-                    ),
-
-                "status":
-                    existing.get(
-                        symbol,
-                        {}
-                    ).get(
-                        "status",
-                        "WAIT"
-                    )
+            row.update({
+                "symbol": symbol,
+                "super_score": item.get("super_score", 0),
+                "master_score": item.get("master_score", 0),
+                "symbol_rank_score": item.get("symbol_rank_score", 0),
+                "confidence": item.get("confidence", 0),
+                "ensemble_score": item.get("ensemble_score", 0),
+                "top_pick_score": item.get("top_pick_score", 0),
+                "symbol_weight": item.get("symbol_weight", 1.0),
+                "universe_weight": item.get("universe_weight", 1.0),
             })
 
-        perf_day["items"] = result_items
+            target_map = {
+                "t1_pct": 1,
+                "t3_pct": 3,
+                "t5_pct": 5,
+            }
 
-        perf[day] = perf_day
+            for field_name, target_day in target_map.items():
 
-        updated += 1
+                if row.get(field_name) is not None:
+                    continue
+
+                if len(future_days) < target_day:
+                    continue
+
+                target_perf_day = future_days[
+                    target_day - 1
+                ]
+
+                day_perf = signal_perf.get(
+                    target_perf_day,
+                    {}
+                )
+
+                if not isinstance(day_perf, dict):
+                    continue
+
+                matched = None
+
+                for perf_item in day_perf.values():
+
+                    if not isinstance(perf_item, dict):
+                        continue
+
+                    perf_symbol = str(
+                        perf_item.get("symbol", "")
+                    ).strip()
+
+                    if perf_symbol != symbol:
+                        continue
+
+                    matched = perf_item
+                    break
+
+                if matched is None:
+                    continue
+
+                pct = safe_float(
+                    matched.get("performance_pct"),
+                    0.0
+                )
+
+                row[field_name] = round(
+                    pct,
+                    2
+                )
+
+                row["max_return"] = round(
+                    safe_float(
+                        matched.get("max_return"),
+                        pct
+                    ),
+                    2
+                )
+
+                row["min_return"] = round(
+                    safe_float(
+                        matched.get("min_return"),
+                        pct
+                    ),
+                    2
+                )
+
+                updated += 1
+
+            if row.get("t5_pct") is not None:
+                row["status"] = "CLOSED"
+
+            elif (
+                row.get("t1_pct") is not None
+                or row.get("t3_pct") is not None
+            ):
+                row["status"] = "MEASURED"
+
+            else:
+                row["status"] = row.get(
+                    "status",
+                    "WAIT"
+                )
+
+            new_items.append(row)
+
+        day_rows["date"] = pick_day
+        day_rows["count"] = len(new_items)
+        day_rows["items"] = new_items
+
+        result[pick_day] = day_rows
 
     _atomic_write_json(
         TAIPO_AI_SUPER_PERFORMANCE_FILE,
-        perf
+        result
     )
 
     return updated
