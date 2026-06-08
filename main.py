@@ -1687,6 +1687,29 @@ def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
     except Exception as e:
         logger.warning("History write failed (%s): %s", path, e)
 
+def save_ai_super_log(data):
+    try:
+        history = _load_json(
+            TAIPO_AI_SUPER_FILE
+        )
+
+        if not isinstance(history, dict):
+            history = {}
+
+        history[
+            get_today_key()
+        ] = data
+
+        atomic_write_json(
+            TAIPO_AI_SUPER_FILE,
+            history
+        )
+
+    except Exception as e:
+        logger.warning(
+            "AI SUPER save failed: %s",
+            e
+        )
 
 def get_today_key():
     return datetime.now(TZ).strftime("%Y-%m-%d")
