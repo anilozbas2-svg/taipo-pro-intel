@@ -1700,7 +1700,7 @@ def save_ai_super_log(data):
             get_today_key()
         ] = data
 
-        atomic_write_json(
+        _atomic_write_json(
             TAIPO_AI_SUPER_FILE,
             history
         )
@@ -12464,6 +12464,10 @@ async def cmd_ai_super(
     context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     data = generate_ai_super_ensemble()
+
+    save_ai_super_log(data)
+
+    items = data.get("items", [])
 
     items = data.get("items", [])
 
