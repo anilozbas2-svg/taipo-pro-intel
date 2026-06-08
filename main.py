@@ -11033,25 +11033,14 @@ async def cmd_ai_super_perf(
     )
 
     if not isinstance(perf, dict) or not perf:
-
         await update.message.reply_text(
             "AI SUPER performans verisi yok."
         )
         return
 
-    latest = sorted(
-        perf.keys()
-    )[-1]
-
-    day_data = perf.get(
-        latest,
-        {}
-    )
-
-    items = day_data.get(
-        "items",
-        []
-    )
+    latest = sorted(perf.keys())[-1]
+    day_data = perf.get(latest, {})
+    items = day_data.get("items", [])
 
     lines = [
         "📊 TAIPO AI SUPER PERFORMANCE",
@@ -11061,36 +11050,38 @@ async def cmd_ai_super_perf(
         ""
     ]
 
-    for i, item in enumerate(
-        items[:10],
-        1
-    ):
+    for i, item in enumerate(items[:10], 1):
+
+        lines.append(f"{i}) {item.get('symbol', '-')}")
+        lines.append(f"Durum: {item.get('status', 'WAIT')}")
+        lines.append(f"Super: {safe_float(item.get('super_score'), 0.0):.2f}")
+        lines.append(f"Master: {safe_float(item.get('master_score'), 0.0):.2f}")
+        lines.append(f"Symbol Rank: {safe_float(item.get('symbol_rank_score'), 0.0):.2f}")
+        lines.append(f"Top Pick: {safe_float(item.get('top_pick_score'), 0.0):.2f}")
 
         lines.append(
-            f"{i}) {item.get('symbol','-')}"
+            f"T1: %{safe_float(item.get('t1_pct'), 0.0):.2f}"
+            if item.get("t1_pct") is not None
+            else "T1: -"
         )
 
         lines.append(
-            f"Durum: {item.get('status','WAIT')}"
+            f"T3: %{safe_float(item.get('t3_pct'), 0.0):.2f}"
+            if item.get("t3_pct") is not None
+            else "T3: -"
         )
 
-        if item.get("t1_pct") is not None:
+        lines.append(
+            f"T5: %{safe_float(item.get('t5_pct'), 0.0):.2f}"
+            if item.get("t5_pct") is not None
+            else "T5: -"
+        )
 
-            lines.append(
-                f"T1: %{item.get('t1_pct')}"
-            )
+        if item.get("max_return") is not None:
+            lines.append(f"Max: %{safe_float(item.get('max_return'), 0.0):.2f}")
 
-        if item.get("t3_pct") is not None:
-
-            lines.append(
-                f"T3: %{item.get('t3_pct')}"
-            )
-
-        if item.get("t5_pct") is not None:
-
-            lines.append(
-                f"T5: %{item.get('t5_pct')}"
-            )
+        if item.get("min_return") is not None:
+            lines.append(f"Min: %{safe_float(item.get('min_return'), 0.0):.2f}")
 
         lines.append("")
 
