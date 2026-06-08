@@ -11023,6 +11023,81 @@ def calculate_ai_decision_accuracy():
         "symbols": symbol_rows
     }
 
+async def cmd_ai_super_perf(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    perf = _load_json(
+        TAIPO_AI_SUPER_PERFORMANCE_FILE
+    )
+
+    if not isinstance(perf, dict) or not perf:
+
+        await update.message.reply_text(
+            "AI SUPER performans verisi yok."
+        )
+        return
+
+    latest = sorted(
+        perf.keys()
+    )[-1]
+
+    day_data = perf.get(
+        latest,
+        {}
+    )
+
+    items = day_data.get(
+        "items",
+        []
+    )
+
+    lines = [
+        "📊 TAIPO AI SUPER PERFORMANCE",
+        "",
+        f"Gün: {latest}",
+        f"Kayıt: {len(items)}",
+        ""
+    ]
+
+    for i, item in enumerate(
+        items[:10],
+        1
+    ):
+
+        lines.append(
+            f"{i}) {item.get('symbol','-')}"
+        )
+
+        lines.append(
+            f"Durum: {item.get('status','WAIT')}"
+        )
+
+        if item.get("t1_pct") is not None:
+
+            lines.append(
+                f"T1: %{item.get('t1_pct')}"
+            )
+
+        if item.get("t3_pct") is not None:
+
+            lines.append(
+                f"T3: %{item.get('t3_pct')}"
+            )
+
+        if item.get("t5_pct") is not None:
+
+            lines.append(
+                f"T5: %{item.get('t5_pct')}"
+            )
+
+        lines.append("")
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
 def calculate_ai_pick_accuracy():
 
     data = _load_json(
@@ -15241,6 +15316,9 @@ def main() -> None:
     app.add_handler(CommandHandler(
         "ai_super",
         cmd_ai_super))
+    app.add_handler(CommandHandler(
+    "ai_super_perf",
+    cmd_ai_super_perf))
     app.add_handler(CommandHandler(
         "ai_universe_score",
         cmd_ai_universe_score))
