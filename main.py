@@ -220,6 +220,14 @@ DATA_DIR = os.getenv("DATA_DIR", "/var/data").strip() or "/var/data"
 TAIPO_SIGNAL_HISTORY_FILE = os.path.join(DATA_DIR, "taipo_signal_history.json")
 TAIPO_SIGNAL_PERFORMANCE_FILE = os.path.join(DATA_DIR, "taipo_signal_performance.json")
 TAIPO_AI_MEMORY_FILE = os.path.join(DATA_DIR, "taipo_ai_memory.json")
+TAIPO_AI_SUPER_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_super.json"
+)
+TAIPO_AI_SUPER_PERFORMANCE_FILE = os.path.join(
+    DATA_DIR,
+    "taipo_ai_super_performance.json"
+)
 TAIPO_MODEL_EVOLUTION_FILE = os.path.join(
     DATA_DIR,
     "taipo_model_evolution.json"
