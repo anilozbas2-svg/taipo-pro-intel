@@ -10626,6 +10626,107 @@ def update_ai_pick_performance():
 
     return updated
 
+def update_ai_super_performance():
+
+    history = _load_json(
+        TAIPO_AI_SUPER_FILE
+    )
+
+    perf = _load_json(
+        TAIPO_AI_SUPER_PERFORMANCE_FILE
+    )
+
+    if not isinstance(history, dict):
+        return 0
+
+    if not isinstance(perf, dict):
+        perf = {}
+
+    updated = 0
+
+    for day, day_data in history.items():
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get(
+            "items",
+            []
+        )
+
+        if not isinstance(items, list):
+            continue
+
+        perf_day = perf.get(
+            day,
+            {}
+        )
+
+        if not isinstance(perf_day, dict):
+            perf_day = {
+                "items": []
+            }
+
+        existing = {}
+
+        for row in perf_day.get(
+            "items",
+            []
+        ):
+
+            if isinstance(row, dict):
+                existing[
+                    row.get("symbol")
+                ] = row
+
+        result_items = []
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(
+                item.get("symbol", "")
+            ).strip()
+
+            if not symbol:
+                continue
+
+            result_items.append({
+
+                "symbol":
+                    symbol,
+
+                "super_score":
+                    item.get(
+                        "super_score",
+                        0
+                    ),
+
+                "status":
+                    existing.get(
+                        symbol,
+                        {}
+                    ).get(
+                        "status",
+                        "WAIT"
+                    )
+            })
+
+        perf_day["items"] = result_items
+
+        perf[day] = perf_day
+
+        updated += 1
+
+    _atomic_write_json(
+        TAIPO_AI_SUPER_PERFORMANCE_FILE,
+        perf
+    )
+
+    return updated
+
 def calculate_ai_decision_accuracy():
 
     decision_log = _load_json(TAIPO_AI_DECISION_LOG_FILE)
