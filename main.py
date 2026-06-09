@@ -165,7 +165,7 @@ ALARM_COOLDOWN_MIN = int(os.getenv("ALARM_COOLDOWN_MIN", "60"))
 
 BALINA_AUTO_ENABLED = os.getenv("BALINA_AUTO_ENABLED", "1").strip() == "1"
 BALINA_AUTO_HOUR = int(os.getenv("BALINA_AUTO_HOUR", "17"))
-BALINA_AUTO_MINUTE = int(os.getenv("BALINA_AUTO_MINUTE", "30"))
+BALINA_AUTO_MINUTE = int(os.getenv("BALINA_AUTO_MINUTE", "00"))
 BALINA_AUTO_CHAT_ID = int(os.getenv("BALINA_AUTO_CHAT_ID", str(ALARM_CHAT_ID or 0)))
 
 ALARM_START_HOUR = int(os.getenv("ALARM_START_HOUR", "10"))
@@ -5235,6 +5235,39 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         evolve_ai_from_ensemble_performance()
     )
     
+    ai_pick_saved = 0
+    ai_decision_saved = 0
+
+    try:
+
+        pick = generate_ai_pick()
+
+        if isinstance(pick, dict):
+
+            save_ai_pick(pick)
+
+            candidates = pick.get(
+                "candidates",
+                []
+            )
+
+            ai_decision_saved = (
+                save_ai_decision_log(
+                    candidates
+                )
+            )
+
+            ai_pick_saved = len(
+                candidates
+            )
+
+    except Exception as e:
+
+        logger.warning(
+            "EOD AI PICK save error: %s",
+            e
+        )
+    
     decision_perf_count = (
         update_ai_decision_performance()
     )
@@ -5302,6 +5335,8 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"\n\nTAIPO LEARNER\n"
         f"Kayıt: {learner_count} sinyal\n"
         f"AI Universe kayıt: {universe_count}\n"
+        f"AI Pick kayıt: {ai_pick_saved}\n"
+        f"AI Decision kayıt: {ai_decision_saved}\n"
         f"AI Universe ölçüm: {universe_perf_count}\n"
         f"AI Ensemble ölçüm: {ensemble_perf_count}\n"
         f"AI Ensemble öğrenme: {ensemble_learn_count}\n"
