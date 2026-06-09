@@ -13702,7 +13702,7 @@ async def job_eod_report(
 
         top_n = dynamic_top_n(reg)
 
-        rows = await build_alarm_rows(
+        rows = await build_rows_from_is_list(
             top_n=top_n,
             xu_change=xu_change,
             reg=reg
