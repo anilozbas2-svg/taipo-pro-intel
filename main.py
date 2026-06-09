@@ -13702,11 +13702,14 @@ async def job_eod_report(
 
         top_n = dynamic_top_n(reg)
 
+        bist200_list = env_csv("BIST200_TICKERS")
+
         rows = await build_rows_from_is_list(
-            top_n=top_n,
-            xu_change=xu_change,
-            reg=reg
+            bist200_list,
+            xu_change
         )
+        
+        rebound_picks = []
 
         toplama = [r for r in rows if r.get("kind") == "TOPLAMA"]
         dip = [r for r in rows if r.get("kind") == "DIP"]
