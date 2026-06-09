@@ -14725,12 +14725,6 @@ def schedule_jobs(app: Application) -> None:
         name="eod_report_daily",
     )
     
-    jq.run_once(
-        job_eod_report,
-        when=60,
-        name="eod_report_test_once",
-    )
-    
     logger.info(
         "SCHEDULE DEBUG | EOD registered name=eod_report_daily time=%02d:%02d",
         EOD_HOUR,
