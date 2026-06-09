@@ -13668,8 +13668,18 @@ async def cmd_ai_pick_history(
         "\n".join(lines)
     )
 
-async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def job_eod_report(
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    logger.info(
+        "EOD DEBUG | job_eod_report START"
+    )
+
     if not ALARM_CHAT_ID:
+        logger.warning(
+            "EOD DEBUG | ALARM_CHAT_ID missing"
+        )
         return
 
     try:
