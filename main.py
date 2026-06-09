@@ -13716,7 +13716,7 @@ async def job_eod_report(
         ayr = [r for r in rows if r.get("kind") == "AYR"]
         kar = [r for r in rows if r.get("kind") == "KAR"]
 
-        thresh_s = human_volume(dynamic_threshold(reg))
+        thresh_s = format_threshold(dynamic_threshold(reg))
 
         msg = (
             f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
