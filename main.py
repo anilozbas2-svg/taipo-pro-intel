@@ -8399,11 +8399,6 @@ def generate_ai_master_score():
         "count": len(rows)
     }
 
-    _atomic_write_json(
-        TAIPO_AI_MASTER_SCORE_FILE,
-        result
-    )
-
     save_ai_master_score(
         result
     )
