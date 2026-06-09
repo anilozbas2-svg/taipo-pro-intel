@@ -14673,6 +14673,11 @@ async def job_whale_follow(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def schedule_jobs(app: Application) -> None:
     jq = getattr(app, "job_queue", None)
+    
+    logger.info(
+        "SCHEDULE DEBUG | job_queue=%s",
+        type(jq).__name__ if jq else None
+    )
 
     def safe_run_repeating(jq, callback, *, interval_sec: int, first, name: str) -> None:
         try:
@@ -14708,6 +14713,12 @@ def schedule_jobs(app: Application) -> None:
         job_eod_report,
         time=datetime(2000, 1, 1, EOD_HOUR, EOD_MINUTE, tzinfo=TZ).timetz(),
         name="eod_report_daily",
+    )
+    
+    logger.info(
+        "SCHEDULE DEBUG | EOD registered name=eod_report_daily time=%02d:%02d",
+        EOD_HOUR,
+        EOD_MINUTE
     )
 
     logger.info(
