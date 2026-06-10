@@ -13834,12 +13834,29 @@ async def job_eod_report(
             xu_change
         )
         
+        update_history_from_rows(rows)
+        
         rebound_picks = []
 
-        toplama = [r for r in rows if r.get("kind") == "TOPLAMA"]
-        dip = [r for r in rows if r.get("kind") == "DIP"]
-        ayr = [r for r in rows if r.get("kind") == "AYR"]
-        kar = [r for r in rows if r.get("kind") == "KAR"]
+        toplama = [
+            r for r in rows
+            if r.get("signal_text") == "TOPLAMA"
+        ]
+
+        dip = [
+            r for r in rows
+            if r.get("signal_text") == "DİP TOPLAMA"
+        ]
+
+        ayr = [
+            r for r in rows
+            if r.get("signal_text") == "AYRIŞMA"
+        ]
+
+        kar = [
+            r for r in rows
+            if r.get("signal_text") == "KÂR KORUMA"
+        ]
 
         min_vol = compute_signal_rows(
             rows,
