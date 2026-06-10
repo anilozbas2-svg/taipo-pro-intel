@@ -13841,7 +13841,15 @@ async def job_eod_report(
         ayr = [r for r in rows if r.get("kind") == "AYR"]
         kar = [r for r in rows if r.get("kind") == "KAR"]
 
-        thresh_s = format_threshold(dynamic_threshold(reg))
+        min_vol = compute_signal_rows(
+            rows,
+            xu_change,
+            top_n
+        )
+
+        thresh_s = format_threshold(
+            min_vol
+        )
 
         msg = (
             f"📌 <b>EOD RAPOR</b> • <b>{BOT_VERSION}</b>\n"
