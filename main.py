@@ -13803,7 +13803,88 @@ async def job_eod_report(
             rebound_picks,
         )
 
-        msg += f"\n\n TAIPO LEARNER\nKayıt: {learner_count} sinyal"
+        universe_count = save_ai_universe_snapshot(
+            rows,
+            source="AUTO_EOD"
+        )
+
+        ai_pick_saved = 0
+        ai_decision_saved = 0
+        ai_pick_lines = []
+        ai_decision_lines = []
+        ai_master_lines = []
+
+        try:
+            pick = generate_ai_pick()
+
+            if isinstance(pick, dict):
+                save_ai_pick(pick)
+
+                candidates = pick.get(
+                    "candidates",
+                    []
+                )
+
+                ai_decision_saved = save_ai_decision_log(
+                    candidates
+                )
+
+                ai_pick_saved = len(candidates)
+
+                for i, c in enumerate(candidates[:5], 1):
+                    ai_pick_lines.append(
+                        f"{i}) {c.get('symbol', '-')}"
+                    )
+
+                for i, c in enumerate(candidates[:5], 1):
+                    ai_decision_lines.append(
+                        f"{i}) {c.get('symbol', '-')}"
+                    )
+
+        except Exception as e:
+            logger.warning(
+                "AUTO EOD AI PICK save error: %s",
+                e
+            )
+
+        try:
+            master_data = generate_ai_master_score()
+
+            if isinstance(master_data, dict):
+                master_items = master_data.get(
+                    "items",
+                    []
+                )
+
+                if isinstance(master_items, list):
+                    for i, item in enumerate(master_items[:5], 1):
+                        ai_master_lines.append(
+                            f"{i}) {item.get('symbol', '-')} | "
+                            f"Skor {safe_float(item.get('master_score'), 0.0):.0f}"
+                        )
+
+        except Exception as e:
+            logger.warning(
+                "AUTO EOD AI MASTER SCORE error: %s",
+                e
+            )
+
+        msg += "\n\n🤖 <b>AI PICK TOP 5</b>\n"
+        msg += "\n".join(ai_pick_lines) if ai_pick_lines else "Liste boş."
+
+        msg += "\n\n🎯 <b>AI DECISION TOP 5</b>\n"
+        msg += "\n".join(ai_decision_lines) if ai_decision_lines else "Liste boş."
+
+        msg += "\n\n🏆 <b>AI MASTER SCORE TOP 5</b>\n"
+        msg += "\n".join(ai_master_lines) if ai_master_lines else "Liste boş."
+
+        msg += (
+            f"\n\nTAIPO LEARNER\n"
+            f"Kayıt: {learner_count} sinyal\n"
+            f"AI Universe kayıt: {universe_count}\n"
+            f"AI Pick kayıt: {ai_pick_saved}\n"
+            f"AI Decision kayıt: {ai_decision_saved}"
+        )
         
         await context.bot.send_message(
             chat_id=int(ALARM_CHAT_ID),
