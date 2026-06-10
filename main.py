@@ -5330,6 +5330,101 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     universe_learn_count = (
         evolve_ai_from_universe_performance()
     )
+    
+    ai_pick_lines = []
+    ai_decision_lines = []
+    ai_master_lines = []
+
+    try:
+        pick_view = generate_ai_pick()
+
+        if isinstance(pick_view, dict):
+
+            pick_candidates = pick_view.get(
+                "candidates",
+                []
+            )
+
+            if isinstance(
+                pick_candidates,
+                list
+            ):
+
+                for i, c in enumerate(
+                    pick_candidates[:5],
+                    1
+                ):
+                    ai_pick_lines.append(
+                        f"{i}) {c.get('symbol', '-')}"
+                    )
+
+                for i, c in enumerate(
+                    pick_candidates[:5],
+                    1
+                ):
+                    ai_decision_lines.append(
+                        f"{i}) {c.get('symbol', '-')}"
+                    )
+
+    except Exception as e:
+
+        logger.warning(
+            "EOD AI PICK view error: %s",
+            e
+        )
+
+    try:
+
+        master_view = generate_ai_master_score()
+
+        if isinstance(master_view, dict):
+
+            master_items = master_view.get(
+                "items",
+                []
+            )
+
+            if isinstance(
+                master_items,
+                list
+            ):
+
+                for i, item in enumerate(
+                    master_items[:5],
+                    1
+                ):
+                    ai_master_lines.append(
+                        f"{i}) {item.get('symbol', '-')} | "
+                        f"Skor {safe_float(item.get('master_score'), 0.0):.0f}"
+                    )
+
+    except Exception as e:
+
+        logger.warning(
+            "EOD AI MASTER SCORE view error: %s",
+            e
+        )
+
+    msg += "\n\n🤖 <b>AI PICK TOP 5</b>\n"
+    msg += (
+        "\n".join(ai_pick_lines)
+        if ai_pick_lines
+        else "Liste boş."
+    )
+
+    msg += "\n\n🎯 <b>AI DECISION TOP 5</b>\n"
+    msg += (
+        "\n".join(ai_decision_lines)
+        if ai_decision_lines
+        else "Liste boş."
+    )
+
+    msg += "\n\n🏆 <b>AI MASTER SCORE TOP 5</b>\n"
+    msg += (
+        "\n".join(ai_master_lines)
+        if ai_master_lines
+        else "Liste boş."
+    )
 
     msg += (
         f"\n\nTAIPO LEARNER\n"
