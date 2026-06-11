@@ -13793,6 +13793,19 @@ async def cmd_ai_pick_history(
         "\n".join(lines)
     )
 
+def top_by_vol(
+    lst: List[Dict[str, Any]],
+    n: int = 10
+) -> List[Dict[str, Any]]:
+
+    return sorted(
+        lst,
+        key=lambda x: (
+            x.get("volume") or 0
+        ),
+        reverse=True
+    )[:n]
+
 async def job_eod_report(
     context: ContextTypes.DEFAULT_TYPE
 ) -> None:
