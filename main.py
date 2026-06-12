@@ -14052,7 +14052,22 @@ async def job_eod_report(
             f"Kayıt: {learner_count} sinyal\n"
             f"AI Universe kayıt: {universe_count}\n"
             f"AI Pick kayıt: {ai_pick_saved}\n"
-            f"AI Decision kayıt: {ai_decision_saved}"
+            f"Signal Performance: {signal_perf_count}\n"
+            f"AI Decision kayıt: {ai_decision_saved}\n"
+            f"AI Universe ölçüm: {universe_perf_count}\n"
+            f"AI Ensemble ölçüm: {ensemble_perf_count}\n"
+            f"AI Ensemble öğrenme: {ensemble_learn_count}\n"
+            f"AI Decision ölçüm: {decision_perf_count}\n"
+            f"AI Pick ölçüm: {pick_perf_count}\n"
+            f"AI Top Pick öğrenme: {top_pick_learn_count}\n"
+            f"AI Symbol Tune: {symbol_tune_count}\n"
+            f"AI Top Pick ölçüm: {top_pick_perf_count}\n"
+            f"AI Master Score ölçüm: {master_score_perf_count}\n"
+            f"AI Master öğrenme: {master_learn_count}\n"
+            f"AI Master Rank: {master_rank_count}\n"
+            f"AI Master HOF: {hall_of_fame_count}\n"
+            f"AI Decision öğrenme: {decision_learn_count}\n"
+            f"AI Universe öğrenme: {universe_learn_count}"
         )
         
         await context.bot.send_message(
