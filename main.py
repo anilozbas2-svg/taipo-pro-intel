@@ -10726,6 +10726,18 @@ def update_ai_pick_performance():
 
             if entry_close <= 0:
                 entry_close = safe_float(
+                    base_row.get("entry_close"),
+                    0.0
+                )
+
+            if entry_close <= 0:
+                entry_close = safe_float(
+                    base_row.get("close"),
+                    0.0
+                )
+
+            if entry_close <= 0:
+                entry_close = safe_float(
                     row.get("price"),
                     0.0
                 )
