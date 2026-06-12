@@ -10519,14 +10519,7 @@ def update_ai_pick_performance():
         TAIPO_AI_PICK_FILE
     )
 
-    perf = _load_json(
-        TAIPO_SIGNAL_PERFORMANCE_FILE
-    )
-
     if not isinstance(pick_history, dict):
-        return 0
-
-    if not isinstance(perf, dict):
         return 0
 
     result = _load_json(
@@ -10536,16 +10529,55 @@ def update_ai_pick_performance():
     if not isinstance(result, dict):
         result = {}
 
-    updated = 0
+    current_close_map = {}
 
-    perf_days = sorted(
-        perf.keys()
-    )
+    try:
+        tv = tv_get_scan()
+        tv_rows = tv.get("data", [])
+
+        for r in tv_rows:
+
+            symbol = str(
+                r.get("s", "")
+            ).replace(
+                "BIST:",
+                ""
+            ).strip().upper()
+
+            data = r.get("d", [])
+
+            if symbol and isinstance(data, list) and data:
+                current_close_map[symbol] = safe_float(
+                    data[0],
+                    0.0
+                )
+
+    except Exception as e:
+        logger.warning(
+            "AI PICK PERF live close error: %s",
+            e
+        )
+
+    updated = 0
+    today_dt = datetime.now(TZ).date()
 
     for pick_day, pick_data in pick_history.items():
 
         if not isinstance(pick_data, dict):
             continue
+
+        try:
+            pick_dt = datetime.strptime(
+                pick_day,
+                "%Y-%m-%d"
+            ).date()
+
+            day_diff = (
+                today_dt - pick_dt
+            ).days
+
+        except Exception:
+            day_diff = 0
 
         candidates = pick_data.get(
             "candidates",
@@ -10586,22 +10618,17 @@ def update_ai_pick_performance():
 
             old_symbol = str(
                 old_item.get("symbol", "")
-            ).strip()
+            ).strip().upper()
 
             if old_symbol:
                 existing_map[old_symbol] = old_item
 
         changed = False
 
-        future_days = [
-            d for d in perf_days
-            if d > pick_day
-        ]
-
         for candidate in candidates:
 
             if isinstance(candidate, str):
-                symbol = candidate.strip()
+                symbol = candidate.strip().upper()
                 base_row = {
                     "symbol": symbol
                 }
@@ -10609,7 +10636,8 @@ def update_ai_pick_performance():
             elif isinstance(candidate, dict):
                 symbol = str(
                     candidate.get("symbol", "")
-                ).strip()
+                ).strip().upper()
+
                 base_row = dict(candidate)
 
             else:
@@ -10625,45 +10653,78 @@ def update_ai_pick_performance():
 
             row["symbol"] = symbol
 
-            target_map = {
-                "t1_pct": 1,
-                "t3_pct": 3,
-                "t5_pct": 5
-            }
+            entry_close = safe_float(
+                row.get("entry_close"),
+                0.0
+            )
 
-            for field_name, target_day in target_map.items():
-
-                if row.get(field_name) is not None:
-                    continue
-
-                if len(future_days) < target_day:
-                    continue
-
-                target_perf_day = future_days[
-                    target_day - 1
-                ]
-
-                day_perf = perf.get(
-                    target_perf_day,
-                    {}
+            if entry_close <= 0:
+                entry_close = safe_float(
+                    row.get("close"),
+                    0.0
                 )
 
-                if not isinstance(day_perf, dict):
-                    continue
-
-                matched_pct = find_perf_pct_for_symbol(
-                    day_perf,
-                    symbol
+            if entry_close <= 0:
+                entry_close = safe_float(
+                    row.get("price"),
+                    0.0
                 )
 
-                if matched_pct is None:
-                    continue
+            current_close = current_close_map.get(
+                symbol,
+                0.0
+            )
 
-                row[field_name] = round(
-                    matched_pct,
+            if current_close <= 0:
+                current_close = safe_float(
+                    row.get("current_close"),
+                    entry_close
+                )
+
+            row["entry_close"] = round(
+                entry_close,
+                4
+            )
+
+            row["current_close"] = round(
+                current_close,
+                4
+            )
+
+            perf_pct = 0.0
+
+            if entry_close > 0 and current_close > 0:
+                perf_pct = (
+                    (
+                        current_close - entry_close
+                    )
+                    / entry_close
+                ) * 100.0
+
+            row["performance_pct"] = round(
+                perf_pct,
+                2
+            )
+
+            if day_diff >= 1 and row.get("t1_pct") is None:
+                row["t1_pct"] = round(
+                    perf_pct,
                     2
                 )
+                changed = True
 
+            if day_diff >= 3 and row.get("t3_pct") is None:
+                row["t3_pct"] = round(
+                    perf_pct,
+                    2
+                )
+                changed = True
+
+            if day_diff >= 5 and row.get("t5_pct") is None:
+                row["t5_pct"] = round(
+                    perf_pct,
+                    2
+                )
                 changed = True
 
             if row.get("t5_pct") is not None:
@@ -10676,10 +10737,7 @@ def update_ai_pick_performance():
                 row["status"] = "MEASURED"
 
             else:
-                row["status"] = row.get(
-                    "status",
-                    "OPEN"
-                )
+                row["status"] = "OPEN"
 
             existing_map[symbol] = row
 
