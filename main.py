@@ -13934,6 +13934,48 @@ async def job_eod_report(
             rows,
             source="AUTO_EOD"
         )
+        
+        signal_perf_count = update_signal_performance_core()
+
+        universe_perf_count = update_ai_universe_performance()
+        ensemble_perf_count = update_ai_ensemble_performance()
+        ensemble_learn_count = evolve_ai_from_ensemble_performance()
+
+        decision_perf_count = update_ai_decision_performance()
+        pick_perf_count = update_ai_pick_performance()
+        top_pick_perf_count = update_ai_top_pick_performance()
+        master_score_perf_count = update_ai_master_score_performance()
+
+        decision_learn_count = evolve_ai_from_decision_performance()
+        top_pick_learn_count = evolve_ai_from_top_pick_performance()
+        master_learn_count = evolve_ai_from_master_score_performance()
+        symbol_tune_count = evolve_symbol_weights_from_top_pick()
+        universe_learn_count = evolve_ai_from_universe_performance()
+
+        master_rank_data = generate_ai_master_rank()
+        master_rank_count = 0
+
+        if isinstance(master_rank_data, dict):
+            master_rank_count = len(
+                master_rank_data.get(
+                    "items",
+                    []
+                )
+            )
+
+        hall_of_fame_data = build_ai_master_hof()
+        hall_of_fame_count = 0
+
+        if isinstance(hall_of_fame_data, dict):
+            hall_of_fame_count = int(
+                safe_float(
+                    hall_of_fame_data.get(
+                        "champion_count",
+                        0
+                    ),
+                    0
+                )
+            )
 
         ai_pick_saved = 0
         ai_decision_saved = 0
