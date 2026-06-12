@@ -10158,6 +10158,30 @@ def save_ai_pick(pick):
                 item.get("performance_pct"),
                 0.0
             ),
+            "close": safe_float(
+                item.get("close"),
+                0.0
+            ),
+            "entry_close": safe_float(
+                item.get(
+                    "entry_close",
+                    item.get(
+                        "close",
+                        0.0
+                    )
+                ),
+                0.0
+            ),
+            "current_close": safe_float(
+                item.get(
+                    "current_close",
+                    item.get(
+                        "close",
+                        0.0
+                    )
+                ),
+                0.0
+            ),
             "max_return": safe_float(
                 item.get("max_return"),
                 0.0
