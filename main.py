@@ -10502,6 +10502,46 @@ def update_ai_decision_performance():
 
     return updated
 
+def find_perf_pct_for_symbol(
+    day_perf,
+    symbol
+):
+
+    target = str(symbol or "").strip().upper()
+
+    if not target:
+        return None
+
+    def walk(obj):
+
+        if isinstance(obj, dict):
+
+            obj_symbol = str(
+                obj.get("symbol", "")
+            ).strip().upper()
+
+            if obj_symbol == target:
+                return safe_float(
+                    obj.get("performance_pct"),
+                    0.0
+                )
+
+            for v in obj.values():
+                found = walk(v)
+                if found is not None:
+                    return found
+
+        elif isinstance(obj, list):
+
+            for v in obj:
+                found = walk(v)
+                if found is not None:
+                    return found
+
+        return None
+
+    return walk(day_perf)
+
 def update_ai_pick_performance():
 
     pick_history = _load_json(
@@ -10638,25 +10678,10 @@ def update_ai_pick_performance():
                 if not isinstance(day_perf, dict):
                     continue
 
-                matched_pct = None
-
-                for perf_item in day_perf.values():
-
-                    if not isinstance(perf_item, dict):
-                        continue
-
-                    perf_symbol = str(
-                        perf_item.get("symbol", "")
-                    ).strip()
-
-                    if perf_symbol != symbol:
-                        continue
-
-                    matched_pct = safe_float(
-                        perf_item.get("performance_pct"),
-                        0.0
-                    )
-                    break
+                matched_pct = find_perf_pct_for_symbol(
+                    day_perf,
+                    symbol
+                )
 
                 if matched_pct is None:
                     continue
