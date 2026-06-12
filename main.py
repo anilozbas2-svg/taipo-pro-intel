@@ -5427,6 +5427,8 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if ai_master_lines
         else "Liste boş."
     )
+    
+    msg += format_yesterday_ai_pick_results()
 
     msg += (
         f"\n\nTAIPO LEARNER\n"
@@ -10745,6 +10747,97 @@ def update_ai_pick_performance():
 
     return updated
 
+def format_yesterday_ai_pick_results():
+
+    data = _load_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE
+    )
+
+    if not isinstance(data, dict) or not data:
+        return ""
+
+    valid_days = []
+
+    for day, day_data in data.items():
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get(
+            "items",
+            []
+        )
+
+        if not isinstance(items, list) or not items:
+            continue
+
+        measured = [
+            x for x in items
+            if isinstance(x, dict)
+            and x.get("t1_pct") is not None
+        ]
+
+        if measured:
+            valid_days.append(day)
+
+    if not valid_days:
+        return ""
+
+    last_day = sorted(valid_days)[-1]
+    day_data = data.get(last_day, {})
+    items = day_data.get("items", [])
+
+    rows = []
+
+    for item in items[:5]:
+
+        if not isinstance(item, dict):
+            continue
+
+        symbol = str(
+            item.get("symbol", "-")
+        ).strip()
+
+        pct = safe_float(
+            item.get("t1_pct"),
+            0.0
+        )
+
+        rows.append(
+            (symbol, pct)
+        )
+
+    if not rows:
+        return ""
+
+    avg_pct = round(
+        sum(x[1] for x in rows) / len(rows),
+        2
+    )
+
+    winners = len(
+        [x for x in rows if x[1] > 0]
+    )
+
+    lines = [
+        "\n\n📊 <b>DÜNÜN AI PICK SONUÇLARI</b>",
+        "<pre>"
+    ]
+
+    for symbol, pct in rows:
+        lines.append(
+            f"{symbol:<6} {pct:+.2f}%"
+        )
+
+    lines.extend([
+        "",
+        f"Ortalama: {avg_pct:+.2f}%",
+        f"Kazanan: {winners}/{len(rows)}",
+        "</pre>"
+    ])
+
+    return "\n".join(lines)
+
 def update_ai_super_performance():
 
     history = _load_json(
@@ -14046,6 +14139,8 @@ async def job_eod_report(
 
         msg += "\n\n🏆 <b>AI MASTER SCORE TOP 5</b>\n"
         msg += "\n".join(ai_master_lines) if ai_master_lines else "Liste boş."
+        
+        msg += format_yesterday_ai_pick_results()
 
         msg += (
             f"\n\nTAIPO LEARNER\n"
