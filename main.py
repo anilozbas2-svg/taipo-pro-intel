@@ -10639,7 +10639,9 @@ def update_ai_pick_performance():
                 if len(future_days) < target_day:
                     continue
 
-                target_perf_day = future_days[target_day - 1]
+                target_perf_day = future_days[
+                    target_day - 1
+                ]
 
                 day_perf = perf.get(
                     target_perf_day,
