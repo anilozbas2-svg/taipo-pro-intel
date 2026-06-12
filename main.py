@@ -5222,6 +5222,8 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         rows,
         source="EOD"
     )
+    
+    signal_perf_count = update_signal_performance_core()
 
     universe_perf_count = (
         update_ai_universe_performance()
@@ -5431,6 +5433,7 @@ async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Kayıt: {learner_count} sinyal\n"
         f"AI Universe kayıt: {universe_count}\n"
         f"AI Pick kayıt: {ai_pick_saved}\n"
+        f"Signal Performance: {signal_perf_count}\n"
         f"AI Decision kayıt: {ai_decision_saved}\n"
         f"AI Universe ölçüm: {universe_perf_count}\n"
         f"AI Ensemble ölçüm: {ensemble_perf_count}\n"
@@ -5479,18 +5482,12 @@ async def cmd_learner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     await update.message.reply_text("\n".join(lines))
 
-async def cmd_learner_update(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-) -> None:
+def update_signal_performance_core():
 
     history = _load_json(TAIPO_SIGNAL_HISTORY_FILE)
 
     if not isinstance(history, dict) or not history:
-        await update.message.reply_text(
-            "TAIPO LEARNER UPDATE\nHenüz history yok."
-        )
-        return
+        return 0
 
     perf = _load_json(TAIPO_SIGNAL_PERFORMANCE_FILE)
 
@@ -5521,9 +5518,7 @@ async def cmd_learner_update(
             try:
                 symbol = item.get("symbol", "")
                 signal_type = item.get("signal_type", "UNKNOWN")
-                entry_close = safe_float(
-                    item.get("close", 0.0)
-                )
+                entry_close = safe_float(item.get("close", 0.0))
 
                 current_close = entry_close
 
@@ -5532,14 +5527,10 @@ async def cmd_learner_update(
                     rows = tv.get("data", [])
 
                     for r in rows:
-                        s = str(
-                            r.get("s", "")
-                        ).replace("BIST:", "")
+                        s = str(r.get("s", "")).replace("BIST:", "")
 
                         if s == symbol:
-                            current_close = safe_float(
-                                r.get("d", [0])[0]
-                            )
+                            current_close = safe_float(r.get("d", [0])[0])
                             break
 
                 except Exception:
@@ -5548,35 +5539,14 @@ async def cmd_learner_update(
                 perf_pct = 0.0
 
                 if entry_close > 0:
-                    perf_pct = (
-                        (
-                            current_close
-                            - entry_close
-                        )
-                        / entry_close
-                    ) * 100.0
+                    perf_pct = ((current_close - entry_close) / entry_close) * 100.0
 
                 status = "FLAT"
 
-                if day_diff >= 1:
-                    perf_t1 = perf_pct
-                else:
-                    perf_t1 = 0.0
-
-                if day_diff >= 2:
-                    perf_t2 = perf_pct
-                else:
-                    perf_t2 = 0.0
-
-                if day_diff >= 3:
-                    perf_t3 = perf_pct
-                else:
-                    perf_t3 = 0.0
-
-                if day_diff >= 5:
-                    perf_t5 = perf_pct
-                else:
-                    perf_t5 = 0.0
+                perf_t1 = perf_pct if day_diff >= 1 else 0.0
+                perf_t2 = perf_pct if day_diff >= 2 else 0.0
+                perf_t3 = perf_pct if day_diff >= 3 else 0.0
+                perf_t5 = perf_pct if day_diff >= 5 else 0.0
 
                 if perf_pct >= 3:
                     status = "SUCCESS"
@@ -5585,15 +5555,8 @@ async def cmd_learner_update(
 
                 old_item = perf.get(d, {}).get(key, {})
 
-                old_max = safe_float(
-                    old_item.get("max_return"),
-                    perf_pct
-                )
-
-                old_min = safe_float(
-                    old_item.get("min_return"),
-                    perf_pct
-                )
+                old_max = safe_float(old_item.get("max_return"), perf_pct)
+                old_min = safe_float(old_item.get("min_return"), perf_pct)
 
                 max_return = max(old_max, perf_pct)
                 min_return = min(old_min, perf_pct)
@@ -5605,10 +5568,7 @@ async def cmd_learner_update(
                     )
                 )
 
-                if perf_pct >= max_return:
-                    best_day = day_diff
-                else:
-                    best_day = old_best_day
+                best_day = day_diff if perf_pct >= max_return else old_best_day
 
                 follow_days = max(
                     int(
@@ -5619,7 +5579,7 @@ async def cmd_learner_update(
                     ),
                     day_diff
                 )
-                
+
                 perf[d][key] = {
                     "symbol": symbol,
                     "signal_type": signal_type,
@@ -5649,8 +5609,17 @@ async def cmd_learner_update(
         TAIPO_SIGNAL_PERFORMANCE_FILE,
         perf
     )
-    
-    self_weight_updated = evolve_ai_self_weights()
+
+    evolve_ai_self_weights()
+
+    return updated
+
+async def cmd_learner_update(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
+
+    updated = update_signal_performance_core()
 
     await update.message.reply_text(
         f"TAIPO LEARNER UPDATE\nGüncellendi: {updated} kayıt"
