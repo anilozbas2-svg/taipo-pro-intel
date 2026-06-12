@@ -10581,7 +10581,7 @@ def update_ai_pick_performance():
                     and symbol not in all_symbols
                 ):
                     all_symbols.append(
-                        symbol
+                        f"BIST:{symbol}"
                     )
 
         scan_map = tv_scan_symbols_sync(
