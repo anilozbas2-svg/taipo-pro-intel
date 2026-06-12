@@ -10532,27 +10532,87 @@ def update_ai_pick_performance():
     current_close_map = {}
 
     try:
-        tv = tv_get_scan()
-        tv_rows = tv.get("data", [])
 
-        for r in tv_rows:
+        all_symbols = []
 
-            symbol = str(
-                r.get("s", "")
-            ).replace(
-                "BIST:",
-                ""
-            ).strip().upper()
+        for pick_data in pick_history.values():
 
-            data = r.get("d", [])
+            if not isinstance(
+                pick_data,
+                dict
+            ):
+                continue
 
-            if symbol and isinstance(data, list) and data:
-                current_close_map[symbol] = safe_float(
-                    data[0],
+            candidates = pick_data.get(
+                "candidates",
+                []
+            )
+
+            if not isinstance(
+                candidates,
+                list
+            ):
+                continue
+
+            for candidate in candidates:
+
+                if isinstance(
+                    candidate,
+                    str
+                ):
+                    symbol = candidate.strip().upper()
+
+                elif isinstance(
+                    candidate,
+                    dict
+                ):
+                    symbol = str(
+                        candidate.get(
+                            "symbol",
+                            ""
+                        )
+                    ).strip().upper()
+
+                else:
+                    continue
+
+                if (
+                    symbol
+                    and symbol not in all_symbols
+                ):
+                    all_symbols.append(
+                        symbol
+                    )
+
+        scan_map = tv_scan_symbols_sync(
+            all_symbols
+        )
+
+        if isinstance(
+            scan_map,
+            dict
+        ):
+
+            for symbol, row in scan_map.items():
+
+                if not isinstance(
+                    row,
+                    dict
+                ):
+                    continue
+
+                current_close_map[
+                    str(symbol).upper()
+                ] = safe_float(
+                    row.get(
+                        "close",
+                        0.0
+                    ),
                     0.0
                 )
 
     except Exception as e:
+
         logger.warning(
             "AI PICK PERF live close error: %s",
             e
