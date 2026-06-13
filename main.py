@@ -7380,6 +7380,78 @@ def generate_ai_ensemble():
 
     return result
 
+def get_ai_pick_repeat_penalty(symbol):
+
+    symbol = str(symbol or "").strip().upper()
+
+    if not symbol:
+        return 1.0
+
+    perf = _load_json(
+        TAIPO_AI_PICK_PERFORMANCE_FILE
+    )
+
+    if not isinstance(perf, dict):
+        return 1.0
+
+    penalty = 1.0
+    recent_days = sorted(perf.keys())[-5:]
+
+    for day in recent_days:
+
+        day_data = perf.get(day, {})
+
+        if not isinstance(day_data, dict):
+            continue
+
+        items = day_data.get(
+            "items",
+            []
+        )
+
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            item_symbol = str(
+                item.get("symbol", "")
+            ).strip().upper()
+
+            if item_symbol != symbol:
+                continue
+
+            t1_pct = item.get("t1_pct")
+
+            if t1_pct is None:
+                penalty *= 0.85
+                continue
+
+            t1_pct = safe_float(
+                t1_pct,
+                0.0
+            )
+
+            if t1_pct >= 2.0:
+                penalty *= 0.55
+
+            elif t1_pct <= -2.0:
+                penalty *= 0.40
+
+            else:
+                penalty *= 0.75
+
+    return max(
+        0.25,
+        min(
+            1.0,
+            penalty
+        )
+    )
+
 def generate_ai_pick():
 
     ai_memory = _load_json(
@@ -7760,6 +7832,17 @@ def generate_ai_pick():
                     + ensemble_confidence * 0.05
                     + ensemble_vote_count * 1.50
                 ) * trend_boost * symbol_weight * effective_universe_weight * ensemble_boost
+                
+                repeat_penalty = (
+                    get_ai_pick_repeat_penalty(
+                        symbol
+                    )
+                )
+
+                ai_score = (
+                    ai_score
+                    * repeat_penalty
+                )
 
                 candidates.append({
                     "symbol": symbol,
